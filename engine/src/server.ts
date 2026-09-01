@@ -5,6 +5,7 @@ import { createStripeClient } from "./billing/stripeClient.js";
 import { evidenceRouter } from "./routes/evidence.js";
 import { billingRouter } from "./routes/billing.js";
 import { webhookRouter } from "./routes/webhook.js";
+import { reviewsRouter } from "./routes/reviews.js";
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use("/v1/billing/webhook", express.raw({ type: "application/json" }));
 app.use(express.json({ limit: "5mb" }));
 
 app.use(evidenceRouter(pool));
+app.use(reviewsRouter(pool));
 
 const stripe = createStripeClient();
 app.use(billingRouter(pool, stripe));
