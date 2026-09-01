@@ -97,3 +97,90 @@ test("a claim that asserts no value has nothing to fail on the value field", () 
   assert.equal(result.applicable, true);
   assert.deepEqual(result.mismatched, []);
 });
+
+// ---------------------------------------------------------------------------
+// Locked case 9 — semantic paraphrase that supports: representation differs,
+// meaning doesn't. Typed, allow-listed normalization (§ Tier A.5) matches
+// these; nothing here is fuzzy or semantic.
+// ---------------------------------------------------------------------------
+
+test("normalized entity match (locked case 9): corporate-suffix spelling variant still applies", () => {
+  const evidence: EvidenceFields = { ...CLAIM, entity: "Acme, Inc." };
+  const claim: ClaimFields = { ...CLAIM, entity: "ACME Inc" };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, true);
+  assert.ok(result.matched.includes("entity"));
+  const entityField = result.fields.find((f) => f.field === "entity");
+  assert.equal(entityField?.rule, "entity-corporate-suffix-v1");
+});
+
+test("normalized percent match (locked case 9): '12 percent' matches '12%'", () => {
+  const claim: ClaimFields = { ...CLAIM, valueUnit: { value: "12", unit: "percent" } };
+  const evidence: EvidenceFields = { ...CLAIM, valueUnit: { value: "12", unit: "%" } };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, true);
+  assert.equal(result.valueConflicts, false);
+  const valueUnit = result.fields.find((f) => f.field === "valueUnit");
+  assert.equal(valueUnit?.status, "matched");
+});
+
+test("normalized declared-multiplier match (locked case 9): '$12,000,000' matches '$12m'", () => {
+  const claim: ClaimFields = { ...CLAIM, valueUnit: { value: "$12,000,000" } };
+  const evidence: EvidenceFields = { ...CLAIM, valueUnit: { value: "$12m" } };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, true);
+  assert.equal(result.valueConflicts, false);
+  const valueUnit = result.fields.find((f) => f.field === "valueUnit");
+  // Claimed value normalizes via the numeric-separator rule ("$12,000,000"
+  // has no multiplier suffix); evidence normalizes via the declared-multiplier
+  // rule ("$12m" does). Both land on "12000000" and match — a single field
+  // carries only one side's rule id, so we assert the match, not which rule.
+  assert.equal(valueUnit?.status, "matched");
+});
+
+// ---------------------------------------------------------------------------
+// Locked case 10 — semantic paraphrase that remains indeterminate/excluded:
+// representation looks close, but the meaning genuinely differs. Normalization
+// must never fold these together.
+// ---------------------------------------------------------------------------
+
+test("measure never semantically normalizes (locked case 10): 'gross revenue' vs 'revenue' stays excluded", () => {
+  const claim: ClaimFields = { ...CLAIM, measure: "gross revenue" };
+  const evidence: EvidenceFields = { ...CLAIM, measure: "revenue" };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, false);
+  assert.ok(result.mismatched.includes("measure"));
+});
+
+test("entity qualifier difference is not suffix noise (locked case 10): 'Acme plc' vs 'Acme US' stays excluded", () => {
+  const claim: ClaimFields = { ...CLAIM, entity: "Acme plc" };
+  const evidence: EvidenceFields = { ...CLAIM, entity: "Acme US" };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, false);
+  assert.ok(result.mismatched.includes("entity"));
+});
+
+test("fiscal label never becomes calendar math (locked case 10): 'FY25' vs 'calendar 2025' stays excluded", () => {
+  const claim: ClaimFields = { ...CLAIM, period: "FY25" };
+  const evidence: EvidenceFields = { ...CLAIM, period: "calendar 2025" };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, false);
+  assert.ok(result.mismatched.includes("period"));
+});
+
+test("same value, different measure entirely stays excluded (locked case 10): market growth vs Acme revenue growth", () => {
+  const claim: ClaimFields = {
+    ...CLAIM,
+    measure: "Acme revenue growth",
+    valueUnit: { value: "17", unit: "%" },
+  };
+  const evidence: EvidenceFields = {
+    ...CLAIM,
+    measure: "market growth",
+    valueUnit: { value: "17", unit: "%" },
+  };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, false);
+  assert.ok(result.mismatched.includes("measure"));
+  assert.ok(result.matched.includes("valueUnit"), "the attractive value still matched");
+});

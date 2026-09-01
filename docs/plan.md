@@ -812,6 +812,8 @@ Find support and refutation candidates within the manifest. Start with explicit 
 
 Every candidate must resolve to exact displayed text or structured value in the preserved evidence. Then test entity, time, scope, product/population, predicate, value/unit, denominator, baseline/comparator, and modality. A material mismatch excludes the candidate from support even when its wording or number is attractive.
 
+Field comparison in this step is **typed, allow-listed normalization, never fuzzy or semantic matching** — implemented in `engine/src/verification/normalization.ts`. Only representation-level forms whose equivalence is explicit, deterministic, reversible, and logged are normalized: safe-syntax differences (case, punctuation, whitespace, Unicode), corporate-suffix spelling variants ("Acme, Inc." ~ "ACME Inc"), percent notation ("12 percent" ~ "12%"), numeric grouping separators ("12,000,000" ~ "12000000"), explicitly-declared value multipliers ("m" ~ ",000,000"), and fiscal-year LABEL formatting ("FY25" ~ "fiscal 2025", as text only — never calendar-date math). It deliberately does **not** normalize semantically: measure/comparatorBaseline/modality/scope ("gross revenue" never equals "revenue"), real entity aliases beyond suffix spelling, or fiscal-calendar date conversion are all out of scope by design, so the deterministic comparator stays strict exactly where the locked test suite (cases 6/7/8, and cases 9/10 for the paraphrase boundary) requires it.
+
 ### 6. Evidence-binding round-trip — give the main model one honest chance to point at what it actually used
 
 Before returning `no_source`, ask the main model (Claude) one bounded, one-shot question: **"What addressable source did you use for this claim — a document, an attachment, a URL? Point Notary to it directly. Do not describe what it says."** This exists because Claude may have legitimate access to material (an attachment in the conversation, a file it can see) that simply wasn't included in the tool call's source list — that's a binding failure, not evidence that nothing exists, and treating it as `no_source` would be an unfair miss on an answer that was actually grounded.
@@ -960,6 +962,8 @@ UsageEvent(id, organization_id, user_id, review_id, event_type,
 ExploratoryTranscript(id, claim_id, review_id, turns[], started_by,
            ended_reason, created_at)
 ```
+
+`EvidenceMatch.applicability_json` is an existing jsonb column that, per field, already carries `claimed`/`evidence`/`status`/`detail`; it now additionally carries `normalizedClaimed`/`normalizedEvidence`/`rule` wherever a normalization rule (§ Verification pipeline, step 5) actually ran — comparison metadata only, never a rewrite of the raw `claimed`/`evidence` text.
 
 `ExploratoryTranscript` (§ Exploratory review, Phase 2+) is deliberately not a subtype or extension of `Claim` or `EvidenceMatch` — no foreign key or code path may let its content write to `Claim.state`. Every query and object is organization-scoped server-side. Never authorize by a client-supplied organization identifier alone.
 

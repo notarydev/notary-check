@@ -19,6 +19,9 @@
 // conflicts). A UNIT mismatch, by contrast, is a material applicability
 // failure like any other.
 
+import { compareField, compareValueUnit } from "./normalization.ts";
+import type { NormalizationRuleId } from "./normalization.ts";
+
 // The fields tested, exactly per step 5's "entity, time, scope,
 // product/population, predicate, value/unit, denominator, baseline/comparator,
 // and modality" mapped onto the structured claim-field vocabulary.
@@ -75,6 +78,12 @@ export interface FieldResult {
   evidence?: string;
   /** why a field did not match, when it did not. */
   detail?: string;
+  /** Present only when a normalization rule actually ran a comparison
+   * (§ Tier A.5). Comparison metadata only — never rewrites what is
+   * displayed; `claimed`/`evidence` above always carry the raw text. */
+  normalizedClaimed?: string;
+  normalizedEvidence?: string;
+  rule?: NormalizationRuleId;
 }
 
 export interface ApplicabilityResult {
@@ -103,16 +112,19 @@ const STRING_FIELDS: StringField[] = [
   "scope",
 ];
 
-// Exact, deterministic comparison only: trim, lowercase, collapse internal
-// whitespace. No fuzzy or semantic matching — that is the judge's job later.
-function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function describe(valueUnit: ValueUnit): string {
   return valueUnit.unit !== undefined && valueUnit.unit !== ""
     ? `${valueUnit.value} ${valueUnit.unit}`
     : valueUnit.value;
+}
+
+function describeNormalized(normalized: {
+  value: { normalized: string };
+  unit: { normalized: string } | undefined;
+}): string {
+  return normalized.unit !== undefined && normalized.unit.normalized !== ""
+    ? `${normalized.value.normalized} ${normalized.unit.normalized}`
+    : normalized.value.normalized;
 }
 
 export function assessApplicability(claim: ClaimFields, evidence: EvidenceFields): ApplicabilityResult {
@@ -141,18 +153,32 @@ export function assessApplicability(claim: ClaimFields, evidence: EvidenceFields
         detail: "unestablished: evidence does not address the claimed field",
       });
       mismatched.push(field);
-    } else if (normalize(claimed) === normalize(ev)) {
-      fields.push({ field, status: "matched", claimed, evidence: ev });
-      matched.push(field);
     } else {
-      fields.push({
-        field,
-        status: "mismatched",
-        claimed,
-        evidence: ev,
-        detail: `material mismatch: "${claimed}" vs "${ev}"`,
-      });
-      mismatched.push(field);
+      const comparison = compareField(field, claimed, ev);
+      if (comparison.status === "matched") {
+        fields.push({
+          field,
+          status: "matched",
+          claimed,
+          evidence: ev,
+          normalizedClaimed: comparison.claimed.normalized,
+          normalizedEvidence: comparison.evidence.normalized,
+          rule: comparison.claimed.ruleId,
+        });
+        matched.push(field);
+      } else {
+        fields.push({
+          field,
+          status: "mismatched",
+          claimed,
+          evidence: ev,
+          detail: `material mismatch: "${claimed}" vs "${ev}"`,
+          normalizedClaimed: comparison.claimed.normalized,
+          normalizedEvidence: comparison.evidence.normalized,
+          rule: comparison.claimed.ruleId,
+        });
+        mismatched.push(field);
+      }
     }
   }
 
@@ -171,29 +197,36 @@ export function assessApplicability(claim: ClaimFields, evidence: EvidenceFields
     });
     mismatched.push("valueUnit");
   } else {
-    const unitMismatch =
-      claimedValueUnit.unit !== undefined &&
-      evValueUnit.unit !== undefined &&
-      normalize(claimedValueUnit.unit) !== normalize(evValueUnit.unit);
-    const unitUnestablished = claimedValueUnit.unit !== undefined && evValueUnit.unit === undefined;
-    if (unitMismatch || unitUnestablished) {
+    const comparison = compareValueUnit(claimedValueUnit, evValueUnit);
+    const normalizedClaimed = describeNormalized(comparison.claimedNormalized);
+    const normalizedEvidence = describeNormalized(comparison.evidenceNormalized);
+    const rule = comparison.claimedNormalized.value.ruleId;
+    if (comparison.unitStatus === "mismatched") {
       fields.push({
         field: "valueUnit",
         status: "mismatched",
         claimed: describe(claimedValueUnit),
         evidence: describe(evValueUnit),
         detail: `unit mismatch: "${claimedValueUnit.unit ?? "(none)"}" vs "${evValueUnit.unit ?? "(none)"}"`,
+        normalizedClaimed,
+        normalizedEvidence,
+        rule,
       });
       mismatched.push("valueUnit");
-    } else if (normalize(claimedValueUnit.value) !== normalize(evValueUnit.value)) {
+    } else if (!comparison.valueEqual) {
       // Same unit, different value: not an applicability failure — a
       // contradiction. The candidate applies; its value conflicts.
+      // Normalization only changes what counts as "the same value" — a
+      // genuinely differing figure still lands here, never silently matched.
       fields.push({
         field: "valueUnit",
         status: "value_conflict",
         claimed: describe(claimedValueUnit),
         evidence: describe(evValueUnit),
         detail: `value conflict: "${claimedValueUnit.value}" vs "${evValueUnit.value}"`,
+        normalizedClaimed,
+        normalizedEvidence,
+        rule,
       });
       valueConflicts = true;
     } else {
@@ -202,6 +235,9 @@ export function assessApplicability(claim: ClaimFields, evidence: EvidenceFields
         status: "matched",
         claimed: describe(claimedValueUnit),
         evidence: describe(evValueUnit),
+        normalizedClaimed,
+        normalizedEvidence,
+        rule,
       });
       matched.push("valueUnit");
     }
