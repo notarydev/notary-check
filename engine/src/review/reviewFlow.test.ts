@@ -213,6 +213,84 @@ test(
 );
 
 test(
+  "a judge-resolved entity that only matches via normalization: claim 'Acme, Inc.' vs evidence 'ACME INC' → SUPPORTED (normalization end-to-end)",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      // Claim entity "Acme, Inc." never appears verbatim (comma + trailing
+      // period + different case), so the deterministic exact-substring pass in
+      // reviewFlow.ts leaves entity residual and hands it to the judge.
+      const evidenceText = "ACME INC's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, evidenceText);
+
+      const originalKey = process.env.DEEPSEEK_API_KEY;
+      const originalFetch = globalThis.fetch;
+      process.env.DEEPSEEK_API_KEY = "test-key-for-mocked-judge";
+      // Mock the judge client's transport (judgeClient.ts's injectable httpCall
+      // defaults to global fetch): every DeepSeek call answers that the evidence
+      // establishes the entity "ACME INC" verbatim. All other traffic passes
+      // through to the real fetch untouched.
+      globalThis.fetch = (async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.startsWith("https://api.deepseek.com/")) {
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      reasoning: "The passage opens by naming ACME INC.",
+                      outcome: "present",
+                      value: "ACME INC",
+                    }),
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        const result = await runReview(
+          {
+            organizationId: orgId,
+            reviewId,
+            claimText: "Acme, Inc.'s revenue grew 17% in FY25.",
+            ordinal: 1,
+            claimFields: { ...CLAIM_FIELDS, entity: "Acme, Inc." },
+            evidenceIds: [evidenceId],
+          },
+          pool,
+        );
+
+        // The judge established entity as "ACME INC"; the normalization-aware
+        // assessApplicability must match it against the claim's "Acme, Inc."
+        // via entity-corporate-suffix-v1 (not exact equality), so the row
+        // applies and the claim is supported. Without that normalization the
+        // row would be inapplicable (UNSUPPORTED).
+        assert.equal(result.state, "SUPPORTED");
+        assert.equal(result.stateReason, "supporting_applicable_relation");
+        assert.equal(result.matches.length, 1);
+        assert.equal(result.matches[0].method, "entailed", "entity was the judge-resolved residue, so the match is entailed");
+        assert.equal(result.matches[0].relation, "supports");
+      } finally {
+        if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+        else process.env.DEEPSEEK_API_KEY = originalKey;
+        globalThis.fetch = originalFetch;
+      }
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
   "no addressable source at all (locked case 4): empty evidence list → INDETERMINATE / no_source",
   { ...dbSkip },
   async () => {
