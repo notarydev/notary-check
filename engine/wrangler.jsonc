@@ -1,0 +1,26 @@
+{
+  "name": "notary-check-engine",
+  "main": "worker/container.ts",
+  "compatibility_date": "2026-08-01",
+  "containers": [
+    {
+      "max_instances": 2,
+      "class_name": "NotaryEngineContainer",
+      "image": "./Dockerfile"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NOTARY_ENGINE",
+        "class_name": "NotaryEngineContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["NotaryEngineContainer"]
+    }
+  ]
+}
