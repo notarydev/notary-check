@@ -13,7 +13,14 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 // hardcoding "text/html" — the package's actual default is
 // "text/html;profile=mcp-app".
 import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
-import { pickMockScenario } from "./mocks/scenarios.js";
+import { reviewAnswer } from "./engineClient.js";
+
+try {
+  process.loadEnvFile();
+} catch {
+  // no .env file present — fine in environments where ENGINE_URL/ENGINE_API_KEY
+  // are set another way (e.g. the container's own env).
+}
 
 // The MCP SDK's registerTool contract takes a Zod raw shape (a plain object of
 // Zod schemas), not a JSON Schema object — this is the actual, buildable shape,
@@ -51,8 +58,8 @@ function buildServer() {
       inputSchema: reviewInputSchema,
       _meta: { ui: { resourceUri: RESOURCE_URI } },
     },
-    async (args: { answer_text: string; source_refs?: unknown[] }) => {
-      const cardData = pickMockScenario(args?.answer_text ?? "");
+    async (args: { answer_text: string; source_refs?: Array<{ url?: string; title?: string; quoted_excerpt?: string; source_role: "answer_citation" | "user_added" | "workspace_collection" }> }) => {
+      const cardData = await reviewAnswer(args?.answer_text ?? "", args?.source_refs ?? []);
       return {
         content: [
           {

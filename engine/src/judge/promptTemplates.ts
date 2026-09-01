@@ -97,9 +97,9 @@ const FIELD_CRITERIA: Record<ApplicabilityField, FieldCriterion> = {
     question: "How is the figure characterized — as actual/realized, estimated, projected, forecast, target, or a bound?",
     criterion:
       "Look for epistemic or modal markers — 'actual', 'realized', 'estimated', 'projected', 'forecast', 'targeted', 'guidance', 'expected', 'at least', 'up to'.\n" +
-      "Decide: report the strongest modality marker the passage states for the figure. No marker at all means the passage asserts the figure plainly (actual).\n" +
-      "- present: an explicit modality marker is stated — extract it as written.\n" +
-      "- absent: no modality marker; the passage states the figure plainly.\n" +
+      "Decide: every stated figure has a modality, even an unmarked one — a plain assertion IS the 'actual' modality, not a missing field. Report the strongest modality marker the passage states for the figure; when no marker is present, the figure is still characterized — as 'actual'.\n" +
+      "- present: the figure is characterized — either an explicit modality marker is stated (extract it as written), or no marker is stated at all, in which case extract the value 'actual' (a plain assertion is a modality, not an absence).\n" +
+      "- absent: reserved for when the figure itself is not addressed by this passage at all — never used merely because no marker word is present on a figure that IS stated.\n" +
       "- ambiguous: conflicting modality markers attach to the same figure.\n" +
       "- cannot_be_determined: no modality can be recovered from the usable text.",
   },
