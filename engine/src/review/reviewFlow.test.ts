@@ -48,6 +48,12 @@ const CLAIM_FIELDS: ClaimFields = {
 const SUPPORT_TEXT = "Acme's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
 // Identical but for the value: 12%, so the ONLY residue is valueUnit.
 const CONTRADICT_TEXT = "Acme's revenue growth was 12% in FY25, compared to the prior year, actual company-wide figures.";
+// Wrong entity: every field resolves deterministically EXCEPT entity — "Acme"
+// never appears, so entity is the single residual field. Under a denied quota
+// it resolves to cannot_be_determined (unestablished), so the row comes back
+// inapplicable with mismatchedFields exactly ["entity"].
+const WRONG_ENTITY_GLOBEX_TEXT = "Globex's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+const WRONG_ENTITY_INITECH_TEXT = "Initech's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
 
 async function seedRetrievedEvidence(
   pool: pg.Pool,
@@ -344,3 +350,153 @@ test("quota exceeded (NOTARY_ORG_MONTHLY_LIMIT_CENTS=0): residual fields resolve
     await pool.end();
   }
 });
+
+test(
+  "an applicable-support row plus an inapplicable wrong-entity row → matches has only the supporter, rejectedCandidates has exactly the wrong-entity row",
+  { ...dbSkip },
+  async () => {
+    const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+    process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const supportId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT, "https://example.com/acme-report");
+      const rejectedId = await seedRetrievedEvidence(pool, reviewId, WRONG_ENTITY_GLOBEX_TEXT, "https://example.com/globex-report");
+
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [supportId, rejectedId],
+        },
+        pool,
+      );
+
+      assert.equal(result.state, "SUPPORTED");
+      assert.deepEqual(result.matches, [
+        { evidenceId: supportId, relation: "supports", method: "quoted_or_computed" },
+      ]);
+
+      assert.equal(result.rejectedCandidates.length, 1, "exactly one rejected candidate (the wrong-entity row)");
+      const rejected = result.rejectedCandidates[0];
+      assert.equal(rejected.evidenceId, rejectedId);
+      assert.equal(rejected.locator, "https://example.com/globex-report");
+      assert.deepEqual(rejected.mismatchedFields, ["entity"]);
+      assert.ok(rejected.details.length >= 1, "the entity mismatch carries a detail");
+      assert.equal(rejected.details[0].field, "entity");
+      assert.ok(rejected.details[0].detail.length > 0, "the detail string is non-empty");
+
+      // Rejected candidates are response-shape only: no evidence_match row is
+      // written for the inapplicable row.
+      const matches = (await pool.query("SELECT evidence_id FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows as Array<{ evidence_id: string }>;
+      assert.equal(matches.length, 1);
+      assert.equal(matches[0].evidence_id, supportId);
+    } finally {
+      if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "all bound rows inapplicable (wrong entity) → matches empty, state UNSUPPORTED, rejectedCandidates has one entry per inapplicable row",
+  { ...dbSkip },
+  async () => {
+    const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+    process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const globexId = await seedRetrievedEvidence(pool, reviewId, WRONG_ENTITY_GLOBEX_TEXT, "https://example.com/globex-report");
+      const initechId = await seedRetrievedEvidence(pool, reviewId, WRONG_ENTITY_INITECH_TEXT, "https://example.com/initech-report");
+
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [globexId, initechId],
+        },
+        pool,
+      );
+
+      // No applicable relation anywhere → UNSUPPORTED (existing behavior,
+      // unchanged by this feature).
+      assert.equal(result.state, "UNSUPPORTED");
+      assert.equal(result.stateReason, "no_support_after_completed_checks");
+      assert.deepEqual(result.matches, []);
+
+      assert.equal(result.rejectedCandidates.length, 2, "one rejected candidate per inapplicable row");
+      const candidateIds = result.rejectedCandidates.map((r) => r.evidenceId).sort();
+      assert.deepEqual(candidateIds, [globexId, initechId].sort());
+      for (const candidate of result.rejectedCandidates) {
+        assert.deepEqual(candidate.mismatchedFields, ["entity"]);
+        assert.ok(candidate.details.length >= 1);
+        assert.ok(candidate.details[0].detail.length > 0);
+      }
+
+      // No applicable rows → no evidence_match rows persisted at all.
+      const matchCount = (await pool.query("SELECT count(*)::int AS n FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows[0].n;
+      assert.equal(matchCount, 0);
+    } finally {
+      if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "a bound unavailable row (never resolved) never appears in rejectedCandidates — only resolved-but-inapplicable rows do",
+  { ...dbSkip },
+  async () => {
+    const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+    process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const inapplicableId = await seedRetrievedEvidence(pool, reviewId, WRONG_ENTITY_GLOBEX_TEXT, "https://example.com/globex-report");
+      const unavailableResult = await pool.query(
+        `INSERT INTO evidence (review_id, origin, submitted_url, retrieval_status)
+         VALUES ($1, 'answer_citation', 'https://example.com/gone', 'unavailable')
+         RETURNING id`,
+        [reviewId],
+      );
+      const unavailableId = unavailableResult.rows[0].id as string;
+
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [inapplicableId, unavailableId],
+        },
+        pool,
+      );
+
+      assert.equal(result.state, "UNSUPPORTED");
+      assert.deepEqual(result.matches, []);
+      assert.equal(result.rejectedCandidates.length, 1, "only the resolved-but-inapplicable row belongs in rejectedCandidates");
+      assert.equal(result.rejectedCandidates[0].evidenceId, inapplicableId);
+      assert.ok(
+        !result.rejectedCandidates.some((r) => r.evidenceId === unavailableId),
+        "the unavailable row never reached applicability and must not appear",
+      );
+    } finally {
+      if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      await pool.end();
+    }
+  },
+);

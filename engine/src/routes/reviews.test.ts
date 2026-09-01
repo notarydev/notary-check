@@ -9,6 +9,7 @@
 // registration, and a cross-org claim POST (404).
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import express from "express";
@@ -21,6 +22,25 @@ import { createOrganization, createReview, freshPool, HAS_DB } from "../test/db.
 const skip = { skip: !HAS_DB ? "no test database configured (set TEST_DATABASE_URL or DATABASE_URL)" : false };
 
 const SUPPORT_TEXT = "Acme's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+// Wrong entity: everything resolves deterministically EXCEPT entity ("Acme"
+// never appears). Under a denied quota the residual entity resolves to
+// cannot_be_determined, so the row is inapplicable with mismatchedFields
+// exactly ["entity"].
+const WRONG_ENTITY_TEXT = "Globex's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+const WRONG_ENTITY_TEXT_2 = "Initech's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+
+const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
+
+interface ClaimResponse {
+  claim: { id: string; review_id: string; state: string; state_reason: string; no_source: boolean };
+  matches: Array<{ evidenceId: string; relation: string; method: string }>;
+  rejectedCandidates: Array<{
+    evidenceId: string;
+    locator: string | null;
+    mismatchedFields: string[];
+    details: Array<{ field: string; detail: string }>;
+  }>;
+}
 
 const CLAIM_FIELDS = {
   entity: "Acme",
@@ -223,6 +243,12 @@ test(
       const claimJson = (await claimRes.json()) as {
         claim: { id: string; review_id: string; state: string; state_reason: string; no_source: boolean };
         matches: Array<{ evidenceId: string; relation: string; method: string }>;
+        rejectedCandidates: Array<{
+          evidenceId: string;
+          locator: string | null;
+          mismatchedFields: string[];
+          details: Array<{ field: string; detail: string }>;
+        }>;
       };
       assert.equal(claimJson.claim.review_id, reviewId);
       assert.equal(claimJson.claim.state, "SUPPORTED");
@@ -230,6 +256,8 @@ test(
       assert.deepEqual(claimJson.matches, [
         { evidenceId: evJson.evidence.id, relation: "supports", method: "quoted_or_computed" },
       ]);
+      // The new response-shape field is always present; nothing was inapplicable here.
+      assert.deepEqual(claimJson.rejectedCandidates, []);
 
       // Persisted for real: a claim row and an evidence_match row exist.
       const claimRow = await server.pool.query("SELECT 1 FROM claim WHERE id = $1", [claimJson.claim.id]);
@@ -287,6 +315,162 @@ test(
       assert.equal(res.status, 404);
       const json = (await res.json()) as { error: string };
       assert.equal(json.error, "review not found for this organization");
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+async function registerInlineEvidence(server: TestServer, bearer: string, reviewId: string, payload: string): Promise<{ id: string }> {
+  const res = await fetch(`${server.baseUrl}/v1/evidence`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ review_id: reviewId, origin: "answer_citation", payload }),
+  });
+  assert.equal(res.status, 201);
+  const json = (await res.json()) as { evidence: { id: string } };
+  return { id: json.evidence.id };
+}
+
+async function postClaim(server: TestServer, bearer: string, reviewId: string, evidenceIds: string[]): Promise<Response> {
+  return fetch(`${server.baseUrl}/v1/reviews/${reviewId}/claims`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({
+      text: "Acme's revenue grew 17% in FY25.",
+      ordinal: 1,
+      materiality: true,
+      claim_fields: CLAIM_FIELDS,
+      evidence_ids: evidenceIds,
+    }),
+  });
+}
+
+test(
+  "POST /v1/reviews/:reviewId/claims: a wrong-entity bound row is reported in rejectedCandidates while the applicable supporter still matches",
+  { ...skip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const reviewId = await createReview(server.pool, orgId);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+
+      const support = await registerInlineEvidence(server, plaintextKey, reviewId, SUPPORT_TEXT);
+      const rejected = await registerInlineEvidence(server, plaintextKey, reviewId, WRONG_ENTITY_TEXT);
+
+      const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+      try {
+        const claimRes = await postClaim(server, plaintextKey, reviewId, [support.id, rejected.id]);
+        assert.equal(claimRes.status, 201);
+        const claimJson = (await claimRes.json()) as ClaimResponse;
+
+        assert.equal(claimJson.claim.state, "SUPPORTED");
+        assert.deepEqual(claimJson.matches, [
+          { evidenceId: support.id, relation: "supports", method: "quoted_or_computed" },
+        ]);
+
+        assert.equal(claimJson.rejectedCandidates.length, 1, "exactly one rejected candidate (the wrong-entity row)");
+        const candidate = claimJson.rejectedCandidates[0];
+        assert.equal(candidate.evidenceId, rejected.id);
+        assert.equal(candidate.locator, `inline:${sha256(WRONG_ENTITY_TEXT)}`, "inline-payload rows fall back to an inline:<hash> locator");
+        assert.deepEqual(candidate.mismatchedFields, ["entity"]);
+        assert.equal(candidate.details[0].field, "entity");
+        assert.ok(candidate.details[0].detail.length > 0, "the detail string is non-empty");
+
+        // Rejected candidates are response-shape only: only the applicable row
+        // is persisted to evidence_match.
+        const matchCount = await server.pool.query("SELECT count(*)::int AS n FROM evidence_match WHERE claim_id = $1", [claimJson.claim.id]);
+        assert.equal(matchCount.rows[0].n, 1);
+      } finally {
+        if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+        else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      }
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/reviews/:reviewId/claims: all bound rows inapplicable → UNSUPPORTED, matches empty, rejectedCandidates one per row",
+  { ...skip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const reviewId = await createReview(server.pool, orgId);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+
+      const rejectedA = await registerInlineEvidence(server, plaintextKey, reviewId, WRONG_ENTITY_TEXT);
+      const rejectedB = await registerInlineEvidence(server, plaintextKey, reviewId, WRONG_ENTITY_TEXT_2);
+
+      const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+      try {
+        const claimRes = await postClaim(server, plaintextKey, reviewId, [rejectedA.id, rejectedB.id]);
+        assert.equal(claimRes.status, 201);
+        const claimJson = (await claimRes.json()) as ClaimResponse;
+
+        assert.equal(claimJson.claim.state, "UNSUPPORTED");
+        assert.equal(claimJson.claim.state_reason, "no_support_after_completed_checks");
+        assert.deepEqual(claimJson.matches, []);
+
+        assert.equal(claimJson.rejectedCandidates.length, 2, "one rejected candidate per inapplicable row");
+        const candidateIds = claimJson.rejectedCandidates.map((r) => r.evidenceId).sort();
+        assert.deepEqual(candidateIds, [rejectedA.id, rejectedB.id].sort());
+        for (const candidate of claimJson.rejectedCandidates) {
+          assert.deepEqual(candidate.mismatchedFields, ["entity"]);
+          assert.ok(candidate.details.length >= 1);
+          assert.ok(candidate.details[0].detail.length > 0);
+        }
+      } finally {
+        if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+        else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      }
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/reviews/:reviewId/claims: a bound unavailable row never appears in rejectedCandidates",
+  { ...skip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const reviewId = await createReview(server.pool, orgId);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+
+      const inapplicable = await registerInlineEvidence(server, plaintextKey, reviewId, WRONG_ENTITY_TEXT);
+      const unavailable = await server.pool.query(
+        `INSERT INTO evidence (review_id, origin, submitted_url, retrieval_status)
+         VALUES ($1, 'answer_citation', 'https://example.com/gone', 'unavailable')
+         RETURNING id`,
+        [reviewId],
+      );
+      const unavailableId = unavailable.rows[0].id as string;
+
+      const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+      try {
+        const claimRes = await postClaim(server, plaintextKey, reviewId, [inapplicable.id, unavailableId]);
+        assert.equal(claimRes.status, 201);
+        const claimJson = (await claimRes.json()) as ClaimResponse;
+
+        assert.equal(claimJson.rejectedCandidates.length, 1, "only the resolved-but-inapplicable row belongs in rejectedCandidates");
+        assert.equal(claimJson.rejectedCandidates[0].evidenceId, inapplicable.id);
+        assert.ok(
+          !claimJson.rejectedCandidates.some((r) => r.evidenceId === unavailableId),
+          "the unavailable row never reached applicability and must not appear",
+        );
+      } finally {
+        if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+        else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      }
     } finally {
       await server.close();
     }
