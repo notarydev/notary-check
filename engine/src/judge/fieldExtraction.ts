@@ -244,6 +244,19 @@ export function parseJudgeAnswer(rawAnswer: string, field: ApplicabilityField, r
   if (!parsed.ok) {
     return { field, outcome: "cannot_be_determined", record: { ...record, error: parsed.error } };
   }
+  // Deterministic correction, not a judgment call: every stated figure has a
+  // modality, even an unmarked one — a plain assertion IS the "actual"
+  // modality (matches ../extraction/extractClaims.ts's own claim-side
+  // convention). The prompt already instructs the model to answer "present,
+  // actual" for a plain assertion, but model compliance with that nuance is
+  // unreliable in practice; applying the same structural default here in code
+  // makes it exact rather than probabilistic. "absent" for modality can only
+  // mean "no marker was stated" (per the field's own definition — every other
+  // field genuinely has an "unstated" state, modality does not), so an
+  // "absent" outcome is always safe to upgrade to "present, actual".
+  if (field === "modality" && parsed.data.outcome === "absent") {
+    return { field, outcome: "present", value: "actual", sourceSpan: parsed.data.source_span, record };
+  }
   return {
     field,
     outcome: parsed.data.outcome,

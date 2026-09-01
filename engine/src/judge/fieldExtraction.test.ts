@@ -196,6 +196,27 @@ test("safeParseModelOutput tolerates a ```json fence around the object", () => {
   if (result.ok) assert.equal(result.data.value, "Acme");
 });
 
+test("parseJudgeAnswer deterministically upgrades modality 'absent' to present/actual", () => {
+  const raw = JSON.stringify({ reasoning: "no marker stated", outcome: "absent" });
+  const result = parseJudgeAnswer(raw, "modality", {} as JudgeCallRecord);
+  assert.equal(result.outcome, "present");
+  assert.equal(result.value, "actual");
+});
+
+test("parseJudgeAnswer leaves non-modality 'absent' outcomes untouched", () => {
+  const raw = JSON.stringify({ reasoning: "no baseline stated", outcome: "absent" });
+  const result = parseJudgeAnswer(raw, "comparatorBaseline", {} as JudgeCallRecord);
+  assert.equal(result.outcome, "absent");
+  assert.equal(result.value, undefined);
+});
+
+test("parseJudgeAnswer leaves an explicit modality marker untouched", () => {
+  const raw = JSON.stringify({ reasoning: "states 'estimated'", outcome: "present", value: "estimated" });
+  const result = parseJudgeAnswer(raw, "modality", {} as JudgeCallRecord);
+  assert.equal(result.outcome, "present");
+  assert.equal(result.value, "estimated");
+});
+
 test("parseValueUnit splits a leading signed number from its unit deterministically", () => {
   assert.deepEqual(parseValueUnit("17%"), { value: "17", unit: "%" });
   assert.deepEqual(parseValueUnit(" 17 % "), { value: "17", unit: "%" });
