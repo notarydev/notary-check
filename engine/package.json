@@ -7,7 +7,7 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "migrate": "tsx src/migrate.ts",
-    "test": "node --test --experimental-strip-types src/verification/*.test.ts src/ingestion/*.test.ts src/judge/*.test.ts src/auth/*.test.ts src/quotas/*.test.ts src/evidence/*.test.ts src/routes/*.test.ts",
+    "test": "node --test --experimental-strip-types src/verification/*.test.ts src/ingestion/*.test.ts src/judge/*.test.ts src/auth/*.test.ts src/quotas/*.test.ts src/evidence/*.test.ts src/review/*.test.ts src/routes/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },

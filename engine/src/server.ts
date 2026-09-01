@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { pool } from "./db.js";
 import { evidenceRouter } from "./routes/evidence.js";
+import { reviewsRouter } from "./routes/reviews.js";
 
 const app = express();
 // Inline payloads are hashed in memory and not persisted beyond the hash in
@@ -10,6 +11,7 @@ const app = express();
 app.use(express.json({ limit: "5mb" }));
 
 app.use(evidenceRouter(pool));
+app.use(reviewsRouter(pool));
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

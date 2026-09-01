@@ -68,8 +68,15 @@ export function evidenceRouter(database: pg.Pool): Router {
     let payloadHash: string | null = null;
     let retrievalStatus = "pending";
     let retrievedAt: string | null = null;
+    // The inline payload is already in memory and its hash is already computed
+    // below — also persist the text itself into resolved_text, so the review
+    // orchestrator has something to read without re-fetching or re-hashing
+    // (migration 0005 documents this column as the narrow stand-in for the
+    // future object-store payload store).
+    let resolvedText: string | null = null;
     if (payload !== undefined) {
       payloadHash = createHash("sha256").update(payload, "utf8").digest("hex");
+      resolvedText = payload;
       retrievalStatus = "retrieved";
       retrievedAt = new Date().toISOString();
     }
@@ -81,9 +88,9 @@ export function evidenceRouter(database: pg.Pool): Router {
       `INSERT INTO evidence (
          review_id, origin, submitted_url, canonical_url, payload_ref, payload_hash,
          retrieval_status, retrieved_at, locator_scheme, retention_until,
-         submitted_by, snapshot_reuse_policy, access_revoked_at
+         submitted_by, snapshot_reuse_policy, access_revoked_at, resolved_text
        )
-       VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULL, $8, $9, $10, NULL)
+       VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULL, $8, $9, $10, NULL, $11)
        RETURNING *`,
       [
         review_id,
@@ -96,6 +103,7 @@ export function evidenceRouter(database: pg.Pool): Router {
         retention_until ?? null,
         submitted_by ?? null,
         snapshot_reuse_policy ?? null,
+        resolvedText,
       ],
     );
 
