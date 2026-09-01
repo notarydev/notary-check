@@ -165,6 +165,7 @@ export function reviewsRouter(database: pg.Pool): Router {
         no_source: result.noSource,
       },
       matches: result.matches,
+      rejectedCandidates: result.rejectedCandidates,
     });
   });
 

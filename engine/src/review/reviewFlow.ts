@@ -55,12 +55,35 @@ export interface RunReviewMatch {
   method: "quoted_or_computed" | "entailed";
 }
 
+/**
+ * A bound evidence row that WAS resolved and assessed but came back inapplicable
+ * (wrong entity, wrong period, ...). Response-shape only — computed at request
+ * time, never persisted, never written to evidence_match (whose relation CHECK
+ * permits only supports/contradicts, and which stays untouched). The
+ * single-finding and two-block cards (§ Product contract) need this to explain
+ * WHY a candidate was rejected.
+ */
+export interface RunReviewRejectedCandidate {
+  evidenceId: string;
+  /** Same locator value computed for resolved rows (evidence URL, or inline:<hash>). */
+  locator: string | null;
+  /** From ApplicabilityResult.mismatched — the fields that excluded the row. */
+  mismatchedFields: string[];
+  /** From ApplicabilityResult.fields, only the status === "mismatched" entries. */
+  details: Array<{ field: string; detail: string }>;
+}
+
 export interface RunReviewResult {
   claimId: string;
   state: string;
   stateReason: string;
   noSource: boolean;
   matches: RunReviewMatch[];
+  /**
+   * Resolved-but-inapplicable rows only — never unavailable/unresolved rows
+   * that never reached applicability at all.
+   */
+  rejectedCandidates: RunReviewRejectedCandidate[];
 }
 
 const STRING_FIELDS: Exclude<ApplicabilityField, "valueUnit">[] = [
@@ -205,6 +228,7 @@ export async function runReview(input: RunReviewInput, db: pg.Pool): Promise<Run
     evaluatorVersion: string;
   }
   const outcomes: RowOutcome[] = [];
+  const rejectedCandidates: RunReviewRejectedCandidate[] = [];
 
   for (const row of rows) {
     // Steps 3-4 — judge residue for this row, then assemble EvidenceFields.
@@ -244,8 +268,22 @@ export async function runReview(input: RunReviewInput, db: pg.Pool): Promise<Run
 
     // Step 6 — relations, per stateMachine.ts's caller precondition: ONLY an
     // applicable row may produce a relation; an inapplicable row (wrong entity,
-    // wrong period, ...) produces nothing, and no evidence_match row at all.
-    if (!applicability.applicable) continue;
+    // wrong period, ...) produces nothing and no evidence_match row at all — but
+    // it does surface as a rejectedCandidate so the card can explain the
+    // rejection (§ Product contract's single-finding and two-block cards). The
+    // locator value mirrors the one computed for applicable rows below.
+    if (!applicability.applicable) {
+      const locator = row.resolved.locator ?? `inline:${row.payloadHash}`;
+      rejectedCandidates.push({
+        evidenceId: row.evidenceId,
+        locator,
+        mismatchedFields: [...applicability.mismatched],
+        details: applicability.fields
+          .filter((f) => f.status === "mismatched" && f.detail !== undefined)
+          .map((f) => ({ field: f.field, detail: f.detail! })),
+      });
+      continue;
+    }
 
     // method: entailed if ANY field that actually contributed to the result
     // came from the judge; quoted_or_computed if every contributing field was
@@ -328,5 +366,6 @@ export async function runReview(input: RunReviewInput, db: pg.Pool): Promise<Run
     stateReason: assigned.reason,
     noSource: !hadAddressableSource,
     matches: outcomes.map((o) => ({ evidenceId: o.evidenceId, relation: o.relation, method: o.method })),
+    rejectedCandidates,
   };
 }
