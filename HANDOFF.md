@@ -2,6 +2,22 @@
 
 Paste this file's contents (or point at this file) when handing the work to another coding agent (opencode or otherwise). It exists so the next session doesn't have to re-derive context from this repo's commit history.
 
+## Resume protocol — if this session ends, start here
+
+This file is written so that **if this session dies mid-work and the next instruction is just "continue," any agent — Claude, or opencode running on DeepSeek — can pick up exactly where it left off without the person having to re-explain anything.**
+
+1. **Git is ground truth, not this file.** This file is updated after every completed step, but if it's ever stale, `git log --oneline --all` and `git branch -a` on `github.com/notarydev/notary-check` tell you what's actually landed. Check `## Progress log` below first; verify against git if anything looks off.
+2. **Find the next unchecked item in `## Progress log`.** Work proceeds top to bottom, in the order given — later steps depend on earlier ones being real (this is `§ Phase 1 build order`'s own stated discipline, not an arbitrary choice).
+3. **Do the work on a feature branch** (`feature/<step-name>`), off `main`, following the pattern already used for `feature/evidence-manifest`.
+4. **The dispatch pattern that's worked so far:**
+   ```bash
+   opencode run "<scoped task, referencing docs/plan.md section numbers>" \
+     -m deepseek/deepseek-v4-flash --auto --format json --title "<step name>"
+   ```
+   Scope each dispatch to exactly one `§ Phase 1 build order` step — no more. Tell it explicitly what NOT to build (the next steps down the list, auth, the judge, etc.) so it doesn't silently expand scope.
+5. **Never trust "typecheck passed" as "it works."** Every step so far has had at least one real bug that only showed up when actually run against a live dependency (a wrong relative path in the migration runner, invalid UUIDs in seed data that only failed at request-validation time). Stand up the real dependency (Postgres via `docker run`, etc.), exercise every case by hand (`curl`, not just reading the code), and only then commit.
+6. **Update `## Progress log` below before ending the session** — check off what's done, note what was verified and how, note any bugs found/fixed. A step that's "done" in code but not reflected here has not actually been handed off.
+
 ## Source of truth
 
 The full spec is one file: **`docs/plan.md`** (checked into this repo). Everything below is a pointer into that document. Do not re-derive product decisions, card copy, or the verification pipeline design from scratch — they're already decided and cross-referenced there.
@@ -17,34 +33,23 @@ The full spec is one file: **`docs/plan.md`** (checked into this repo). Everythi
 
 Use normal feature branches for units of work (`feature/evidence-manifest`, `feature/deterministic-verifier`, ...), merged to `main` after review.
 
-## What's built (verified by running it, not just written)
+## Progress log — the actual resume point, keep this current
 
-- `server/` — MCP server (Express + `@modelcontextprotocol/sdk` + `@modelcontextprotocol/ext-apps`). Boots, responds to `initialize`, and `tools/call` on `review_source_backed_answer` correctly routes to all four mocked scenarios.
-- `ui/` — the review card (React), built to a single inlined `dist/mcp-app.html`. All four card states visually confirmed correct (copy, layout, special characters) via the `?mock=` param.
-- Real bugs found by building it and fixed (see `README.md` for the list) — ext-apps import path, Vite/`vite-plugin-singlefile` version incompatibility, entry-renaming approach, mock-param double-decode, charset/background.
+**Phase 0** (§ Phase 0 build guide) — local build done and verified; live/human steps not done:
+- [x] `server/` + `ui/` scaffolded, built, and verified — MCP server boots and routes all four mocked scenarios correctly; card renders correctly (copy, layout, special characters) via the `?mock=` param. Several real bugs found and fixed along the way (ext-apps import path, Vite/`vite-plugin-singlefile` version incompatibility, entry-renaming approach, mock-param double-decode, charset/background — see `README.md`).
+- [ ] Expose the server publicly (Cloudflare Tunnel or ngrok) — § 0.10.
+- [ ] Register the tunnel URL as a Claude custom connector; confirm all four scenarios render through a *live Claude conversation*, not just the local browser test — § 0.11.
+- [ ] 20–30 scripted test conversations with real people — § 0.12. This is a people/scheduling task, not something a coding agent can do.
 
-This is **§ Phase 0** of the plan, and it is **not done** — see below.
+**Phase 1** (§ Phase 1 build order — work top to bottom, each step depends on the last being real):
+- [x] **Step 1 — source manifest binding + immutable locator/snapshot layer.** `engine/` package added: `Evidence` table exactly per § Core data model (14 fields), minimal `Organization`/`Review` stubs for FK integrity, `POST /v1/evidence` (org-scoped, append-only, inline payloads SHA-256 hashed). Branch `feature/evidence-manifest`, not yet merged to `main`. Verified for real against a live Postgres container: migrations applied, all 6 request cases exercised via `curl` (missing auth, cross-org rejection, url-only, inline-payload hashing, validation failure, invalid enum), append-only guarantee confirmed by resubmitting the same URL and checking two distinct rows landed. Two real bugs found and fixed in review: a wrong relative path in the migration runner, and non-RFC-compliant seed UUIDs that failed the route's own Zod validation.
+- [ ] **Step 2 — deterministic claim-field checks + the state machine** (§ Verification pipeline steps 2, 5, 8). Not started.
+- [ ] **Step 3 — adversarial golden fixtures for source ingestion** (§ Verification pipeline step 3; locked test cases 16–17). Must land before step 4 — the judge should never be the first line of defense against a hostile source.
+- [ ] **Step 4 — the constrained judge** (§ LLM judge design — DeepSeek, Chain-of-Verification, the four-outcome extraction vocabulary in § Judge authority boundary, no raw confidence gating), measured against a held-out labeled set (§ Evaluator governance and rollback).
+- [ ] **Step 5 — auth, quotas, retention/deletion, observability (§ Monitoring), kill switch.** The `x-notary-organization-id` header in step 1's code is an explicit stub for this — replace it here, don't patch around it earlier.
+- [ ] **Step 6 — a tightly scoped invited cohort.** An ops/people step, not code.
 
-## What's not built
-
-**Rest of Phase 0** (§ 0.10–0.13 of the plan):
-1. Expose the server publicly (Cloudflare Tunnel or ngrok) — not yet run.
-2. Register the tunnel URL as a Claude custom connector and confirm all four scenarios render through a *live Claude conversation* — not yet done. The local browser test is not a substitute for this.
-3. 20–30 scripted test conversations with real people, testing comprehension and perceived helpfulness — not started.
-
-Phase 0 is not "complete" until all of § 0.12's checklist is true, including the two items above.
-
-**All of Phase 1** (§ Delivery sequence, § Phase 1 build order — build in this order, later steps depend on earlier ones being real):
-1. Source manifest binding + immutable locator/snapshot layer (§ Verification pipeline step 1; `Evidence` in § Core data model).
-2. Deterministic claim-field checks + the state machine (§ Verification pipeline steps 2, 5, 8).
-3. Adversarial golden fixtures for source ingestion (§ Verification pipeline step 3; locked test cases 16–17) — before the judge is added.
-4. The constrained judge (§ LLM judge design — DeepSeek, Chain-of-Verification, the four-outcome extraction vocabulary in § Judge authority boundary, no raw confidence gating), measured against a held-out labeled set (§ Evaluator governance and rollback).
-5. Auth, quotas, retention/deletion, observability (§ Monitoring), kill switch.
-6. A tightly scoped invited cohort.
-
-None of this exists yet — no database, no real claim extraction, no evidence fetcher, no judge integration, no auth.
-
-**Everything after Phase 1** (Phase 2 repeat-value measurement, Phase 3 expansion, § Exploratory review, public-launch items in § Public-launch readiness — billing, self-serve onboarding, legal docs, support) — not started, and per the plan, correctly not started yet.
+**Everything after Phase 1** (Phase 2 repeat-value measurement, Phase 3 expansion, § Exploratory review, and all of § Public-launch readiness — billing, self-serve onboarding, legal docs, support) — correctly not started. Per the plan's own sequencing, none of it should start before Phase 1 ships and proves repeat value; see `docs/plan.md § Delivery sequence` if the reason for that ordering needs re-justifying to anyone.
 
 ## Hard constraints — do not relitigate these, they're locked decisions
 
