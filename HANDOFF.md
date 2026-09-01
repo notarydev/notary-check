@@ -4,7 +4,18 @@ Paste this file's contents (or point at this file) when handing the work to anot
 
 ## Source of truth
 
-The full spec is one file, not this repo: **`Notary — Tier 1 Build and Operating Plan Final 831.md`** (currently local-only, not yet in this repo — ask whether it should be added under `docs/`). Everything below is a pointer into that document. Do not re-derive product decisions, card copy, or the verification pipeline design from scratch — they're already decided and cross-referenced there.
+The full spec is one file: **`docs/plan.md`** (checked into this repo). Everything below is a pointer into that document. Do not re-derive product decisions, card copy, or the verification pipeline design from scratch — they're already decided and cross-referenced there.
+
+## Repo structure — the engine/MCP boundary
+
+`§ Architecture` in the plan draws a real seam between two components. This repo keeps both in one place (a monorepo, not separate repos, and not git branches — branches are for versioned changes over time, not for separating two components that run simultaneously) but enforces the boundary in code:
+
+- **`server/` + `ui/` — the MCP layer.** Thin and stable. Its only job is: receive the tool call, forward it to `engine/`'s API, render the card. Changes rarely once the card/tool contract is locked (`§ Product contract`).
+- **`engine/` — the orchestrator.** Everything in the plan's architecture diagram under "review orchestrator + queue": the evidence manifest, deterministic verifier, judge integration, Postgres data model, quotas, monitoring. This is where nearly all of `§ Phase 1 build order`'s work happens.
+
+**Hard rule: `server/` calls `engine/` only over its HTTP API, never by importing its internals.** That's what makes a future split into separate repos (if a second client — a browser extension, the later WATCH gateway — ever needs the engine) a clean extraction instead of an untangling job. Split into separate repos only when there's an actual second consumer or a real reason for divergent deploy cadence — not preemptively.
+
+Use normal feature branches for units of work (`feature/evidence-manifest`, `feature/deterministic-verifier`, ...), merged to `main` after review.
 
 ## What's built (verified by running it, not just written)
 
