@@ -23,6 +23,8 @@
 // cannot_be_determined — never a number in play.
 
 import { delimitEvidenceForModel } from "../ingestion/delimitEvidence.ts";
+import { logEvent } from "../observability/log.ts";
+import { estimateDeepSeekCostCents } from "../quotas/usage.ts";
 import type { ApplicabilityField, EvidenceFields, ValueUnit } from "../verification/applicability.ts";
 import { z } from "zod";
 import {
@@ -32,6 +34,7 @@ import {
   type JudgeCallRecord,
   type JudgeClient,
 } from "./judgeClient.ts";
+import { isJudgeDisabled } from "./killSwitch.ts";
 import { buildFieldPrompt, PROMPT_VERSION } from "./promptTemplates.ts";
 
 export type JudgeOutcome = "present" | "absent" | "ambiguous" | "cannot_be_determined";
@@ -63,6 +66,12 @@ export interface ExtractFieldOptions {
   maxTokens?: number;
   /** Wall-clock cap for the underlying HTTP call. Defaults to the client's. */
   timeoutMs?: number;
+  /**
+   * Organization context for observability only (§ Monitoring): the judge call
+   * log line carries it so cost/latency can be rolled up per organization. It
+   * never affects extraction. Omitted when the caller has no org yet.
+   */
+  organizationId?: string;
 }
 
 /**
@@ -98,6 +107,19 @@ export async function extractField(
     evidenceLocator: options.evidenceLocator,
   };
 
+  // Kill switch (§ killSwitch.ts): when disabled, extractField returns
+  // cannot_be_determined for every field WITHOUT calling the judge client at
+  // all — no network call. Deterministic checks are unaffected by design.
+  if (isJudgeDisabled()) {
+    logEvent({
+      event: "judge_call",
+      path: "judge-involved",
+      error_cause: "judge_kill_switch_active",
+      organization_id: options.organizationId,
+    });
+    return { field, outcome: "cannot_be_determined", record: { ...recordBase, error: "judge_kill_switch_active" } };
+  }
+
   let client: JudgeClient;
   try {
     client = options.client ?? createJudgeClient({ model: options.model, timeoutMs: options.timeoutMs });
@@ -118,17 +140,44 @@ export async function extractField(
     maxTokens: options.maxTokens,
   };
 
+  const startedAt = performance.now();
   let result;
   try {
     result = await client.call(input);
   } catch (err) {
+    const latencyMs = Math.round(performance.now() - startedAt);
+    logEvent({
+      event: "judge_call",
+      path: "judge-involved",
+      latency_ms: latencyMs,
+      error_cause: "judge_client_threw",
+      organization_id: options.organizationId,
+    });
     return { field, outcome: "cannot_be_determined", record: { ...recordBase, error: (err as Error).message } };
   }
+  const latencyMs = Math.round(performance.now() - startedAt);
 
   if (result.status === "error") {
+    logEvent({
+      event: "judge_call",
+      path: "judge-involved",
+      latency_ms: latencyMs,
+      error_cause: result.record.error,
+      organization_id: options.organizationId,
+    });
     return { field, outcome: "cannot_be_determined", record: result.record };
   }
 
+  // Observability (§ Monitoring): every judge call logs its latency and derived
+  // cost so spend trends toward a cap can be seen before the cap is hit. The
+  // cost comes from the token counts judgeClient already returned on the record.
+  logEvent({
+    event: "judge_call",
+    path: "judge-involved",
+    latency_ms: latencyMs,
+    cost_cents: estimateDeepSeekCostCents(result.record.inputTokens ?? 0, result.record.outputTokens ?? 0),
+    organization_id: options.organizationId,
+  });
   return parseJudgeAnswer(result.record.answer ?? "", field, result.record);
 }
 

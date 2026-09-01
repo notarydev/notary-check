@@ -1,35 +1,49 @@
 # Notary Check — engine
 
-This is **Phase 1 build-order step 1 only**: source manifest binding plus an
-immutable locator/snapshot layer (§ Verification pipeline, step 1; the
-`Evidence` table in § Core data model). It is deliberately narrow. Everything
-else the engine will eventually do — safe source fetching, parsing,
-deterministic verification, the judge, the state machine, real auth, quotas,
-retention/deletion, billing — is **later, separate work** and is not stubbed or
-pretended at here.
+This is the **Phase 1 build-order engine** (steps 1–5). It started as source
+manifest binding plus an immutable locator/snapshot layer (§ Verification
+pipeline, step 1; the `Evidence` table in § Core data model) and has since
+grown the deterministic verifier (step 2), adversarial source ingestion (step
+3), the constrained DeepSeek judge (step 4), and auth / quotas / retention /
+observability / kill switch (step 5). Still deliberately absent: billing,
+OAuth/OIDC for a human-facing dashboard login, a metrics/alerting platform, and
+anything beyond the CHECK tier.
 
-## What exists in this step
+## What exists
 
-- The `Evidence` table (exactly the fields from § Core data model), plus the
-  smallest possible `Organization` and `Review` stubs purely for referential
-  integrity and organization scoping.
+- The `Evidence`, `Claim`, `EvidenceMatch`, `organization_api_key`, and
+  `usage_event` tables (§ Core data model), plus minimal
+  `Organization`/`Review`/`User` stubs purely for referential integrity and
+  organization scoping.
 - Raw SQL migrations in `migrations/` run by a minimal runner (the `pg`
   package, no ORM).
 - One HTTP endpoint: `POST /v1/evidence` — registers a new source into the
   manifest by creating an `Evidence` row. It accepts a `submitted_url`, a
   `payload_ref`, and/or an inline `payload`. It does **not** fetch or parse
   anything.
+- Real service-to-service auth: `Authorization: Bearer <api-key>`, verified
+  against the `organization_api_key` table (build-order step 5). The key is
+  stored only as a SHA-256 hash plus a non-secret `nk_live_*` prefix; the
+  plaintext is returned once at issue time.
+- Quota enforcement (`src/quotas/`): per-org monthly spend limit and a hard
+  global DeepSeek spend cap, both configurable via env and defaulting sanely.
+- Honest payload deletion (`src/evidence/deleteEvidence.ts`): nulls
+  `payload_ref`/`payload_hash` and sets `access_revoked_at` without hard-deleting
+  history.
+- A kill switch (`src/judge/killSwitch.ts`) that disables the judge path so
+  `extractField` returns `cannot_be_determined` without any network call.
+- Structured JSON logging (`src/observability/log.ts`) wired into the evidence
+  route and the judge call site.
 
-## What does NOT exist here (by design — later build-order steps)
+## What does NOT exist here (by design — later build-order work)
 
-- No source fetching, URL resolution, or payload preservation (step 3).
-- No parsing of HTML/PDF/excerpts, no canonical text extraction.
-- No deterministic verifier, no claim-field checks, no state machine (step 2).
-- No judge, no model calls at all (step 4).
-- No auth — the organization identity is taken from the `x-notary-organization-id`
-  request header as an explicit stub, cross-checked against the review's real
-  organization. Real authentication is build-order step 5 and will replace the
-  header.
+- No parsing of HTML/PDF/excerpts, no canonical text extraction beyond
+  ingestion fencing.
+- No OAuth/OIDC for a human-facing login (a vendor decision — Auth0/Clerk/
+  WorkOS/custom — not something to guess) and no metrics/alerting platform
+  (Datadog/Grafana/... — also a vendor choice). Structured logs are emitted as
+  JSON lines a real platform could later ingest.
+- No user-facing review orchestration, corrections, or billing.
 
 ## Scope discipline
 
@@ -55,10 +69,9 @@ npm start                   # Express API on http://localhost:4001
 ```
 
 `migrations/0002_seed_dev.sql` seeds one demo organization and one review with
-fixed ids so the endpoint is exercisable before review creation exists (a later
-step). Use org header `x-notary-organization-id:
-00000000-0000-4000-8000-000000000001` with `review_id:
-00000000-0000-4000-8000-000000000002` for local testing.
+fixed ids so the endpoint is exercisable before review creation exists. Use
+`review_id: 00000000-0000-4000-8000-000000000002` for local testing, with an API
+key issued for the demo org (see below).
 
 ## API
 
@@ -66,7 +79,11 @@ step). Use org header `x-notary-organization-id:
 
 Headers:
 
-- `x-notary-organization-id: <uuid>` (required; stub until real auth)
+- `Authorization: Bearer <api-key>` (required). Keys are issued via
+  `issueApiKey()` in `engine/src/auth/apiKey.ts` (there is no key-issuing
+  endpoint yet — it's a library function; a future org-admin flow will call
+  it). The organization is derived from the key; the old
+  `x-notary-organization-id` header stub is gone.
 
 Body (JSON; at least one of `submitted_url` / `payload_ref` / `payload` is
 required):
@@ -91,3 +108,8 @@ If an inline `payload` is supplied it is hashed and the row is marked
 - `npm run build` — `tsc` (emits `dist/`)
 - `npm run migrate` — apply pending migrations
 - `npm start` — run the API with `tsx`
+- `npm test` — the full suite. The auth / quota / retention / evidence-route
+  tests hit a REAL Postgres and skip cleanly when none is configured; point them
+  at one via `TEST_DATABASE_URL` (or `DATABASE_URL`), e.g.
+  `TEST_DATABASE_URL=postgres://... npm test`. The mocked judge tests and the
+  kill-switch test never need a database.
