@@ -53,9 +53,17 @@ Use normal feature branches for units of work (`feature/evidence-manifest`, `fea
   - **Known gap, honestly documented in code, not papered over:** no caller in the codebase yet persists judge usage to `usage_event` — `quotas/usage.ts`'s mapping is real and tested, but the write only happens once an orchestrator that owns review/org context exists to call it. `quotaCheck()` itself is real and independently DB-tested.
 - [ ] **Step 6 — a tightly scoped invited cohort.** An ops/people step, not code — see docs/plan.md's Experiment design and Delivery sequence sections when this is ready to start.
 
-**Phase 1's code (steps 1–5) is done.** Two things need a human decision before real evidence/real users hit this, tracked here so they aren't lost: (1) the comparator/wording-normalization gap noted under step 4, and (2) picking an OAuth/OIDC vendor and an observability platform, noted under step 5. Neither blocks reading this codebase or continuing to Phase 2 planning — they block real usage.
+**Phase 1's code (steps 1–5) is done.** Two things need a human decision before real evidence/real users hit this, tracked here so they aren't lost: (1) the comparator/wording-normalization gap noted under step 4, and (2) picking an observability platform, noted under step 5.
 
-**Everything after Phase 1** (Phase 2 repeat-value measurement, Phase 3 expansion, § Exploratory review, and all of § Public-launch readiness — billing, self-serve onboarding, legal docs, support) — correctly not started. Per the plan's own sequencing, none of it should start before Phase 1 ships and proves repeat value; see `docs/plan.md § Delivery sequence` if the reason for that ordering needs re-justifying to anyone.
+## Beyond Phase 1 — work done ahead of `docs/plan.md`'s own sequencing, at the product owner's explicit request
+
+`§ Delivery sequence` puts billing and self-serve auth after an invited cohort and the pre-pilot engine gate. That sequencing is still correct as *launch* advice — none of what's below should be described as "live" until those gates are real — but the integration code was requested now, so it's built now:
+
+- [x] **Stripe billing scaffolding.** `engine/src/billing/` — checkout + webhook routes, idempotent Product/Price bootstrap, four tiers (Starter $0/25 checks, Pro $49/500, Team $199/2,500, Enterprise custom). **Merged to `main`.** Independently re-verified against the live Stripe test account (not just the dispatched report): products/prices listed directly via the Stripe API, amounts confirmed, bootstrap re-run independently and confirmed byte-identical idempotent output. 127 tests (125 pass + 2 skipped live-DeepSeek).
+- [ ] **Clerk human-dashboard auth.** In progress — `clerk auth login` run, awaiting the user completing the browser sign-in step; `clerk init` into a new `dashboard/` (Next.js) directory is next, linked to Clerk app `app_3IjomIPb0EimcgEpzrABwbjfPOy`. Not yet started: the actual `clerk init` scaffolding, matcher verification, sign-in/sign-up/UserButton wiring.
+- [ ] **The orchestrator** (dispatched as a parallel background agent): `Review.idempotency_key` (locked test case 18), wiring `safeFetch` into evidence resolution, a real end-to-end "review a claim" flow connecting evidence → applicability → judge → state assignment → persistence, and finally closing step 5's known gap (usage-event persistence for judge calls). This is genuinely new scope beyond the original 6 build-order steps — update this section, not the Phase 1 step list, when it lands.
+
+**Still correctly not started, no change:** Phase 2 repeat-value measurement, Phase 3 expansion, § Exploratory review, self-serve onboarding, legal docs, support, status page. See `docs/plan.md § Delivery sequence` if the reason for that ordering needs re-justifying to anyone.
 
 ## Hard constraints — do not relitigate these, they're locked decisions
 
