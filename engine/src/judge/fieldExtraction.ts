@@ -1,0 +1,246 @@
+// The Chain-of-Verification field extractor (§ LLM judge design; § Judge
+// authority boundary). One function, `extractField`, asks the judge ONE narrow
+// per-field question about a resolved evidence passage and parses the answer
+// into the four-outcome vocabulary. It is deliberately BLIND: it never receives
+// or references the claim's asserted value for the field being extracted.
+//
+// The invariant this module exists to serve: the judge's output is a narrow,
+// per-field, categorical OBSERVATION about the evidence — present / absent /
+// ambiguous / cannot_be_determined — never a confidence score, never a
+// claim-level verdict, never "does this support the claim". The comparison and
+// final-state assignment are done by the PURE deterministic layer
+// (assessApplicability in ../verification/applicability.ts and assignState in
+// ../verification/stateMachine.ts). This module never imports or calls either
+// of them; `assembleEvidenceFields` below produces the EvidenceFields object
+// that IS the only thing the judge's output ever feeds.
+//
+// The absence of any confidence field on JudgeFieldAnswer is deliberate: the
+// plan (§ No raw confidence gate) removed confidence thresholds because LLM
+// self-reported confidence is not calibrated, and the four categorical outcomes
+// are the signal. Adding confidence here would reintroduce the exact gate the
+// plan removed. If the model sneaks a "confidence" key into its JSON anyway,
+// the strict zod schema below rejects the whole output and it collapses to
+// cannot_be_determined — never a number in play.
+
+import { delimitEvidenceForModel } from "../ingestion/delimitEvidence.ts";
+import type { ApplicabilityField, EvidenceFields, ValueUnit } from "../verification/applicability.ts";
+import { z } from "zod";
+import {
+  createJudgeClient,
+  DEFAULT_JUDGE_MODEL,
+  type JudgeCallInput,
+  type JudgeCallRecord,
+  type JudgeClient,
+} from "./judgeClient.ts";
+import { buildFieldPrompt, PROMPT_VERSION } from "./promptTemplates.ts";
+
+export type JudgeOutcome = "present" | "absent" | "ambiguous" | "cannot_be_determined";
+
+export interface JudgeFieldAnswer {
+  field: ApplicabilityField;
+  outcome: JudgeOutcome;
+  /** Only ever populated when outcome === "present". */
+  value?: string;
+  /** The span of the passage the outcome is based on, when the model gave one. */
+  sourceSpan?: string;
+  /**
+   * Provenance (§ Judge authority boundary requirement #6 — persist the judge
+   * model, prompt version, question, evidence locator, and answer). Deliberately
+   * kept OFF the comparison path: assessApplicability reads only the
+   * EvidenceFields assembled from field/outcome/value. But it is never dropped —
+   * every answer carries the full record so a caller can persist it.
+   */
+  record: JudgeCallRecord;
+}
+
+export interface ExtractFieldOptions {
+  /** Injected judge client. Defaults to a real client over the network. */
+  client?: JudgeClient;
+  promptVersion?: string;
+  model?: string;
+  /** The resolved evidence locator being interpreted (§ requirement #1). */
+  evidenceLocator?: string;
+  maxTokens?: number;
+  /** Wall-clock cap for the underlying HTTP call. Defaults to the client's. */
+  timeoutMs?: number;
+}
+
+/**
+ * Asks the judge to extract ONE field from a resolved evidence passage.
+ *
+ * Blind by construction: the signature has NO parameter for the claim's
+ * asserted value for `field`, so it is structurally impossible for a caller to
+ * pass it in — the blind-answering step from Chain-of-Verification
+ * (§ Why the judge doesn't get to read a passage and decide). The evidence
+ * text is always delimited via delimitEvidenceForModel before it reaches the
+ * model (locked test case 17's data-vs-instructions guard), and no raw
+ * undelimited evidence ever goes into a prompt.
+ *
+ * Never throws on model/parse failures: anything that cannot be parsed into the
+ * four-outcome schema (or any attempt to sneak in a confidence figure) maps to
+ * cannot_be_determined, with the failure preserved on the returned record.
+ */
+export async function extractField(
+  evidenceText: string,
+  field: ApplicabilityField,
+  options: ExtractFieldOptions = {},
+): Promise<JudgeFieldAnswer> {
+  const promptVersion = options.promptVersion ?? PROMPT_VERSION;
+
+  // Delimit the evidence as DATA before it can reach any prompt (§ delimitEvidence.ts).
+  const delimited = delimitEvidenceForModel(evidenceText);
+  const { system, user, question } = buildFieldPrompt(field, delimited);
+
+  const recordBase: JudgeCallRecord = {
+    model: options.model ?? DEFAULT_JUDGE_MODEL,
+    promptVersion,
+    question,
+    evidenceLocator: options.evidenceLocator,
+  };
+
+  let client: JudgeClient;
+  try {
+    client = options.client ?? createJudgeClient({ model: options.model, timeoutMs: options.timeoutMs });
+  } catch (err) {
+    // E.g. no DEEPSEEK_API_KEY configured — never crash, never guess.
+    return { field, outcome: "cannot_be_determined", record: { ...recordBase, error: (err as Error).message } };
+  }
+
+  const input: JudgeCallInput = {
+    model: options.model,
+    promptVersion,
+    question,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    evidenceLocator: options.evidenceLocator,
+    maxTokens: options.maxTokens,
+  };
+
+  let result;
+  try {
+    result = await client.call(input);
+  } catch (err) {
+    return { field, outcome: "cannot_be_determined", record: { ...recordBase, error: (err as Error).message } };
+  }
+
+  if (result.status === "error") {
+    return { field, outcome: "cannot_be_determined", record: result.record };
+  }
+
+  return parseJudgeAnswer(result.record.answer ?? "", field, result.record);
+}
+
+// The model's structured output, validated STRICTLY. `reasoning` is required
+// (the prompt forces step-by-step reasoning — part (b) of the recipe); a
+// `present` outcome requires a non-empty `value`; and `.strict()` rejects any
+// extra key, in particular a sneaked-in "confidence" number, collapsing it to
+// cannot_be_determined below.
+const MODEL_OUTPUT_SCHEMA = z
+  .object({
+    reasoning: z.string().min(1),
+    outcome: z.enum(["present", "absent", "ambiguous", "cannot_be_determined"]),
+    value: z.string().optional(),
+    source_span: z.string().optional(),
+  })
+  .strict()
+  .refine((d) => d.outcome !== "present" || (typeof d.value === "string" && d.value.trim().length > 0), {
+    message: "outcome 'present' requires a non-empty value",
+  });
+
+export type ModelOutputParseResult =
+  | { ok: true; data: { reasoning: string; outcome: JudgeOutcome; value?: string; source_span?: string } }
+  | { ok: false; error: string };
+
+/** Defensively extracts the JSON object the model was asked to emit, tolerating
+ * stray prose or a ```json fence around it. Returns undefined if there is no
+ * well-formed JSON object. */
+export function extractJsonObject(text: string): unknown {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)```\s*$/i.exec(trimmed);
+  const candidate = fenced ? fenced[1].trim() : trimmed;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return undefined;
+  try {
+    return JSON.parse(candidate.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Validates the model's raw JSON against the exact four-outcome schema. */
+export function safeParseModelOutput(rawAnswer: string): ModelOutputParseResult {
+  const json = extractJsonObject(rawAnswer);
+  if (json === undefined) {
+    return { ok: false, error: "model output is not a valid JSON object" };
+  }
+  const result = MODEL_OUTPUT_SCHEMA.safeParse(json);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    return { ok: false, error: `model output failed schema validation: ${first?.message ?? "unknown"}` };
+  }
+  return { ok: true, data: result.data };
+}
+
+/**
+ * Maps a validated model answer to a JudgeFieldAnswer. Only `present` carries a
+ * value forward (per § No raw confidence gate); any value the model attached to
+ * a non-present outcome is a hallucination and is dropped. Any invalid output
+ * maps to cannot_be_determined — never a crash, never a guess.
+ */
+export function parseJudgeAnswer(rawAnswer: string, field: ApplicabilityField, record: JudgeCallRecord): JudgeFieldAnswer {
+  const parsed = safeParseModelOutput(rawAnswer);
+  if (!parsed.ok) {
+    return { field, outcome: "cannot_be_determined", record: { ...record, error: parsed.error } };
+  }
+  return {
+    field,
+    outcome: parsed.data.outcome,
+    value: parsed.data.outcome === "present" ? parsed.data.value : undefined,
+    sourceSpan: parsed.data.source_span,
+    record,
+  };
+}
+
+/**
+ * Deterministic split of the judge's extracted value string into a ValueUnit.
+ * This is NOT claim-side extraction and NOT a unit conversion; it only separates
+ * a leading signed number from its unit so assessApplicability's unit-vs-value
+ * distinction (applicability.ts) can do its exact comparison. Matches the
+ * convention used in applicability.test.ts ('17%' → value '17', unit '%').
+ */
+export function parseValueUnit(extracted: string): ValueUnit {
+  const raw = extracted.trim();
+  const stripped = raw.replace(/^[$£€¥]/, "").trim();
+  const match = /^([+-]?(?:\d[\d,]*)(?:\.\d+)?)\s*(.*)$/.exec(stripped);
+  if (!match) {
+    return { value: raw };
+  }
+  const value = match[1].replace(/,/g, "");
+  const unit = match[2].trim().replace(/\s+/g, " ").replace(/[.,;:]$/, "").trim();
+  return unit.length > 0 ? { value, unit } : { value };
+}
+
+/**
+ * Assembles the judge's per-field answers into the EvidenceFields object that
+ * assessApplicability consumes. Exactly the plan's rule: present → value,
+ * everything else → undefined. A field the judge could not establish stays
+ * undefined, which assessApplicability already treats as "unestablished"
+ * (a mismatch when the claim asserts that field — see applicability.ts lines
+ * 133-143 and 165-172). This is the ONLY thing the judge's output ever feeds;
+ * nothing else downstream consumes it.
+ */
+export function assembleEvidenceFields(answers: readonly JudgeFieldAnswer[]): EvidenceFields {
+  const evidence: EvidenceFields = {};
+  for (const answer of answers) {
+    if (answer.outcome !== "present" || answer.value === undefined) continue;
+    if (answer.field === "valueUnit") {
+      evidence.valueUnit = parseValueUnit(answer.value);
+    } else {
+      evidence[answer.field] = answer.value;
+    }
+  }
+  return evidence;
+}
