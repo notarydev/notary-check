@@ -36,24 +36,26 @@ const sha256 = (text: string): string => createHash("sha256").update(text, "utf8
 const CLAIM_FIELDS: ClaimFields = {
   entity: "Acme",
   period: "FY25",
-  measure: "revenue growth",
+  metric: "revenue",
+  operator: "increase",
   valueUnit: { value: "17", unit: "%" },
   comparatorBaseline: "prior year",
   modality: "actual",
   scope: "company-wide",
 };
 
-// Every claim field verbatim, including the value — all resolvable
-// deterministically.
-const SUPPORT_TEXT = "Acme's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+// Every claim field appears literally in the evidence text — including the
+// operator "increase" inside "increased" — so all fields are resolvable
+// deterministically (no judge residue).
+const SUPPORT_TEXT = "Acme's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
 // Identical but for the value: 12%, so the ONLY residue is valueUnit.
-const CONTRADICT_TEXT = "Acme's revenue growth was 12% in FY25, compared to the prior year, actual company-wide figures.";
+const CONTRADICT_TEXT = "Acme's revenue increased 12% in FY25, compared to the prior year, actual company-wide figures.";
 // Wrong entity: every field resolves deterministically EXCEPT entity — "Acme"
 // never appears, so entity is the single residual field. Under a denied quota
 // it resolves to cannot_be_determined (unestablished), so the row comes back
 // inapplicable with mismatchedFields exactly ["entity"].
-const WRONG_ENTITY_GLOBEX_TEXT = "Globex's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
-const WRONG_ENTITY_INITECH_TEXT = "Initech's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+const WRONG_ENTITY_GLOBEX_TEXT = "Globex's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
+const WRONG_ENTITY_INITECH_TEXT = "Initech's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
 
 async function seedRetrievedEvidence(
   pool: pg.Pool,
@@ -167,7 +169,7 @@ test(
       const matches = (await pool.query("SELECT * FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
       assert.equal(matches.relation, "contradicts");
       assert.equal(matches.method, "entailed");
-      assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v1");
+      assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v2");
     } finally {
       await pool.end();
     }
@@ -223,7 +225,7 @@ test(
       // Claim entity "Acme, Inc." never appears verbatim (comma + trailing
       // period + different case), so the deterministic exact-substring pass in
       // reviewFlow.ts leaves entity residual and hands it to the judge.
-      const evidenceText = "ACME INC's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+      const evidenceText = "ACME INC's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
       const evidenceId = await seedRetrievedEvidence(pool, reviewId, evidenceText);
 
       const originalKey = process.env.DEEPSEEK_API_KEY;

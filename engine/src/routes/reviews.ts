@@ -22,7 +22,8 @@ const createReviewSchema = z.object({
 const claimFieldsSchema = z.object({
   entity: z.string().optional(),
   period: z.string().optional(),
-  measure: z.string().optional(),
+  metric: z.string().optional(),
+  operator: z.enum(["increase", "decrease", "no_change"]).optional(),
   valueUnit: z.object({ value: z.string(), unit: z.string().optional() }).optional(),
   comparatorBaseline: z.string().optional(),
   modality: z.string().optional(),

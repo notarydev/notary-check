@@ -1,7 +1,7 @@
 // Deterministic claim-field applicability comparator (§ Verification pipeline,
 // step 5). It tests whether a resolved evidence excerpt addresses the same
-// entity, time/period, scope, measure, value/unit, denominator/baseline, and
-// modality as the claim. A material mismatch on ANY field excludes the
+// entity, time/period, scope, metric, operator, value/unit,
+// denominator/baseline, and modality as the claim. A material mismatch on ANY field excludes the
 // candidate from support even when its wording or number is attractive — that
 // strictness is the entire point of this function (the flagship wrong-entity /
 // wrong-period / wrong-denominator locked test cases all turn on it).
@@ -28,11 +28,24 @@ import type { NormalizationRuleId } from "./normalization.ts";
 export type ApplicabilityField =
   | "entity"
   | "period"
-  | "measure"
+  | "metric"
+  | "operator"
   | "valueUnit"
   | "comparatorBaseline"
   | "modality"
   | "scope";
+
+// "metric" is the noun being measured ("revenue", "market share", "headcount")
+// — free text, never semantically normalized (§ normalization.ts, locked case
+// 10: "gross revenue" must never equal "revenue"). "operator" is the asserted
+// direction of change about that metric — deliberately a small CLOSED
+// vocabulary (increase | decrease | no_change), extracted directly into that
+// vocabulary by both claim and evidence extraction (the judge's already-
+// documented "legitimate interpretation" authority covers recognizing "grew"/
+// "rose"/"climbed" as "increase" at extraction time). This is what lets
+// "revenue grew 12%" and "revenue growth was 12%" compare equal via plain
+// string equality — metric="revenue"+operator="increase" in both — without
+// ever needing a synonym-matching normalizer for either field.
 
 // The structured fields of one claim as produced by extraction
 // (§ Verification pipeline, step 2). This task does NOT implement extraction
@@ -42,7 +55,8 @@ export type ApplicabilityField =
 export interface ClaimFields {
   entity?: string;
   period?: string;
-  measure?: string;
+  metric?: string;
+  operator?: string;
   valueUnit?: ValueUnit;
   comparatorBaseline?: string;
   modality?: string;
@@ -53,7 +67,8 @@ export interface ClaimFields {
 export interface EvidenceFields {
   entity?: string;
   period?: string;
-  measure?: string;
+  metric?: string;
+  operator?: string;
   valueUnit?: ValueUnit;
   comparatorBaseline?: string;
   modality?: string;
@@ -63,7 +78,7 @@ export interface EvidenceFields {
 // A structured value plus its unit, kept separate so a UNIT mismatch is a
 // material applicability failure while a VALUE difference is a contradiction.
 // "17%" is value "17", unit "%"; "revenue as a share of GDP" would be a
-// measure/denominator, not a unit.
+// metric/denominator, not a unit.
 export interface ValueUnit {
   value: string;
   unit?: string;
@@ -106,7 +121,8 @@ type StringField = Exclude<ApplicabilityField, "valueUnit">;
 const STRING_FIELDS: StringField[] = [
   "entity",
   "period",
-  "measure",
+  "metric",
+  "operator",
   "comparatorBaseline",
   "modality",
   "scope",

@@ -12,7 +12,7 @@
 // Per step 2, the extractor excludes greetings, creative writing, uncheckable
 // opinion, and transitions, and recovers for each claim the same field
 // vocabulary already fixed in ../verification/applicability.ts (entity, period,
-// measure, valueUnit, comparatorBaseline, modality, scope) plus materiality —
+// metric, operator, valueUnit, comparatorBaseline, modality, scope) plus materiality —
 // which step 2 defines as "a checkability decision, not a truth score".
 //
 // Scope boundary: this module does NOT decide anything about evidence or
@@ -45,7 +45,7 @@ import type { ClaimFields, ValueUnit } from "../verification/applicability.ts";
 
 /** Version string persisted with every extraction call (§ requirement #6).
  * Bump on any change to the prompt text or the output schema. */
-export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction-v1";
+export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction-v2";
 
 /** One claim decomposed out of the answer text (§ Verification pipeline, step 2). */
 export interface ExtractedClaim {
@@ -186,12 +186,12 @@ export async function extractClaims(
 
 // (a) The criterion, stated in the verification pipeline's own vocabulary, not
 // as adjectives: what counts as a claim is a literal condition (an entity plus
-// at least one of the six checkable attributes), and materiality is a literal
+// at least one of the seven checkable attributes), and materiality is a literal
 // procedure (would a review surface it if wrong), not a truth or importance
 // ranking.
 const CRITERION =
-  "A \"claim\" here is defined by the verification pipeline, not by opinion. A claim is a sentence or clause that asserts a checkable factual proposition: it must name or clearly imply an ENTITY (the organization, product, division, or person the assertion is about) AND assert at least one of PERIOD (when), MEASURE (what is quantified), VALUE/UNIT (the figure), COMPARATOR/BASELINE (relative to what), MODALITY (actual vs projected vs target vs bound), or SCOPE (over what population or segment).\n" +
-  "Greetings, creative writing, pure opinion or preference, rhetorical questions, and transition phrases are NOT claims — exclude them. A candidate with no entity, and none of the six attributes, asserts no checkable proposition — exclude it.\n" +
+  "A \"claim\" here is defined by the verification pipeline, not by opinion. A claim is a sentence or clause that asserts a checkable factual proposition: it must name or clearly imply an ENTITY (the organization, product, division, or person the assertion is about) AND assert at least one of PERIOD (when), METRIC (the noun being measured), OPERATOR (the asserted direction of change on that metric — increase, decrease, or no_change), VALUE/UNIT (the figure), COMPARATOR/BASELINE (relative to what), MODALITY (actual vs projected vs target vs bound), or SCOPE (over what population or segment).\n" +
+  "Greetings, creative writing, pure opinion or preference, rhetorical questions, and transition phrases are NOT claims — exclude them. A candidate with no entity, and none of the seven attributes, asserts no checkable proposition — exclude it.\n" +
   "Materiality is a checkability decision, not a truth score: mark a claim material (true) when a Notary review SHOULD surface it if it turned out to be wrong — a figure, date, entity, or comparative fact a reader would rely on. Mark it minor (false) when being wrong would not change what a reader takes away from the answer — a throwaway example number, an illustrative aside, decorative framing.";
 
 // (a continued) The per-field decomposition procedure, in the exact field
@@ -200,7 +200,8 @@ const FIELD_DECOMPOSITION =
   "For EVERY claim you extract, decompose it into exactly these fields — the same vocabulary the downstream applicability check uses:\n" +
   '- "entity": the owner/subject of the assertion — a proper noun naming a company, product, division, or person, with pronouns ("it", "the company") resolved to their antecedent inside the answer.\n' +
   '- "period": the time the assertion covers ("FY25", "fiscal 2025", "Q3"), not a publication or message date.\n' +
-  '- "measure": the thing being quantified ("revenue", "market share", "growth rate"), in the claim\'s own words.\n' +
+  '- "metric": the noun being measured ("revenue", "market share", "headcount"), in the claim\'s own words — the thing itself, not the change asserted about it.\n' +
+  '- "operator": the direction of change asserted about the metric. Extract as exactly one of "increase", "decrease", or "no_change" — recognize the underlying direction regardless of the claim\'s own verb ("grew", "rose", "climbed", "expanded" all mean "increase"; "fell", "declined", "shrank", "dropped" all mean "decrease"). Omit when the claim states an absolute figure with no asserted direction of change (e.g. "revenue was $12M in FY25" has a metric and a value, but no operator).\n' +
   '- "value_unit": the numeric figure separated from its unit — value "17" with unit "%" for "17%"; value "1.2" with unit "billion" for "$1.2 billion". A figure with no stated unit has a value and no unit. Omit the whole object when the claim states no figure.\n' +
   '- "comparator_baseline": what the figure is relative to ("prior year", "the industry average"). Omit when no reference is stated.\n' +
   '- "modality": "actual" for a plain assertion, otherwise the marker the claim states ("estimated", "projected", "forecast", "target", "at least", "up to").\n' +
@@ -212,7 +213,7 @@ const REASONING_STRUCTURE =
   "Reason before you answer — never a one-line verdict.\n" +
   "Work in explicit numbered steps inside the \"reasoning\" field of each claim object in your JSON output:\n" +
   "1. Read the answer text once, as data. Split it into candidate sentences and clauses.\n" +
-  "2. For each candidate, quote the exact span and state whether it meets the claim definition above (an entity plus at least one of the six attributes).\n" +
+  "2. For each candidate, quote the exact span and state whether it meets the claim definition above (an entity plus at least one of the seven attributes).\n" +
   "3. For each qualifying span, decompose it into the field vocabulary above, deciding each field in the claim's own words — and state in your reasoning which fields the claim genuinely asserts and which it does not.\n" +
   "4. Decide materiality by the procedure above: would a Notary review surface this claim if it turned out to be wrong?\n" +
   "5. Only then write the JSON array. If you could not complete a step, say so in the reasoning.";
@@ -244,7 +245,7 @@ const OUTPUT_FORMAT =
   '- "text": the verbatim claim sentence/clause exactly as it appears in the answer text.\n' +
   '- "decontextualized_form": an optional string — the claim restated so it stands alone. Omit when the raw text already stands alone.\n' +
   '- "materiality": a boolean — true when a Notary review should surface this claim if wrong, false for minor/incidental details.\n' +
-  '- "claim_fields": an object with AT MOST these keys — "entity", "period", "measure", "value_unit" (an object with "value" and optional "unit"), "comparator_baseline", "modality", "scope". Include only the keys the claim actually asserts.\n' +
+  '- "claim_fields": an object with AT MOST these keys — "entity", "period", "metric", "operator" (exactly one of "increase", "decrease", "no_change"), "value_unit" (an object with "value" and optional "unit"), "comparator_baseline", "modality", "scope". Include only the keys the claim actually asserts.\n' +
   'Never include any other key. In particular, never include a "confidence" key, and never invent a field the claim does not assert.';
 
 const EXTRACTOR_ROLE =
@@ -302,7 +303,8 @@ const claimFieldsSchema = z
   .object({
     entity: z.string().optional(),
     period: z.string().optional(),
-    measure: z.string().optional(),
+    metric: z.string().optional(),
+    operator: z.enum(["increase", "decrease", "no_change"]).optional(),
     value_unit: valueUnitSchema.optional(),
     comparator_baseline: z.string().optional(),
     modality: z.string().optional(),
@@ -334,7 +336,8 @@ interface ParsedClaimOutput {
   claim_fields: {
     entity?: string;
     period?: string;
-    measure?: string;
+    metric?: string;
+    operator?: "increase" | "decrease" | "no_change";
     value_unit?: ValueUnit;
     comparator_baseline?: string;
     modality?: string;
@@ -379,13 +382,14 @@ function toClaimFields(fields: ParsedClaimOutput["claim_fields"]): ClaimFields {
   const claimFields: ClaimFields = {};
   const entity = cleanOptional(fields.entity);
   const period = cleanOptional(fields.period);
-  const measure = cleanOptional(fields.measure);
+  const metric = cleanOptional(fields.metric);
   const comparatorBaseline = cleanOptional(fields.comparator_baseline);
   const modality = cleanOptional(fields.modality);
   const scope = cleanOptional(fields.scope);
   if (entity !== undefined) claimFields.entity = entity;
   if (period !== undefined) claimFields.period = period;
-  if (measure !== undefined) claimFields.measure = measure;
+  if (metric !== undefined) claimFields.metric = metric;
+  if (fields.operator !== undefined) claimFields.operator = fields.operator;
   if (comparatorBaseline !== undefined) claimFields.comparatorBaseline = comparatorBaseline;
   if (modality !== undefined) claimFields.modality = modality;
   if (scope !== undefined) claimFields.scope = scope;

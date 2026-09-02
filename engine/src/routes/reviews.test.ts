@@ -21,13 +21,13 @@ import { createOrganization, createReview, freshPool, HAS_DB } from "../test/db.
 
 const skip = { skip: !HAS_DB ? "no test database configured (set TEST_DATABASE_URL or DATABASE_URL)" : false };
 
-const SUPPORT_TEXT = "Acme's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+const SUPPORT_TEXT = "Acme's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
 // Wrong entity: everything resolves deterministically EXCEPT entity ("Acme"
 // never appears). Under a denied quota the residual entity resolves to
 // cannot_be_determined, so the row is inapplicable with mismatchedFields
 // exactly ["entity"].
-const WRONG_ENTITY_TEXT = "Globex's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
-const WRONG_ENTITY_TEXT_2 = "Initech's revenue growth was 17% in FY25, compared to the prior year, actual company-wide figures.";
+const WRONG_ENTITY_TEXT = "Globex's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
+const WRONG_ENTITY_TEXT_2 = "Initech's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
 
 const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
 
@@ -45,7 +45,8 @@ interface ClaimResponse {
 const CLAIM_FIELDS = {
   entity: "Acme",
   period: "FY25",
-  measure: "revenue growth",
+  metric: "revenue",
+  operator: "increase",
   valueUnit: { value: "17", unit: "%" },
   comparatorBaseline: "prior year",
   modality: "actual",

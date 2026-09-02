@@ -55,7 +55,8 @@ test("end to end: the flagship contradiction reaches CONTRADICTED through both p
   const claim: ClaimFields = {
     entity: "Acme",
     period: "FY25",
-    measure: "revenue growth",
+    metric: "revenue",
+    operator: "increase",
     valueUnit: { value: "17", unit: "%" },
     comparatorBaseline: "prior year",
     modality: "actual",
