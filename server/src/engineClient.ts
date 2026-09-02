@@ -33,7 +33,8 @@ interface SourceRef {
 interface ClaimFields {
   entity?: string;
   period?: string;
-  measure?: string;
+  metric?: string;
+  operator?: "increase" | "decrease" | "no_change";
   valueUnit?: { value: string; unit?: string };
   comparatorBaseline?: string;
   modality?: string;
@@ -83,9 +84,17 @@ async function createReview(): Promise<string> {
 
 async function registerEvidence(reviewId: string, source: SourceRef): Promise<string | undefined> {
   const body: Record<string, unknown> = { review_id: reviewId, origin: source.source_role };
+  // When both are present, send both: the excerpt is the actually-checkable
+  // text (often already resolved by whoever supplied it, and not guaranteed
+  // to be re-fetchable — a paywalled page, a screenshot transcript), while
+  // the URL is provenance/traceability. Registering the URL alone and
+  // dropping the excerpt would silently discard the one thing the caller
+  // could actually check against — this was a real bug: it made the URL
+  // resolve lazily (and often fail to reproduce the pasted text at all)
+  // instead of using the text that was right there.
+  if (source.quoted_excerpt !== undefined) body.payload = source.quoted_excerpt;
   if (source.url !== undefined) body.submitted_url = source.url;
-  else if (source.quoted_excerpt !== undefined) body.payload = source.quoted_excerpt;
-  else return undefined; // nothing addressable to register
+  if (body.payload === undefined && body.submitted_url === undefined) return undefined; // nothing addressable to register
 
   const res = await engineFetch("/v1/evidence", { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) return undefined;
