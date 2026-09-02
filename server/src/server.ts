@@ -13,7 +13,10 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 // hardcoding "text/html" — the package's actual default is
 // "text/html;profile=mcp-app".
 import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
+import { clerkMiddleware } from "@clerk/express";
+import { mcpAuthClerk, protectedResourceHandlerClerk, authServerMetadataHandlerClerk } from "@clerk/mcp-tools/express";
 import { reviewAnswer } from "./engineClient.js";
+import { resolveApiKeyForUser } from "./orgResolver.js";
 
 try {
   process.loadEnvFile();
@@ -58,8 +61,17 @@ function buildServer() {
       inputSchema: reviewInputSchema,
       _meta: { ui: { resourceUri: RESOURCE_URI } },
     },
-    async (args: { answer_text: string; source_refs?: Array<{ url?: string; title?: string; quoted_excerpt?: string; source_role: "answer_citation" | "user_added" | "workspace_collection" }> }) => {
-      const cardData = await reviewAnswer(args?.answer_text ?? "", args?.source_refs ?? []);
+    async (
+      args: { answer_text: string; source_refs?: Array<{ url?: string; title?: string; quoted_excerpt?: string; source_role: "answer_citation" | "user_added" | "workspace_collection" }> },
+      extra: { authInfo?: { extra?: { userId?: string; email?: string } } },
+    ) => {
+      const clerkUserId = extra?.authInfo?.extra?.userId;
+      const email = extra?.authInfo?.extra?.email;
+      if (!clerkUserId) {
+        throw new Error("Unauthenticated tool call: no Clerk user id on authInfo.");
+      }
+      const apiKey = await resolveApiKeyForUser(clerkUserId, email);
+      const cardData = await reviewAnswer(args?.answer_text ?? "", args?.source_refs ?? [], apiKey);
       return {
         content: [
           {
@@ -94,7 +106,11 @@ function buildServer() {
 }
 
 const app = express();
-app.use(cors());
+// exposedHeaders is required so the browser/MCP client can read the
+// WWW-Authenticate header on a 401 challenge — without it, CORS strips the
+// header and the OAuth discovery flow can't proceed.
+app.use(cors({ exposedHeaders: ["WWW-Authenticate"] }));
+app.use(clerkMiddleware());
 app.use(express.json());
 
 const mcpHandler = async (req: express.Request, res: express.Response) => {
@@ -106,9 +122,13 @@ const mcpHandler = async (req: express.Request, res: express.Response) => {
 
 // Served on both "/" and "/mcp" so the shortest possible connector URL
 // (just the bare domain) works, while "/mcp" stays for anyone who already
-// registered the longer form.
-app.post("/", mcpHandler);
-app.post("/mcp", mcpHandler);
+// registered the longer form. Both are protected by Clerk OAuth.
+app.post("/", mcpAuthClerk, mcpHandler);
+app.post("/mcp", mcpAuthClerk, mcpHandler);
+
+// OAuth discovery routes required by the MCP spec's auth flow.
+app.get("/.well-known/oauth-protected-resource/mcp", protectedResourceHandlerClerk({ scopes_supported: ["email", "profile"] }));
+app.get("/.well-known/oauth-authorization-server", authServerMetadataHandlerClerk);
 
 const PORT = process.env.PORT ?? 3333;
 app.listen(PORT, () => {
