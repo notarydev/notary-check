@@ -97,12 +97,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.post("/mcp", async (req, res) => {
+const mcpHandler = async (req: express.Request, res: express.Response) => {
   const server = buildServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
-});
+};
+
+// Served on both "/" and "/mcp" so the shortest possible connector URL
+// (just the bare domain) works, while "/mcp" stays for anyone who already
+// registered the longer form.
+app.post("/", mcpHandler);
+app.post("/mcp", mcpHandler);
 
 const PORT = process.env.PORT ?? 3333;
 app.listen(PORT, () => {
