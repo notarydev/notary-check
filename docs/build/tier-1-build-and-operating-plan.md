@@ -632,6 +632,51 @@ INDETERMINATE / abstained or non-matching field    → unresolved_applicability 
 
 The "Finding type" column above is exactly what `Claim.state_reason` already exists to hold (§ Core data model) — this table is that field's enumeration, made explicit rather than left as an implicit "some string." It's what lets § Monitoring segment `could_not_check` telemetry by actual cause (a broken source is a different problem from an out-of-class document, which is a different problem from a judge abstention) instead of averaging them into one undifferentiated rate. The card's own copy can stay quiet and undifferentiated between these `could_not_check` causes if that's the right UX call — the requirement is that `state_reason` isn't lossy, not that the UI must expose every distinction.
 
+### Track 2 / Challenge layer — "What to pressure-test" (added 2026-09-02, product decision, not an engineering default)
+
+**Status**: in scope for the current build, per an explicit product decision superseding this doc's earlier default (Track 2 was previously deferred behind proven Track 1 repeat value — see `docs/guide/proposals/system-definition-synthesis.md` Part 6/9 for that history and the corrected design this section implements). This is an addition to the card contract above, not a replacement — every rule above (three-state compression, no severity levels, no trust score, mechanical-vs-AI-inferred labeling) is unchanged and still governs the **evidence record** register described below.
+
+**The decision, precisely**: Track 1 and Track 2 are two outputs of one Notary invocation, not two separate user journeys or a second button. `review_source_backed_answer` runs both concurrently against the same claim set and evidence manifest and returns one combined card with two registers:
+
+1. **Evidence record** (existing, unchanged) — the authoritative result described everywhere above: exact claim, exact passage, applicability reason, mechanical-vs-AI-inferred label, cost/method line.
+2. **"What to pressure-test"** (new) — a compact, clearly visually subordinate section beneath the evidence record. Never present without an evidence record above it; never the first thing the eye lands on.
+
+```text
+Notary found 1 material issue
+
+Claim: "Acme's revenue grew 17% in FY25."
+Acme's FY25 annual report says revenue increased 12% year over year.
+Why: same entity, period, metric, and baseline; the value conflicts.
+Resolution: exact match.
+
+[Open evidence] [Replace with 12%] [Qualify] [Dismiss] [Recheck]
+─────────────────────────────────────────
+What to pressure-test
+· Is "revenue" gross or net in the cited passage? [Clarify claim]
+· No independent source was supplied for the causal framing. [Add source]
+```
+
+**Why concurrent-but-subordinate is a different thing from the "opens automatically" failure mode named in the synthesis doc's Part 6.** That failure mode is about a *separate, competing surface* stealing attention from the evidence result — a second panel, a second button someone has to notice and click, or a transcript that grows more persuasive than the quiet result above it. A single card with an unmistakable visual hierarchy (evidence record primary, challenge layer secondary, always in that order, never inverted) is a different design — this section exists specifically to write down why that distinction is load-bearing, so it isn't re-litigated as a contradiction later.
+
+**Track 2 is explicitly NOT `start_exploratory_review`/§ Exploratory review below.** That feature (an open-ended transcript between Claude and the judge) stays exactly where it already was — Phase 2+, deferred, not built. Track 2/Challenge is the narrower, safer design the synthesis doc's Part 6 argues for *instead of* an open transcript: typed, bounded, no free-form conversation, no verdict field. Building Track 2 does not pull Exploratory Review's timeline forward.
+
+**Output contract** (from the synthesis doc Part 6, adopted as-is): each challenge item is
+```ts
+{
+  challenge_type: "ambiguity" | "missing_assumption" | "alternative_interpretation" | "evidence_request" | "adversarial_test",
+  prompt: string,          // a neutral, bounded question — never a leading question that smuggles an assertion
+  why_it_matters: string,  // conditional explanation tied to the existing claim/finding, never a free-standing opinion
+  action: "clarify_claim" | "add_source" | "open_evidence" | "ask_host" | "draft_test" | "leave_unchanged",
+}
+```
+No `verdict`, `confidence`, `answer`, or free-form transcript field, ever — same strict-parsing discipline `engine/src/judge/fieldExtraction.ts` already applies to the Track 1 judge (a sneaked-in field is rejected, not silently accepted). **Cap: at most 2 challenge items per material claim, at most 4 per invocation** (product decision, keeps the layer scannable and prevents it from out-growing the evidence record it's subordinate to).
+
+**Action routing reuses the existing app-only tool contract** (§ Tool and UI contract, above) wherever it already fits — `add_source` for `evidence_request`, `open_evidence` for pointing at existing material, `qualify_claim` for `clarify_claim` (closest existing match; revisit if a distinct tool turns out to be needed once this is built), `recheck_claim` after any of the above changes something. `ask_host` and `draft_test` don't yet map to an existing tool — new, minimal additions if the challenge generator actually produces those action types in practice, not built speculatively ahead of need.
+
+**Authority invariant, restated for this specific addition**: Track 2 may propose a clarification or an additional source. It cannot itself add evidence, alter the manifest, or write `Claim.state` — every write it triggers routes back through the ordinary claim-revision or source-pointer machinery like a user-initiated action would, per the existing authority rule (§ 6 of the canonical product definition). Track 2 running concurrently with Track 1 does not change this: it is a second **output** of one invocation, never a second **writer**.
+
+**Feature-gated at the organization level** for initial rollout — ship dark first, per the existing "not yet validated" posture on the whole product (no held-out eval gate exists yet, see `docs/build/architecture-and-progress.md`).
+
 ### Promise and non-promise
 
 > Notary checks source-backed claims in this answer against a bounded, inspectable evidence set and makes material breaks visible.

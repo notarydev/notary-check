@@ -60,6 +60,18 @@ If it touched the schema, deploy target, auth, or anything else
 `docs/build/architecture-and-progress.md` describes — update that file in
 the same commit. A stale `build/` doc is a bug, not a later task.
 
+## Keep `PROGRESS.md` current as you work
+
+[`PROGRESS.md`](PROGRESS.md) (repo root) is a live, informal status tracker —
+an at-a-glance table of what's done/partial/not-started, not governed by
+`docs/README.md`'s status-header system. Update it **in place** (edit the
+table, don't append a log) whenever you finish, materially advance, or
+discover something that changes a row's status — the same moment you'd
+otherwise just say so in chat. It exists so the person working with you has
+something to look at without reconstructing state from conversation
+scrollback. A stale `PROGRESS.md` is the same kind of bug as a stale
+`architecture-and-progress.md` — don't let it silently drift from reality.
+
 ## Never edit canonical guide docs directly
 
 **Never edit [`docs/guide/canonical-product-definition.md`](docs/guide/canonical-product-definition.md)

@@ -1,6 +1,6 @@
 > Status: snapshot
 > Owner: Hardyk
-> Last verified: 2026-09-02
+> Last verified: 2026-09-02 (live-endpoint verification pass — see "Live verification" section below)
 > Supersedes: —
 
 # Notary Check — Architecture and infrastructure progress
@@ -17,10 +17,10 @@ Four real subprojects under `notary-check/`:
 
 | Dir | What it is | Status |
 |---|---|---|
-| `engine/` | Node/TS/Express API on Postgres, no ORM (raw SQL migrations). The actual verification pipeline — claim extraction, evidence ingestion, applicability, judge, state machine, billing, quotas. | Most-built component, live. |
-| `server/` | Thin MCP server (Express + MCP SDK + `ext-apps`), Clerk-gated, calls `engine/` over HTTP. | Live, Clerk OAuth wired. |
+| `engine/` | Node/TS/Express API on Postgres, no ORM (raw SQL migrations). The actual verification pipeline — claim extraction, evidence ingestion, applicability, judge, state machine, billing, quotas. | Most-built component, live and confirmed working end-to-end by direct testing (see "Live verification" below) — including DeepSeek and Tier A.5 normalization actually firing, not just configured. |
+| `server/` | Thin MCP server (Express + MCP SDK + `ext-apps`), calls `engine/` over HTTP. | **Live at `mcp.getnotary.ai`, confirmed reachable and functional by direct MCP protocol calls — but running an OLDER build with no Clerk OAuth gating at all** (see below). The Clerk OAuth work in this checkout has not been deployed there yet. |
 | `ui/` | React/Vite app, builds to one inlined HTML file served as the MCP App resource. | Live, minimal — just the card renderer. |
-| `dashboard/` | Next.js 16 App Router app — landing page + `/account` billing page, Clerk auth. | Live in production per live Clerk keys. |
+| `dashboard/` | Next.js 16 App Router app — landing page + `/account` billing page, Clerk auth. | This checkout's `dashboard/` has never been confirmed live anywhere. **A live, polished marketing site exists at `getnotary.ai`** (real copy, real title, Cloudflare-fronted) that does not match this checkout's code at all (this checkout's `layout.tsx` still had the unedited `create-next-app` title before this session's edits) — status of that site relative to this repo is unresolved, flagged as stale/needs-update by the product owner, not yet investigated further. |
 
 ## Infrastructure, service by service
 
@@ -30,19 +30,41 @@ The engine is live on **AWS Lightsail Container Service**, region `us-east-2` �
 
 There's a real contradiction sitting in the repo: `engine/wrangler.jsonc`, `engine/worker/container.ts`, and a `@cloudflare/containers` dependency scaffold a **Cloudflare** Container deployment path instead. Nothing indicates this path was ever actually used — no `wrangler deploy` in any script, no CI, no Cloudflare account reference beyond the scaffold itself, and the live `ENGINE_URL` is a Lightsail domain, not a Workers domain. Read this as: Cloudflare was evaluated or partially built out, then Lightsail is what actually shipped. Worth deleting the Cloudflare scaffold or explicitly marking it dead, so a future reader doesn't assume it's the deploy target.
 
-The **`server/` MCP layer's own deployment target has no evidence anywhere in this repo** — not committed, not in any `.env` found. Its Clerk OAuth wiring and its outbound call to the live engine are both real and verified in source, but where `server/` itself physically runs is not established by anything in this checkout.
+**Corrected 2026-09-02**: the `server/` MCP layer's deployment target IS now established — it's live and reachable at `https://mcp.getnotary.ai/`, DNS-confirmed pointing at a Lightsail container endpoint, and directly verified by driving the real MCP protocol against it (`initialize`, `tools/list`, and multiple real `tools/call` invocations of `review_source_backed_answer` — see "Live verification" below). What's actually deployed there is an **older build with no Clerk auth at all** — `POST /` accepts requests with no bearer token, no 401 challenge, no `.well-known/oauth-protected-resource/mcp` route (404s). This checkout's Clerk OAuth wiring (`mcpAuthClerk`, the org-resolution work) has not been deployed to this endpoint. Do not assume the two are in sync — verify against the live endpoint again after any deploy.
 
 ### Database — plain Postgres, not Neon
 
 No ORM — raw SQL migrations (`engine/migrations/0001`–`0007`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; what the live Lightsail deployment's `DATABASE_URL` actually points at (Lightsail's own managed Postgres, a co-located container, RDS, or something else) isn't recorded anywhere in this repo and is worth confirming and documenting explicitly, since it's currently unknowable from source alone.
 
 **Schema, as it stands** (all raw SQL, no schema file to point to instead):
-- `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007)
-- `review` — plus `idempotency_key`, `status`, timestamps (0006)
-- `evidence` — plus `resolved_text` (0006), which migration 0006's own comment documents as a **deliberate, narrow stand-in for a real object/payload store (S3-equivalent) that doesn't exist yet**
-- `claim`, `evidence_match` (0003)
+- `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007). Still has **no `created_at` column** — `GET /v1/organization` (below) returns `created_at: null` rather than inventing one.
+- `review` — plus `idempotency_key`, `status`, timestamps (0006); plus `review_organization_id_created_at_idx` on `(organization_id, created_at)` (0008), supporting keyset pagination for `GET /v1/reviews`.
+- `evidence` — plus `resolved_text` (0006), which migration 0006's own comment documents as a **deliberate, narrow stand-in for a real object/payload store (S3-equivalent) that doesn't exist yet**; plus `created_at` and `evidence_created_at_idx` (0008) — `evidence` had no timestamp column at all before this, so no correct paginated listing was possible until now.
+- `claim`, `evidence_match` (0003); `claim` plus `created_at` and `claim_review_id_created_at_idx` on `(review_id, created_at)` (0008) — also backs `GET /v1/usage`'s "checks this calendar month" count.
 - `"user"` (0004) — minimal stub, just id + organization_id
 - `organization_api_key`, `usage_event` (0004)
+
+Migration 0008 backfilled `claim.created_at` / `evidence.created_at` to `now()` (the migration's apply time) for every pre-existing row, since neither column ever existed before — an approximation, not a real historical timestamp, for anything created earlier.
+
+### Dashboard read endpoints (engine/, new)
+
+Org-scoped, read-only endpoints added for the SaaS dashboard (`dashboard/`, built separately) to consume — review history, an evidence library, usage/quota, plan info, and API-key management. All follow the same `Authorization: Bearer <api-key>` → `verifyApiKey()` → org-derived-from-key pattern as every other engine route; none of them write `claim.state` or touch the verification pipeline.
+
+- `GET /v1/reviews` — org-scoped review history, keyset-paginated on `(created_at DESC, id DESC)`, optional `status` filter, base64 `(created_at, id)` cursor.
+- `GET /v1/reviews/:id` — one review plus its claims (by `ordinal`) plus each claim's `evidence_match` rows joined to `evidence`. 404 (not 403) cross-org.
+- `GET /v1/evidence` — org-scoped evidence library (via `JOIN review`), same keyset pagination, deliberately excludes `resolved_text`.
+- `GET /v1/usage` — `{plan_id, checks_used_this_month, checks_limit, cost_cents_this_month, org_monthly_limit_cents}`, reusing `quotas/quotaCheck.ts` and `billing/plans.ts`.
+- `GET /v1/organization` — `{plan_id, plan_name, checks_per_month, price_cents, has_payment_method, created_at}`; `has_payment_method` derives from `stripe_customer_id IS NOT NULL`, never exposing the raw Stripe id.
+- `GET /v1/api-keys`, `POST /v1/api-keys`, `DELETE /v1/api-keys/:id` — list/issue/revoke, thin wrappers around `auth/apiKey.ts`'s `listApiKeys`/`issueApiKey`/`revokeApiKey`. The org-ownership check for `DELETE` lives in the route (`revokeApiKey` itself takes a bare key id with no org check) — idempotent on double-revoke, 404 (not leaking existence) cross-org.
+
+### Public signup gate (engine + dashboard, new)
+
+The canonical build plan (`docs/build/tier-1-build-and-operating-plan.md`) blocks public self-serve signup/payment until the held-out eval gate passes — it hasn't (see "Held-out eval set" below). The dashboard's public sign-up is gated by two independent layers, both required:
+
+1. **App-level (soft, flippable via env var)**: `dashboard`'s landing page reads `NOTARY_SIGNUP_MODE` (default, and anything other than exactly `"open"`, means `"waitlist"`) — in `"waitlist"` mode it renders an email-capture form (`WaitlistForm` -> `joinWaitlist` server action -> `POST /v1/waitlist`) instead of Clerk's sign-up flow. Sign-in remains available in either mode -- this only gates *new* account creation.
+2. **IdP-level (hard, not app code)**: Clerk's own Restricted sign-up mode should be enabled on the production Clerk instance so account creation is refused at the identity-provider level even if the app-level gate is bypassed. **Not yet confirmed set** -- this is a manual Clerk-dashboard action, not verifiable from this repo.
+
+`POST /v1/waitlist` (`engine/src/routes/waitlist.ts`, migration `0009_waitlist.sql`) is the one engine route deliberately open to the public internet with no credential -- no org exists yet to scope a request to. Upsert-by-email (`ON CONFLICT (email) DO NOTHING`), always 201 on a syntactically valid email so a repeat submission can't be used to probe list membership. A simple in-process per-IP token-bucket rate limit (5 requests/60s, resets on process restart -- same "simple and sufficient for a single instance" tradeoff as `server/src/orgResolver.ts`'s in-memory cache) is the only abuse resistance; revisit if this ever needs to survive multiple engine instances behind a load balancer. `waitlist_signup` rows are approved manually (an ops action sets `invited_at` and sends a real Clerk invitation) -- there is no automation from a waitlist row to an actual Clerk invite in v1.
 
 ### Auth — Clerk, two separate integrations, both real
 
@@ -60,19 +82,32 @@ Checkout + webhook handling lives in `engine/src/billing/`; the billing UI is `d
 
 ### Observability — Datadog, wired but unconfirmed live
 
-`engine/src/observability/log.ts` always writes structured JSON to stdout, and separately does a bare `fetch` POST to Datadog's log intake endpoint — but only if `DD_API_KEY` is set, which it is not in any committed `.env`/`.env.example`. The code path is real, correctly fire-and-forget (a Datadog outage can't affect a request), but **whether data is actually flowing in the live deployment is unverifiable from this repo** — that depends on Lightsail's own environment configuration, which isn't visible here. `engine/README.md` still lists "a metrics/alerting platform" under "what does NOT exist" — another stale doc contradiction.
+`engine/src/observability/log.ts` always writes structured JSON to stdout, and separately does a bare `fetch` POST to Datadog's log intake endpoint — but only if `DD_API_KEY` is set, which it is not in any committed `.env`/`.env.example`. The code path is real, correctly fire-and-forget (a Datadog outage can't affect a request). `DD_API_KEY` was checked directly against the live AWS Lightsail container service configuration on 2026-09-02 and **is confirmed set** (32 chars) on the `notary-check-api` container service — so whether data is actually flowing is no longer unverifiable from this repo alone, it's a confirmed-live setting (whether Datadog is actually receiving/ingesting it is a separate question, not checked here). `engine/README.md` still lists "a metrics/alerting platform" under "what does NOT exist" — another stale doc contradiction.
+
+Both live AWS Lightsail container services, region `us-east-2`, both currently `RUNNING`: `notary-check-api` (the engine) and `notary-check-mcp` (`server/`, the MCP layer). Naming them here so this isn't undiscoverable from the repo — previously this required querying Lightsail directly.
 
 ### Domains
 
 | Domain | Evidence | What it is |
 |---|---|---|
 | `notary-check-api.dht4me4ddy2y4.us-east-2.cs.amazonlightsail.com` | `server/.env` (live value) | The engine's real, live Lightsail endpoint. |
-| `clerk.getnotary.ai` | `HANDOFF.md` prose only | Clerk's custom Frontend API domain — described, not independently verifiable from committed config. |
-| `notarycheck.ai` | `dashboard/src/app/account/page.tsx` (`sales@notarycheck.ai` mailto) | Only evidence of this domain; no DNS/MX config in-repo to confirm it's live. |
+| `mcp.getnotary.ai` | Live `dig`/MCP protocol test, 2026-09-02 | **Confirmed live** — real MCP server, DNS-resolved to a Lightsail address, answers `initialize`/`tools/list`/`tools/call` correctly. Running an older, pre-Clerk-auth build (see "Repo shape" and "Live verification" above/below). |
+| `getnotary.ai` | Live `curl`, 2026-09-02 | **Confirmed live** — a real, Cloudflare-fronted marketing site with actual copy, distinct from this checkout's `dashboard/`. Flagged by the product owner as older and needing an update; not yet reconciled with this repo. |
+| `clerk.getnotary.ai` | Live `dig`, 2026-09-02 (CNAME resolves to Clerk's own frontend-api / Cloudflare) | **Confirmed live** — previously only described in `HANDOFF.md` prose, now independently verified. |
+| `notarycheck.ai` | `dashboard/src/app/account/page.tsx` (`sales@notarycheck.ai` mailto) | Does not resolve (`dig` returned nothing, 2026-09-02) — this mailto address's domain is not live. |
+
+## Live verification, 2026-09-02 — direct testing against `mcp.getnotary.ai`, not repo inspection
+
+Everything in this repo's earlier snapshots about `server/`'s live status was inferred from source/`.env` files, never from actually calling the deployed service. This section corrects that — four isolated `tools/call` requests, run directly against `https://mcp.getnotary.ai/`, each changing exactly one variable from the last:
+
+1. **Exact-wording support** (`"Acme Corp revenue grew 17% in FY25"` vs. an identical inline `quoted_excerpt`) → `no_issue`. Confirms the deterministic exact-match path works live, end to end, including the full claim-extraction → evidence-registration → applicability → state-machine chain.
+2. **Paraphrased support** (`"grew 17% in FY25"` vs. `"increased 17 percent in fiscal 2025"`, plus a corporate-suffix variant) → `no_issue`. Confirms Tier A.5 normalization (percent notation, fiscal-year label matching, corporate-suffix spelling) is genuinely deployed and firing, not just present in source — this is deterministic, allow-listed code, not judge-dependent.
+3. **Exact-wording contradiction** (`"grew 12%"` vs. `"grew 17%"`, same operator word) → correctly `CONTRADICTED` (`direct_contradiction`). Confirms the deterministic contradiction path works live too.
+4. **Paraphrased contradiction** (`"declined 12 percent in fiscal 2025"` vs. `"grew 17% in FY25"` — an operator paraphrase, "declined" vs. "grew," combined with a differing value) → **came back `UNSUPPORTED`, not `CONTRADICTED`.** This is a real, live discrepancy: `engine/src/judge/promptTemplates.ts`'s own `operator` field instructions explicitly authorize exactly this recognition ("recognizing that 'grew' and 'increased' assert the same direction is exactly the kind of paraphrase recognition the judge is authorized to do" — the same authorization extends to "declined" mapping to `decrease`). Case 3 shows the deterministic/exact-match path correctly detects a contradiction when wording matches; case 2 shows deterministic normalization (not the judge) handles the percent/fiscal-year paraphrase in case 2's success. Case 4 needs the **judge** to recognize the operator paraphrase, and something in that path is not producing a contradiction on the live deployment — worth distinguishing whether this is: (a) already fixed in this checkout's current code and simply not yet deployed, (b) a genuine gap in how the judge-derived `operator` field feeds into contradiction detection, or (c) the judge not being invoked for this field at all (e.g. quota/kill-switch fallback silently degrading to deterministic-only). **Not yet root-caused — flagged here so it isn't lost, not diagnosed.** Given this maps directly to locked test case 2 ("17% answer versus 12% source contradiction," the project's own flagship scenario), this is worth prioritizing over UI polish.
 
 ## Test suite and evaluation status
 
-- **Engine unit/integration suite**: 206 total, **151 pass, 0 fail, 55 skipped** (skips are DB/live-API-gated tests that don't run without a live Postgres/DeepSeek key in a sandbox) — run directly against the repo as part of producing this doc, not pulled from a stale report. "Locked case" references found scattered through source for cases 1, 2, 3, 4, 6, 7, 8, 9, 10, 17 of the documented 18-case suite.
+- **Engine unit/integration suite**: 212 total, **208 pass, 0 fail, 4 skipped** against a real local Postgres (`docker run postgres:16-alpine`, migrations 0001–0009 applied) — run directly against the repo as part of producing this doc, not pulled from a stale report. (An earlier snapshot of this doc recorded 151/206 against a sandbox with no live Postgres, where DB-gated tests are skipped instead of run; this run had a real database, which is why far fewer tests are skipped.) "Locked case" references found scattered through source for cases 1, 2, 3, 4, 6, 7, 8, 9, 10, 17 of the documented 18-case suite.
 - **Held-out eval set** (`engine/eval/`): 20 draft JSON cases exist, each explicitly marked *"DRAFT — needs independent second annotation, not yet adjudicated."* `engine/eval/SCHEMA.md` states in bold that this directory is **not** the real gating set and none of it may be used to compute release-gate numbers yet. **There is currently no real pass/fail number anywhere for the actual held-out gate** (false-supported rate, wrong-source acceptance rate, contradiction precision) — `docs/build/tier-1-build-and-operating-plan.md` leaves those thresholds blank pending real annotation. This is the single most important open item before any claim of "validated" can be made.
 - No CI configuration exists (`.github/` is absent).
 
@@ -80,12 +115,15 @@ Checkout + webhook handling lives in `engine/src/billing/`; the billing UI is `d
 
 **Actually live, verified**:
 - Engine on AWS Lightsail (live domain + working API key format).
-- Clerk auth in production mode, both `server/` (MCP OAuth) and `dashboard/` (live keys).
-- Engine test suite genuinely passing at 151/206 (0 failures).
+- `server/` MCP endpoint at `mcp.getnotary.ai` — live, real protocol responses, real judge + Tier A.5 normalization confirmed firing (see "Live verification" above). **Running an older build with no Clerk auth** — the OAuth wiring in this checkout is not what's deployed there.
+- `clerk.getnotary.ai` custom domain — confirmed via live `dig`, no longer just prose.
+- `getnotary.ai` — a live marketing site, but a separate/unreconciled asset from this checkout's `dashboard/`; flagged by the product owner as stale, needs a refresh.
+- Engine test suite genuinely passing at 208/212 (0 failures) against a real local Postgres.
+- Clerk auth in production mode for `dashboard/` (live keys) — sign-in/sign-up confirmed working per earlier sessions; billing/org-resolution end-to-end not independently re-confirmed this pass.
+- `DD_API_KEY` — confirmed set (32 chars) on the `notary-check-api` Lightsail container service, checked directly against the live container service configuration on 2026-09-02 (see "Observability — Datadog" above).
 
 **Configured, not confirmed live**:
-- Datadog log shipping — code path real, no key found anywhere committed.
-- `clerk.getnotary.ai` custom domain — described only in prose.
+- (nothing currently in this category — see "Actually live, verified" above for `DD_API_KEY`, moved there 2026-09-02.)
 
 **Configured, contradicts what's actually deployed**:
 - Cloudflare Container scaffold (`wrangler.jsonc`, `@cloudflare/containers`) — no evidence it was ever the real deploy target; Lightsail is.
@@ -104,5 +142,5 @@ Checkout + webhook handling lives in `engine/src/billing/`; the billing UI is `d
 1. Delete or explicitly mark dead the Cloudflare Container scaffold, so it stops reading as a live option.
 2. Record what `DATABASE_URL` actually resolves to on the live Lightsail deployment — currently unknowable from this repo alone.
 3. Update `engine/README.md`'s two stale "what does NOT exist" claims (OAuth, metrics/alerting) — both are now false.
-4. Confirm whether `DD_API_KEY` is actually set on Lightsail; if not, either set it or stop describing Datadog as wired-and-shipping.
+4. ~~Confirm whether `DD_API_KEY` is actually set on Lightsail~~ — done 2026-09-02, confirmed set on `notary-check-api`. Remaining open question: whether Datadog is actually ingesting the shipped logs (not checked from this repo).
 5. Treat the 20 draft eval cases' independent annotation and adjudication as the real gate before any "validated" claim is made publicly — this is the one gap that most directly matters for the honesty principle Part I of the Canonical Product Definition holds the whole product to.

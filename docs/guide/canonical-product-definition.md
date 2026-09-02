@@ -79,11 +79,15 @@ A **Claim** is an atomic or near-atomic proposition asserted as a basis for the 
 
 **Decontextualization** restores only the material context required to check a claim: entity, time, scope, predicate, value/unit, comparison/baseline, and modality where relevant. Notary never invents missing context. A claim that cannot be restored without invention cannot receive a positive automated evidence state.
 
+**Claim-side ambiguity — resolution authority.** A claim can genuinely support more than one reading on a material field (e.g., an unqualified "the weather" with no marker of current/high/low). A model may propose candidate interpretations. Only one of three things may select among them: explicit context already present in the preserved answer text (e.g., a pronoun with one unambiguous antecedent in the same text — a deterministic resolution, not a judgment call), a declared deterministic rule, or a user-confirmed revision. If disambiguation requires the model to *guess* the more likely reading rather than read it off retained context, it cannot resolve automatically — the ambiguity must surface, and a user-confirmed clarification becomes a new, explicitly linked claim revision that re-enters the verification procedure from step 1. Evidence-led reinterpretation is forbidden: a disambiguator never gets to pick the reading that happens to match available evidence — that resolves the check in the wrong direction, deciding the question the procedure exists to answer.
+
 ### 5.3 Evidence
 
 **Evidence** is an addressable artifact with a payload or independently resolvable content plus a locator. Examples include an input document, retrieved source, tool response, policy, transcript, model output, reviewer screen, or vendor response.
 
 Model memory, paraphrase, or a statement that "the source says X" is not evidence. A link without stable content and a locator is a pointer, not evidence.
+
+**The source-pointer-to-evidence sequence.** When a model proposes a URL, attachment, or identifiable source as a possible basis for a claim, that proposal is a **source pointer** — a candidate, not yet evidence, and it earns no evidentiary weight on its own no matter how confidently it is offered. A model's own statement about what it used or would use is an unverified claim about its process, not a resolved artifact. The sequence that actually produces evidence: the model proposes a source pointer → Notary resolves it and retains a canonical snapshot of the actual payload → the resolved object enters the declared evidence manifest with its coordinate system and provenance recorded → a later Evidence Match resolves the claim-specific locator, per claim, not at registration time → the claim is (re)checked against the manifest as it now stands. Until a payload is retained with a coordinate system and provenance, nothing a model supplied counts as evidence, regardless of how the pointer arrived (an initial answer, a follow-up round-trip when Notary asks what source was used, or any other path) — this is the ordinary evidence-registration rule applied without exception, not a special case for any one interaction pattern.
 
 ### 5.4 Locator
 

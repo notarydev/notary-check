@@ -314,6 +314,22 @@ Track 2/Challenge stays a **future feature, not canonical product scope today**,
 - Canonical Product Definition: add the corrected claim-interpretation rule, the corrected source-pointer-to-evidence rule, and the relation/basis separation. Do **not** add Track 2 as a product capability yet.
 - Tier 1 Build Plan: add the ambiguity-investigator as a later bounded workflow (typed claim parsing, required-field policy, candidate interpretations, user-confirmed revision, source-pointer registration, end-to-end test cases); keep exploration explicitly deferred until CHECK's false-supported and false-unsupported rates are validated against a labelled test set — an operational gate, not just "validated" in the abstract.
 
+## PART 10 — Superseded, 2026-09-02: Track 2 promoted into the current build
+
+**The "do not add Track 2 as a product capability yet" line above (Part 9) is superseded by an explicit product decision.** Track 2/Challenge is now in scope for the current build — not gated behind proven Track 1 repeat value, per an explicit call from the product owner. This section records that decision and the design correction that made it safe, without editing the history above (Parts 1–9 stay as the record of how the thinking got here).
+
+**What actually changed isn't the authority rule — it's the placement.** Two design iterations happened in the same conversation that produced this update:
+1. First iteration: Track 2 as a separate, user-invoked, post-hoc action ("Pressure-test this" as its own button, after the fact) — this was still consistent with Part 6's original design, just moved earlier in the timeline.
+2. **Final decision**: Track 1 and Track 2 are two outputs of one Notary invocation, not two user journeys. They run concurrently against the same claim set and evidence manifest, and render as **one card with two registers** — an authoritative "evidence record" (unchanged, still the only thing that can say `SUPPORTED`/`CONTRADICTED`/etc.) and a clearly subordinate "what to pressure-test" section beneath it, always in that order, never inverted.
+
+**Why this doesn't reopen Part 6's "opens automatically" failure mode**: that failure mode describes a *second, competing surface* — a separate panel or button pulling attention away from the quiet evidence result. A single card with an explicit, fixed visual hierarchy (evidence record primary, challenge layer secondary, capped at 2 items/claim and 4/invocation, never a verdict field) is a different shape — it was always present risk to distinguish carefully rather than dismiss, which is why this section exists instead of silently editing Part 6.
+
+**Track 2/Challenge, as decided, is explicitly not the same feature as `start_exploratory_review`** (the Tier 1 plan's open-ended Claude↔judge transcript, § Exploratory review) — that stays exactly where it was, Phase 2+, deferred. Track 2 is the typed, bounded, no-transcript, no-verdict-field alternative Part 6 already argued for over an open transcript; promoting Track 2 does not promote Exploratory Review.
+
+**The full build contract (output schema, action routing, caps, feature-flag rollout) is now written into `docs/build/tier-1-build-and-operating-plan.md`'s Product Contract section** ("Track 2 / Challenge layer" subsection, added the same day) — that's the canonical build target from here forward; this entry is the design-history record of how the decision was reached, not a duplicate spec.
+
+**Still true, unchanged by this decision**: the claim-ambiguity detection mechanism (Part 5's open question — how would an extractor even notice its own ambiguity) remains genuinely unsettled and is being run as a separate research spike, not shipped as a feature. Promoting Track 2 into the build did not resolve that question; it's still open.
+
 ---
 
 ## Sources synthesized
