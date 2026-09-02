@@ -45,6 +45,13 @@ matching `build/` doc in that diff. A stale `build/` doc is a bug, the
 same as a failing test. (Not yet enforced by CI — worth a check later that
 flags migration/deploy/auth changes with no matching `build/` diff.)
 
+This rule only works if it's actually followed — nothing enforces it
+automatically today. Run a periodic audit to catch what slipped: ask a
+session to "check whether `docs/build/` still matches the actual code and
+infra, flag anything stale." Cheap to run, no fixed schedule required —
+before starting a new chunk of work, or every few weeks, whichever comes
+first.
+
 **`guide/` never gets edited casually alongside a code change.** An idea
 starts in `guide/proposals/`, gets argued about, and only then either:
   - gets merged into `canonical-product-definition.md` (accepted), or

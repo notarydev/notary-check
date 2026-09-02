@@ -59,3 +59,13 @@ billing, anything outside the named step), the same discipline
 If it touched the schema, deploy target, auth, or anything else
 `docs/build/architecture-and-progress.md` describes — update that file in
 the same commit. A stale `build/` doc is a bug, not a later task.
+
+## Never edit canonical guide docs directly
+
+**Never edit [`docs/guide/canonical-product-definition.md`](docs/guide/canonical-product-definition.md)
+directly.** A change there only happens when the user explicitly says to
+merge a named proposal from `docs/guide/proposals/`. An idea stays a
+proposal — read, discussed, even mostly agreed with — until the user says
+those words. This is a boundary rule, not a formatting preference: it's
+the same authority discipline the product itself enforces (§ "A model may
+propose..." above), applied to its own documentation.
