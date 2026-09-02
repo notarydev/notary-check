@@ -14,7 +14,8 @@ import type { JudgeCallInput, JudgeClient, JudgeCallResult } from "./judgeClient
 const ALL_FIELDS: ApplicabilityField[] = [
   "entity",
   "period",
-  "measure",
+  "metric",
+  "operator",
   "valueUnit",
   "comparatorBaseline",
   "modality",

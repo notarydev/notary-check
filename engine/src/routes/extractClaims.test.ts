@@ -45,7 +45,8 @@ function fakeExtractionClient(): { client: JudgeClient; calls: JudgeCallInput[] 
                 claim_fields: {
                   entity: "Acme",
                   period: "FY25",
-                  measure: "revenue growth",
+                  metric: "revenue",
+                  operator: "increase",
                   value_unit: { value: "17", unit: "%" },
                 },
               },

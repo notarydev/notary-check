@@ -89,7 +89,8 @@ export interface RunReviewResult {
 const STRING_FIELDS: Exclude<ApplicabilityField, "valueUnit">[] = [
   "entity",
   "period",
-  "measure",
+  "metric",
+  "operator",
   "comparatorBaseline",
   "modality",
   "scope",

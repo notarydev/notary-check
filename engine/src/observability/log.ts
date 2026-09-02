@@ -1,11 +1,15 @@
 // Minimal structured logging (§ Monitoring) — build-order step 5.
 //
-// This is NOT a metrics/alerting platform (Datadog/Grafana/etc. — a vendor
-// choice, explicitly out of scope) and NOT an external logging-library
-// dependency. It is a single function that emits one JSON object per line via
-// console.log, with a consistent shape a real platform could later ingest
-// (CloudWatch, Datadog agent, etc.). Every field the plan names as required for
-// monitoring is first-class here:
+// The platform choice (§ HANDOFF.md's "known gap") is Datadog, decided
+// 2026-09-01. This stays the same single function emitting one JSON object
+// per line via console.log — that behavior is unconditional and unchanged,
+// since Lightsail's own container logs already ingest stdout. Shipping to
+// Datadog's Logs Intake API is a SEPARATE, best-effort, fire-and-forget
+// addition, active only when DD_API_KEY is set — no dependency, no SDK, one
+// plain HTTPS POST per event, matching how DeepSeek/Stripe keys are already
+// treated as optional-until-configured elsewhere in this codebase. If
+// DD_API_KEY is unset this file behaves exactly as it always did. Every field
+// the plan names as required for monitoring is first-class here:
 //
 //   event            — the telemetry event type (evidence_registered, judge_call, ...)
 //   latency_ms       — request/operation latency
@@ -34,6 +38,30 @@ export interface StructuredLogFields {
   [key: string]: unknown;
 }
 
+const DD_SITE = process.env.DD_SITE ?? "datadoghq.com";
+const SERVICE_NAME = "notary-check-engine";
+
+/**
+ * Fire-and-forget shipping of one log line to Datadog's Logs Intake API.
+ * Never awaited by logEvent, never throws into the caller, never delays or
+ * blocks a request — a failed/slow ship is silently dropped, same "logging
+ * must not take down the request" invariant as the stdout write above. A
+ * lazy read of DD_API_KEY (not a module-level const) so this respects
+ * whatever loads env vars, regardless of import order (see the equivalent
+ * comment in server/src/engineClient.ts for why that matters under ESM).
+ */
+function shipToDatadog(line: Record<string, unknown>): void {
+  const apiKey = process.env.DD_API_KEY;
+  if (apiKey === undefined || apiKey.length === 0) return;
+  fetch(`https://http-intake.logs.${DD_SITE}/api/v2/logs`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "dd-api-key": apiKey },
+    body: JSON.stringify([{ ddsource: "nodejs", service: SERVICE_NAME, message: JSON.stringify(line), ...line }]),
+  }).catch(() => {
+    // Best-effort only — Datadog being unreachable must never affect the request.
+  });
+}
+
 /**
  * Emits one structured JSON log line. Never throws: logging must not take down
  * the request that produced the event. In production this is where a collector
@@ -46,6 +74,7 @@ export function logEvent(fields: StructuredLogFields): void {
       line.timestamp = new Date().toISOString();
     }
     console.log(JSON.stringify(line));
+    shipToDatadog(line);
   } catch {
     // Logging is best-effort by design; a malformed field must not crash a route.
   }

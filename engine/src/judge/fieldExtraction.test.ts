@@ -95,7 +95,7 @@ test("ambiguous and cannot_be_determined pass through without a value", async ()
   const { client: clientC } = fakeClient(() =>
     JSON.stringify({ reasoning: "The passage is empty.", outcome: "cannot_be_determined" }),
   );
-  const cannot = await extractField(EVIDENCE, "measure", { client: clientC });
+  const cannot = await extractField(EVIDENCE, "metric", { client: clientC });
   assert.equal(cannot.outcome, "cannot_be_determined");
   assert.equal(cannot.value, undefined);
 });
@@ -115,16 +115,20 @@ test("the evidence is delimited as data before it reaches the model (locked case
 });
 
 test("blind answering: the claim's asserted value can never reach the model", async () => {
-  // The claimed values for the flagship claim are "revenue growth" (measure) and
-  // "37%" (a stand-in for the value field). Neither appears in the evidence
-  // ("...grew 12%..."), so if either ever reached the model it would have to
-  // have been passed in from the claim — the blind-answering violation.
+  // The flagship claim's split fields are metric "revenue" + operator
+  // "increase" — together the claim asserts the fact "revenue growth". That
+  // composite phrase, plus "37%" (a stand-in for the value field), is the leak
+  // sentinel: neither appears in the evidence ("...grew 12%...") nor in the
+  // prompt instructions (the operator criterion mentions "increase" and the
+  // evidence contains "revenue", so neither single value is a usable sentinel),
+  // so if either ever reached the model it would have to have been passed in
+  // from the claim — the blind-answering violation.
   const { client, calls } = fakeClient(() => JSON.stringify({ reasoning: "x", outcome: "absent" }));
-  for (const field of ["entity", "period", "measure", "valueUnit", "comparatorBaseline", "modality", "scope"] as ApplicabilityField[]) {
+  for (const field of ["entity", "period", "metric", "operator", "valueUnit", "comparatorBaseline", "modality", "scope"] as ApplicabilityField[]) {
     await extractField(EVIDENCE, field, { client });
   }
   const allText = calls.map((c) => c.messages.map((m) => m.content).join("\n")).join("\n");
-  assert.ok(!allText.includes("revenue growth"), "claim's measure value must not reach the model");
+  assert.ok(!allText.includes("revenue growth"), "claim's metric+operator fact must not reach the model");
   assert.ok(!allText.includes("37%"), "claim's value must not reach the model");
 });
 
@@ -232,7 +236,7 @@ test("assembleEvidenceFields: present → value, everything else → undefined, 
     { field: "entity", outcome: "present", value: "Acme", record: {} as JudgeCallRecord },
     { field: "period", outcome: "present", value: "FY25", record: {} as JudgeCallRecord },
     { field: "valueUnit", outcome: "present", value: "17%", record: {} as JudgeCallRecord },
-    { field: "measure", outcome: "absent", record: {} as JudgeCallRecord },
+    { field: "metric", outcome: "absent", record: {} as JudgeCallRecord },
     { field: "comparatorBaseline", outcome: "ambiguous", record: {} as JudgeCallRecord },
     { field: "modality", outcome: "cannot_be_determined", record: {} as JudgeCallRecord },
   ];
@@ -242,6 +246,6 @@ test("assembleEvidenceFields: present → value, everything else → undefined, 
     period: "FY25",
     valueUnit: { value: "17", unit: "%" },
   } as EvidenceFields);
-  assert.equal(evidence.measure, undefined);
+  assert.equal(evidence.metric, undefined);
   assert.equal(evidence.scope, undefined);
 });

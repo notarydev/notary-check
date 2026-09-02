@@ -31,7 +31,7 @@ import type { ApplicabilityField } from "../verification/applicability.ts";
 
 /** Version string persisted with every judge call (§ requirement #6). Bump on
  * any change to the prompt text or the output schema. */
-export const PROMPT_VERSION = "judge-field-extraction-v1";
+export const PROMPT_VERSION = "judge-field-extraction-v2";
 
 interface FieldCriterion {
   /** The narrow extraction question asked for this field. */
@@ -63,15 +63,25 @@ const FIELD_CRITERIA: Record<ApplicabilityField, FieldCriterion> = {
       "- ambiguous: several periods are present and it is unclear which one the figures cover.\n" +
       "- cannot_be_determined: no period can be recovered from the usable text.",
   },
-  measure: {
+  metric: {
     question: "What metric or quantity do the reported figures measure?",
     criterion:
-      "Look for the thing being quantified — revenue, profit, earnings, market share, growth rate, EPS — and separate it from its value and from its denominator.\n" +
-      "Decide: name the metric in the passage's own vocabulary; do not substitute a synonym that is not present.\n" +
+      "Look for the thing being quantified — revenue, profit, earnings, market share, EPS, headcount — and separate it from its value, from its denominator, and from any change/direction word applied to it (that belongs to \"operator\", not here).\n" +
+      "Decide: name the metric noun in the passage's own vocabulary; do not substitute a synonym that is not present.\n" +
       "- present: one metric is named for the figures — extract it as written.\n" +
       "- absent: figures are given with no metric.\n" +
       "- ambiguous: more than one metric is present and the passage does not tie the figure to one.\n" +
       "- cannot_be_determined: no metric can be recovered from the usable text.",
+  },
+  operator: {
+    question: "What direction of change does the passage assert about the metric — increase, decrease, or no change?",
+    criterion:
+      "Unlike \"metric\", this field calls for legitimate interpretation, not verbatim extraction: recognize the underlying direction regardless of which verb the passage uses. \"grew\", \"rose\", \"climbed\", \"expanded\", \"increased\" all mean increase. \"fell\", \"declined\", \"shrank\", \"dropped\", \"decreased\" all mean decrease. \"held steady\", \"was flat\", \"unchanged\" mean no_change. This is the one place a passage's own wording is deliberately NOT preserved verbatim — recognizing that \"grew\" and \"increased\" assert the same direction is exactly the kind of paraphrase recognition the judge is authorized to do.\n" +
+      "Decide: does the passage assert a direction of change for the figure at all, or does it only state an absolute figure with no comparison/trend implied?\n" +
+      '- present: a direction is asserted — extract it as exactly one of "increase", "decrease", or "no_change" (never the passage\'s own verb).\n' +
+      "- absent: the passage states the figure with no asserted direction of change (a plain absolute value, e.g. \"revenue was $12M\").\n" +
+      "- ambiguous: conflicting direction language attaches to the same figure.\n" +
+      "- cannot_be_determined: no direction can be recovered from the usable text.",
   },
   valueUnit: {
     question: "What numeric value (with its unit) do the reported figures state?",

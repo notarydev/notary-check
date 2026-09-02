@@ -81,8 +81,8 @@ test("normalizeValueUnit never erases a genuine value difference", () => {
   assert.notEqual(a.value.normalized, b.value.normalized);
 });
 
-test("compareField never normalizes measure semantically", () => {
-  const result = compareField("measure", "gross revenue", "revenue");
+test("compareField never normalizes metric semantically", () => {
+  const result = compareField("metric", "gross revenue", "revenue");
   assert.equal(result.status, "mismatched");
 });
 

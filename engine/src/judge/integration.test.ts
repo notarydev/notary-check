@@ -31,13 +31,14 @@ import { assignState } from "../verification/stateMachine.ts";
 import type { JudgeCallInput, JudgeClient } from "./judgeClient.ts";
 import { assembleEvidenceFields, extractField } from "./fieldExtraction.ts";
 
-const ALL_FIELDS = ["entity", "period", "measure", "valueUnit", "comparatorBaseline", "modality", "scope"] as const;
+const ALL_FIELDS = ["entity", "period", "metric", "operator", "valueUnit", "comparatorBaseline", "modality", "scope"] as const;
 
 // The plan's flagship claim: "Acme's revenue grew 17% in FY25."
 const CLAIM: ClaimFields = {
   entity: "Acme",
   period: "FY25",
-  measure: "revenue growth",
+  metric: "revenue",
+  operator: "increase",
   valueUnit: { value: "17", unit: "%" },
   comparatorBaseline: "prior year",
   modality: "actual",
@@ -56,7 +57,8 @@ const modelAnswer = (outcome: string, value?: string): string =>
 const SUPPORTING_ANSWERS: string[] = [
   modelAnswer("present", "Acme"),
   modelAnswer("present", "FY25"),
-  modelAnswer("present", "revenue growth"),
+  modelAnswer("present", "revenue"),
+  modelAnswer("present", "increase"),
   modelAnswer("present", "17%"),
   modelAnswer("present", "prior year"),
   modelAnswer("present", "actual"),
@@ -128,7 +130,8 @@ test("full flow: mocked judge → EvidenceFields → assessApplicability → ass
   assert.deepEqual(evidence, {
     entity: "Acme",
     period: "FY25",
-    measure: "revenue growth",
+    metric: "revenue",
+    operator: "increase",
     valueUnit: { value: "17", unit: "%" },
     comparatorBaseline: "prior year",
     modality: "actual",
@@ -161,7 +164,7 @@ test("full flow: mocked judge → EvidenceFields → assessApplicability → ass
 test("the judge never decides the final state: a 12% mock flips the result to CONTRADICTED through the deterministic layer alone", async () => {
   // Only the judge's mocked VALUE changes; every other field is identical.
   const contradiction = [...SUPPORTING_ANSWERS];
-  contradiction[3] = modelAnswer("present", "12%");
+  contradiction[4] = modelAnswer("present", "12%");
 
   const { evidence, applicability, state } = await runFlow(contradiction);
 
