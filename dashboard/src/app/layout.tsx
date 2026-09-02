@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { ThemeProvider } from "next-themes";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -22,10 +25,25 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      // suppressHydrationWarning is required by next-themes: it sets the
+      // "dark"/"light" class on <html> before hydration via an inline
+      // script, which legitimately differs from the server-rendered markup.
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <ClerkProvider>{children}</ClerkProvider>
+        {/* defaultTheme="system" preserves this app's original behavior
+            (dark mode followed prefers-color-scheme automatically) now that
+            shadcn's init switched globals.css to a class-based ".dark"
+            strategy instead of a bare prefers-color-scheme media query. */}
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <ClerkProvider>
+            <TooltipProvider>
+              {children}
+              <Toaster />
+            </TooltipProvider>
+          </ClerkProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
