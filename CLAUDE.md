@@ -34,6 +34,26 @@ satisfied applicability check, run through the deterministic pipeline,
 can do that. If a change would blur that line, stop and check
 `docs/guide/canonical-product-definition.md` §6 before proceeding.
 
+## DeepSeek via opencode is available — explicit permission only
+
+Scoped, mechanical work (well-defined, single-`docs/build/tier-1-build-and-operating-plan.md`-section
+tasks — not judgment calls about product meaning or authority
+boundaries) can be dispatched to DeepSeek through opencode instead of
+done directly, to save tokens. The dispatch pattern is already documented
+in `HANDOFF.md`:
+
+```bash
+opencode run "<scoped task, referencing docs/build/tier-1-build-and-operating-plan.md section numbers>" \
+  -m deepseek/deepseek-v4-flash --auto --format json --title "<step name>"
+```
+
+**This requires explicit permission from the user each time, not a
+standing default.** Don't dispatch to DeepSeek on your own judgment that
+a task looks mechanical — ask first. Scope the dispatch to exactly one
+step and say explicitly what it must NOT touch (auth, the judge,
+billing, anything outside the named step), the same discipline
+`HANDOFF.md` already documents from prior dispatches.
+
 ## When you finish a change
 
 If it touched the schema, deploy target, auth, or anything else
