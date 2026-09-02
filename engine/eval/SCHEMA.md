@@ -1,8 +1,8 @@
 # Eval-case schema — DRAFT scaffold, not the gating set
 
-**Status: scaffolding, not the artifact docs/plan.md requires.**
+**Status: scaffolding, not the artifact docs/build/tier-1-build-and-operating-plan.md requires.**
 
-`docs/plan.md`, § Evaluator governance and rollback, requires a **held-out
+`docs/build/tier-1-build-and-operating-plan.md`, § Evaluator governance and rollback, requires a **held-out
 labeled evaluation set** built via the GDR paper's annotation protocol: two
 independent annotators per packet, a written claim-boundary and applicability
 guide, blinded adjudication for disagreements, per-class agreement reporting.
@@ -48,7 +48,7 @@ parallel one:
   drawn from `ApplicabilityField` names / `FieldResult.detail` phrasing
   otherwise — never a new incompatible vocabulary.
 - `locked_case_type` is an integer 1–18 referencing § Locked test suite's
-  numbered list in `docs/plan.md`, or `null` for a genuinely hard/ambiguous
+  numbered list in `docs/build/tier-1-build-and-operating-plan.md`, or `null` for a genuinely hard/ambiguous
   case added beyond the locked 18 to stress-test the annotation guide itself.
 
 ```ts

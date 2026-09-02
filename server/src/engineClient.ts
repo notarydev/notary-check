@@ -5,7 +5,7 @@
 // and map the results onto the card's locked 3-state shape.
 //
 // Engine-state -> finding-type -> card-state mapping is exactly the table in
-// docs/plan.md's "Engine state -> finding type -> card state" section — this
+// docs/build/tier-1-build-and-operating-plan.md's "Engine state -> finding type -> card state" section — this
 // module does not invent its own compression rule, it implements that one.
 
 import { randomUUID } from "node:crypto";
@@ -19,7 +19,10 @@ import type { ReviewCardData } from "./mocks/scenarios.js";
 function engineUrl(): string {
   return process.env.ENGINE_URL ?? "http://localhost:4001";
 }
-function engineApiKey(): string {
+// Fallback default so local/manual testing without Clerk still works. The
+// real Clerk-authenticated path always passes the per-user resolved key
+// explicitly (see server.ts / orgResolver.ts) — this is only the fallback.
+function defaultEngineApiKey(): string {
   return process.env.ENGINE_API_KEY ?? "";
 }
 
@@ -52,37 +55,45 @@ interface ClaimResult {
   claim: { id: string; state: string; state_reason: string | null; no_source: boolean };
 }
 
-async function engineFetch(path: string, init: RequestInit): Promise<Response> {
+async function engineFetch(path: string, init: RequestInit, apiKey: string = defaultEngineApiKey()): Promise<Response> {
   return fetch(`${engineUrl()}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${engineApiKey()}`,
+      authorization: `Bearer ${apiKey}`,
       ...init.headers,
     },
   });
 }
 
-async function extractClaims(answerText: string): Promise<ExtractedClaim[]> {
-  const res = await engineFetch("/v1/extract-claims", {
-    method: "POST",
-    body: JSON.stringify({ answer_text: answerText }),
-  });
+async function extractClaims(answerText: string, apiKey: string): Promise<ExtractedClaim[]> {
+  const res = await engineFetch(
+    "/v1/extract-claims",
+    {
+      method: "POST",
+      body: JSON.stringify({ answer_text: answerText }),
+    },
+    apiKey,
+  );
   if (!res.ok) return [];
   const body = (await res.json()) as { claims: ExtractedClaim[] };
   return body.claims;
 }
 
-async function createReview(): Promise<string> {
-  const res = await engineFetch("/v1/reviews", {
-    method: "POST",
-    body: JSON.stringify({ idempotency_key: randomUUID() }),
-  });
+async function createReview(apiKey: string): Promise<string> {
+  const res = await engineFetch(
+    "/v1/reviews",
+    {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: randomUUID() }),
+    },
+    apiKey,
+  );
   const body = (await res.json()) as { review: { id: string } };
   return body.review.id;
 }
 
-async function registerEvidence(reviewId: string, source: SourceRef): Promise<string | undefined> {
+async function registerEvidence(reviewId: string, source: SourceRef, apiKey: string): Promise<string | undefined> {
   const body: Record<string, unknown> = { review_id: reviewId, origin: source.source_role };
   // When both are present, send both: the excerpt is the actually-checkable
   // text (often already resolved by whoever supplied it, and not guaranteed
@@ -96,28 +107,37 @@ async function registerEvidence(reviewId: string, source: SourceRef): Promise<st
   if (source.url !== undefined) body.submitted_url = source.url;
   if (body.payload === undefined && body.submitted_url === undefined) return undefined; // nothing addressable to register
 
-  const res = await engineFetch("/v1/evidence", { method: "POST", body: JSON.stringify(body) });
+  const res = await engineFetch("/v1/evidence", { method: "POST", body: JSON.stringify(body) }, apiKey);
   if (!res.ok) return undefined;
   const parsed = (await res.json()) as { evidence: { id: string } };
   return parsed.evidence.id;
 }
 
-async function submitClaim(reviewId: string, claim: ExtractedClaim, evidenceIds: string[]): Promise<ClaimResult | undefined> {
-  const res = await engineFetch(`/v1/reviews/${reviewId}/claims`, {
-    method: "POST",
-    body: JSON.stringify({
-      text: claim.text,
-      ordinal: claim.ordinal,
-      materiality: claim.materiality,
-      claim_fields: claim.claimFields,
-      evidence_ids: evidenceIds,
-    }),
-  });
+async function submitClaim(
+  reviewId: string,
+  claim: ExtractedClaim,
+  evidenceIds: string[],
+  apiKey: string,
+): Promise<ClaimResult | undefined> {
+  const res = await engineFetch(
+    `/v1/reviews/${reviewId}/claims`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        text: claim.text,
+        ordinal: claim.ordinal,
+        materiality: claim.materiality,
+        claim_fields: claim.claimFields,
+        evidence_ids: evidenceIds,
+      }),
+    },
+    apiKey,
+  );
   if (!res.ok) return undefined;
   return (await res.json()) as ClaimResult;
 }
 
-// docs/plan.md's engine-state -> finding-type -> card-state table, made code.
+// docs/build/tier-1-build-and-operating-plan.md's engine-state -> finding-type -> card-state table, made code.
 function findingFor(result: ClaimResult["claim"], claimText: string): { finding?: { label: string; text: string; why: string }; needsCheck: boolean } {
   if (result.no_source) {
     return {
@@ -146,16 +166,23 @@ function findingFor(result: ClaimResult["claim"], claimText: string): { finding?
   }
 }
 
-export async function reviewAnswer(answerText: string, sourceRefs: SourceRef[]): Promise<ReviewCardData> {
-  const claims = await extractClaims(answerText);
+// apiKey defaults to the shared ENGINE_API_KEY env var for local/manual
+// testing without Clerk. The real Clerk-authenticated path (server.ts) always
+// passes the caller's own per-user resolved key explicitly.
+export async function reviewAnswer(
+  answerText: string,
+  sourceRefs: SourceRef[],
+  apiKey: string = defaultEngineApiKey(),
+): Promise<ReviewCardData> {
+  const claims = await extractClaims(answerText, apiKey);
   const materialClaims = claims.filter((c) => c.materiality);
 
   if (materialClaims.length === 0) {
     return { status: "no_issue", scope: "No material factual claims found to review.", actions: [] };
   }
 
-  const reviewId = await createReview();
-  const evidenceIds = (await Promise.all(sourceRefs.map((s) => registerEvidence(reviewId, s)))).filter(
+  const reviewId = await createReview(apiKey);
+  const evidenceIds = (await Promise.all(sourceRefs.map((s) => registerEvidence(reviewId, s, apiKey)))).filter(
     (id): id is string => id !== undefined,
   );
 
@@ -163,7 +190,7 @@ export async function reviewAnswer(answerText: string, sourceRefs: SourceRef[]):
   const uncheckedFindings: Array<{ label: string; text: string; why: string }> = [];
 
   for (const claim of materialClaims) {
-    const result = await submitClaim(reviewId, claim, evidenceIds);
+    const result = await submitClaim(reviewId, claim, evidenceIds, apiKey);
     if (result === undefined) continue;
     const { finding, needsCheck } = findingFor(result.claim, claim.text);
     if (finding === undefined) continue;

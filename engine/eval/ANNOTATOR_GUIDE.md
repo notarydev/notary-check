@@ -1,11 +1,11 @@
 # Annotator guide — DRAFT scaffold
 
 **This is not the final annotation protocol.** It operationalizes the rules
-already written down in `docs/plan.md` (§ Verification pipeline step 5, § LLM
+already written down in `docs/build/tier-1-build-and-operating-plan.md` (§ Verification pipeline step 5, § LLM
 judge design) into a checklist a non-engineer can follow. It restates the
 plan's own already-decided policy; it does not invent new policy. Before real
 annotation begins, this guide should be reviewed against the actual protocol
-requirements in `docs/plan.md` § Evaluator governance and rollback (two
+requirements in `docs/build/tier-1-build-and-operating-plan.md` § Evaluator governance and rollback (two
 independent annotators per packet, written guide, blinded adjudication,
 per-class agreement reporting) and revised by whoever owns that process.
 
@@ -48,7 +48,7 @@ same one, no filling in a plausible-sounding date.
 ## Step 3 — apply the material-mismatch rule (this is the whole game)
 
 > **A material mismatch on ANY field excludes the evidence from support, even
-> when the wording or number is otherwise attractive.** (docs/plan.md § 5)
+> when the wording or number is otherwise attractive.** (docs/build/tier-1-build-and-operating-plan.md § 5)
 
 Concretely, go field by field:
 
@@ -140,7 +140,7 @@ note is exactly what disagreement adjudication will need later.
 
 ## Blinded adjudication (for whoever runs the process, not the annotators)
 
-Per `docs/plan.md` § Evaluator governance and rollback: annotators label
+Per `docs/build/tier-1-build-and-operating-plan.md` § Evaluator governance and rollback: annotators label
 independently, without seeing each other's labels. Where two annotators
 agree, that becomes the case's adjudicated label. Where they disagree, a
 third reviewer — shown the claim, the evidence, and both annotators' stated

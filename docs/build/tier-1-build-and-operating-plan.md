@@ -1,3 +1,8 @@
+> Status: canonical
+> Owner: Hardyk
+> Last verified: 2026-09-01
+> Supersedes: —
+
 ﻿# Notary Check — Tier 1 build and operating plan
 
 ## Build decision

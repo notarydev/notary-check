@@ -1,13 +1,21 @@
 # Notary Check — engine
 
-This is the **Phase 1 build-order engine** (steps 1–5). It started as source
-manifest binding plus an immutable locator/snapshot layer (§ Verification
-pipeline, step 1; the `Evidence` table in § Core data model) and has since
-grown the deterministic verifier (step 2), adversarial source ingestion (step
-3), the constrained DeepSeek judge (step 4), and auth / quotas / retention /
-observability / kill switch (step 5). Still deliberately absent: billing,
-OAuth/OIDC for a human-facing dashboard login, a metrics/alerting platform, and
-anything beyond the CHECK tier.
+> This file covers `engine/` only. See [`../docs/README.md`](../docs/README.md)
+> for the doc structure and [`../docs/build/architecture-and-progress.md`](../docs/build/architecture-and-progress.md)
+> for the current live-deployment snapshot (updated in the same commit as
+> any infra change — check there before trusting anything below about what's
+> deployed).
+
+Started as source manifest binding plus an immutable locator/snapshot layer
+(the `Evidence` table), then grew the deterministic verifier, adversarial
+source ingestion, the constrained DeepSeek judge, and auth / quotas /
+retention / observability / kill switch. **Also now includes**: Clerk-based
+per-user organization resolution (`src/routes/internal.ts`, called by
+`server/`'s `orgResolver.ts`), Stripe billing (`src/billing/`, currently
+test-mode keys only — not live payment), and optional Datadog log shipping
+(`src/observability/log.ts`, ships only if `DD_API_KEY` is set). Still
+absent: a real payload/object store (`evidence.resolved_text` is a
+documented stand-in), CI, and anything beyond the CHECK tier.
 
 ## What exists
 
@@ -17,10 +25,13 @@ anything beyond the CHECK tier.
   organization scoping.
 - Raw SQL migrations in `migrations/` run by a minimal runner (the `pg`
   package, no ORM).
-- One HTTP endpoint: `POST /v1/evidence` — registers a new source into the
-  manifest by creating an `Evidence` row. It accepts a `submitted_url`, a
-  `payload_ref`, and/or an inline `payload`. It does **not** fetch or parse
-  anything.
+- HTTP endpoints: `POST /v1/evidence` (registers a source into the
+  manifest — accepts `submitted_url`, `payload_ref`, and/or an inline
+  `payload`; does not fetch or parse anything), `POST /v1/reviews`,
+  `GET /v1/reviews/:id/claims`, `POST /v1/extract-claims`,
+  `POST /v1/billing/*` (Stripe checkout + webhook), and
+  `POST /v1/internal/resolve-organization` (Clerk-user-id → API key,
+  gated by a shared `X-Internal-Secret`, called only by `server/`).
 - Real service-to-service auth: `Authorization: Bearer <api-key>`, verified
   against the `organization_api_key` table (build-order step 5). The key is
   stored only as a SHA-256 hash plus a non-secret `nk_live_*` prefix; the
@@ -35,15 +46,19 @@ anything beyond the CHECK tier.
 - Structured JSON logging (`src/observability/log.ts`) wired into the evidence
   route and the judge call site.
 
-## What does NOT exist here (by design — later build-order work)
+## What does NOT exist here
 
 - No parsing of HTML/PDF/excerpts, no canonical text extraction beyond
   ingestion fencing.
-- No OAuth/OIDC for a human-facing login (a vendor decision — Auth0/Clerk/
-  WorkOS/custom — not something to guess) and no metrics/alerting platform
-  (Datadog/Grafana/... — also a vendor choice). Structured logs are emitted as
-  JSON lines a real platform could later ingest.
-- No user-facing review orchestration, corrections, or billing.
+- No real payload/object store — `evidence.resolved_text` (migration 0006)
+  is a deliberate, narrow stand-in for what should eventually be an
+  S3-equivalent store.
+- No CI.
+- No held-out, adjudicated evaluation gate — `engine/eval/` holds 20 draft
+  cases, each explicitly marked not yet independently annotated (see
+  `engine/eval/SCHEMA.md`). No real pass/fail number exists yet for the
+  actual release gate.
+- No corrections/revision flow beyond full claim resubmission.
 
 ## Scope discipline
 

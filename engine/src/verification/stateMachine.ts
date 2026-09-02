@@ -11,7 +11,7 @@
 // CONFLICTED is intentionally ABSENT from the relation type below. That state
 // is CAPTURE-tier only (§ Verification pipeline step 8: "CONFLICTED and
 // ATTESTED belong to later CAPTURE records") — a separate, later product tier
-// explicitly out of scope for this CHECK build (§ docs/plan.md, "Do not build
+// explicitly out of scope for this CHECK build (§ docs/build/tier-1-build-and-operating-plan.md, "Do not build
 // yet": conflict/attestation workflows before a CAPTURE customer exists). Its
 // absence here is deliberate, not forgotten.
 //

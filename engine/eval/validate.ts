@@ -1,7 +1,7 @@
 // Validator for eval-case files (§ eval/SCHEMA.md). SCAFFOLDING ONLY — this
 // checks that a candidate eval-case file is well-formed against the DRAFT
 // schema described in SCHEMA.md; it says nothing about whether the file is
-// the real held-out labeled set docs/plan.md § Evaluator governance and
+// the real held-out labeled set docs/build/tier-1-build-and-operating-plan.md § Evaluator governance and
 // rollback requires (that set only exists once real annotators have done
 // blinded double-annotation on material like this).
 //
@@ -165,7 +165,7 @@ export function validateCase(raw: unknown, index: number, issues: ValidationIssu
     issues.push({
       caseId,
       path: `${path}.locked_case_type`,
-      message: "must be an integer 1-18 (§ docs/plan.md Locked test suite) or null",
+      message: "must be an integer 1-18 (§ docs/build/tier-1-build-and-operating-plan.md Locked test suite) or null",
     });
   }
 
