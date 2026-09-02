@@ -24,8 +24,124 @@ const registerEvidenceSchema = z
 
 const BEARER_PREFIX = "Bearer ";
 
+const DEFAULT_LIST_LIMIT = 20;
+const MAX_LIST_LIMIT = 100;
+
+const listEvidenceQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(MAX_LIST_LIMIT).default(DEFAULT_LIST_LIMIT),
+  cursor: z.string().optional(),
+});
+
+interface EvidenceCursor {
+  createdAt: string;
+  id: string;
+}
+
+/** Encodes a (created_at, id) keyset cursor as opaque base64. Same scheme as reviews.ts. */
+function encodeEvidenceCursor(cursor: EvidenceCursor): string {
+  return Buffer.from(`${cursor.createdAt},${cursor.id}`, "utf8").toString("base64");
+}
+
+/** Decodes and shape-checks a client-supplied cursor. Returns null if malformed. */
+function decodeEvidenceCursor(raw: string): EvidenceCursor | null {
+  try {
+    const decoded = Buffer.from(raw, "base64").toString("utf8");
+    const commaIndex = decoded.lastIndexOf(",");
+    if (commaIndex === -1) return null;
+    const createdAt = decoded.slice(0, commaIndex);
+    const id = decoded.slice(commaIndex + 1);
+    if (Number.isNaN(Date.parse(createdAt))) return null;
+    if (!z.string().uuid().safeParse(id).success) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
+}
+
 export function evidenceRouter(database: pg.Pool): Router {
   const router = Router();
+
+  // GET /v1/evidence — org-scoped evidence library, keyset-paginated on
+  // (created_at DESC, id DESC) over the new evidence.created_at column
+  // (migration 0008). Org scoping goes through `review` since evidence has no
+  // organization_id column of its own. Deliberately EXCLUDES resolved_text —
+  // a list response should not ship large/sensitive payload text; fetch a
+  // single evidence row's full detail through the review-detail endpoint
+  // (GET /v1/reviews/:id) instead.
+  router.get("/v1/evidence", async (req, res) => {
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      logEvent({ event: "auth_failed", error_cause: "missing_bearer", path: "deterministic-only" });
+      return res.status(401).json({ error: "missing Authorization: Bearer <api-key> header" });
+    }
+    const presentedKey = authHeader.slice(BEARER_PREFIX.length).trim();
+    const auth = await verifyApiKey(presentedKey, database);
+    if (!auth.ok) {
+      logEvent({ event: "auth_failed", error_cause: `api_key_${auth.reason}`, path: "deterministic-only" });
+      return res.status(401).json({ error: "invalid or revoked API key" });
+    }
+    const orgId = auth.organizationId;
+
+    const parsedQuery = listEvidenceQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      return res.status(400).json({ error: "invalid query parameters", details: parsedQuery.error.flatten() });
+    }
+    const { limit, cursor } = parsedQuery.data;
+
+    let afterCreatedAt: string | null = null;
+    let afterId: string | null = null;
+    if (cursor !== undefined) {
+      const decoded = decodeEvidenceCursor(cursor);
+      if (decoded === null) {
+        return res.status(400).json({ error: "invalid cursor" });
+      }
+      afterCreatedAt = decoded.createdAt;
+      afterId = decoded.id;
+    }
+
+    const result = await database.query(
+      `SELECT
+         evidence.id, evidence.review_id, evidence.origin, evidence.submitted_url, evidence.canonical_url,
+         evidence.retrieval_status, evidence.retrieved_at, evidence.retention_until,
+         evidence.access_revoked_at, evidence.created_at
+       FROM evidence
+       JOIN review ON evidence.review_id = review.id
+       WHERE review.organization_id = $1
+         AND (
+           $3::timestamptz IS NULL
+           OR (evidence.created_at, evidence.id) < ($3::timestamptz, $4::uuid)
+         )
+       ORDER BY evidence.created_at DESC, evidence.id DESC
+       LIMIT $2`,
+      [orgId, limit, afterCreatedAt, afterId],
+    );
+
+    const rows = result.rows as Array<{
+      id: string;
+      review_id: string;
+      origin: string;
+      submitted_url: string | null;
+      canonical_url: string | null;
+      retrieval_status: string;
+      retrieved_at: string | null;
+      retention_until: string | null;
+      access_revoked_at: string | null;
+      created_at: string;
+    }>;
+
+    const last = rows[rows.length - 1];
+    // See the identical comment in reviews.ts's GET /v1/reviews handler:
+    // node-pg returns timestamptz columns as JS Date objects, and a bare
+    // template-literal interpolation would call the Date's locale-formatted
+    // toString() instead of toISOString(), producing an invalid timestamptz
+    // literal that 500s the next page. toISOString() is required here.
+    const nextCursor =
+      rows.length === limit && last
+        ? encodeEvidenceCursor({ createdAt: new Date(last.created_at).toISOString(), id: last.id })
+        : null;
+
+    return res.status(200).json({ evidence: rows, next_cursor: nextCursor });
+  });
 
   // Registers a new source into the evidence manifest by creating an Evidence
   // row. Nothing is fetched or parsed here — safe fetching is a later

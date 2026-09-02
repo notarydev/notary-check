@@ -7,6 +7,11 @@ import { billingRouter } from "./routes/billing.js";
 import { webhookRouter } from "./routes/webhook.js";
 import { reviewsRouter } from "./routes/reviews.js";
 import { extractClaimsRouter } from "./routes/extractClaims.js";
+import { internalRouter } from "./routes/internal.js";
+import { usageRouter } from "./routes/usage.js";
+import { organizationRouter } from "./routes/organization.js";
+import { apiKeysRouter } from "./routes/apiKeys.js";
+import { waitlistRouter } from "./routes/waitlist.js";
 
 const app = express();
 
@@ -24,6 +29,11 @@ app.use(express.json({ limit: "5mb" }));
 app.use(evidenceRouter(pool));
 app.use(reviewsRouter(pool));
 app.use(extractClaimsRouter(pool));
+app.use(internalRouter(pool));
+app.use(usageRouter(pool));
+app.use(organizationRouter(pool));
+app.use(apiKeysRouter(pool));
+app.use(waitlistRouter(pool));
 
 const stripe = createStripeClient();
 app.use(billingRouter(pool, stripe));

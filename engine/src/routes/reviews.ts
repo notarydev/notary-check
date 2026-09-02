@@ -39,6 +39,41 @@ const createClaimSchema = z.object({
   evidence_ids: z.array(z.string().uuid()).default([]),
 });
 
+const DEFAULT_LIST_LIMIT = 20;
+const MAX_LIST_LIMIT = 100;
+
+const listReviewsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(MAX_LIST_LIMIT).default(DEFAULT_LIST_LIMIT),
+  cursor: z.string().optional(),
+  status: z.enum(["processing", "complete", "failed"]).optional(),
+});
+
+interface ReviewCursor {
+  createdAt: string;
+  id: string;
+}
+
+/** Encodes a (created_at, id) keyset cursor as opaque base64. */
+function encodeReviewCursor(cursor: ReviewCursor): string {
+  return Buffer.from(`${cursor.createdAt},${cursor.id}`, "utf8").toString("base64");
+}
+
+/** Decodes and shape-checks a client-supplied cursor. Returns null if malformed. */
+function decodeReviewCursor(raw: string): ReviewCursor | null {
+  try {
+    const decoded = Buffer.from(raw, "base64").toString("utf8");
+    const commaIndex = decoded.lastIndexOf(",");
+    if (commaIndex === -1) return null;
+    const createdAt = decoded.slice(0, commaIndex);
+    const id = decoded.slice(commaIndex + 1);
+    if (Number.isNaN(Date.parse(createdAt))) return null;
+    if (!z.string().uuid().safeParse(id).success) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
+}
+
 export function reviewsRouter(database: pg.Pool): Router {
   const router = Router();
 
@@ -99,6 +134,229 @@ export function reviewsRouter(database: pg.Pool): Router {
         status: row.status,
         created_at: row.created_at,
       },
+    });
+  });
+
+  // GET /v1/reviews — org-scoped review history, keyset-paginated on
+  // (created_at DESC, id DESC). id is the tiebreaker because created_at alone
+  // is not unique enough to guarantee a stable order across rows created in
+  // the same instant (migration 0008 adds review.created_at's supporting
+  // index for exactly this ordering).
+  router.get("/v1/reviews", async (req, res) => {
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      logEvent({ event: "auth_failed", error_cause: "missing_bearer", path: "deterministic-only" });
+      return res.status(401).json({ error: "missing Authorization: Bearer <api-key> header" });
+    }
+    const presentedKey = authHeader.slice(BEARER_PREFIX.length).trim();
+    const auth = await verifyApiKey(presentedKey, database);
+    if (!auth.ok) {
+      logEvent({ event: "auth_failed", error_cause: `api_key_${auth.reason}`, path: "deterministic-only" });
+      return res.status(401).json({ error: "invalid or revoked API key" });
+    }
+    const orgId = auth.organizationId;
+
+    const parsedQuery = listReviewsQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      return res.status(400).json({ error: "invalid query parameters", details: parsedQuery.error.flatten() });
+    }
+    const { limit, cursor, status } = parsedQuery.data;
+
+    let afterCreatedAt: string | null = null;
+    let afterId: string | null = null;
+    if (cursor !== undefined) {
+      const decoded = decodeReviewCursor(cursor);
+      if (decoded === null) {
+        return res.status(400).json({ error: "invalid cursor" });
+      }
+      afterCreatedAt = decoded.createdAt;
+      afterId = decoded.id;
+    }
+
+    // $4/$5 (the cursor bounds) are compared only when a cursor was supplied —
+    // the `$4::timestamptz IS NULL` branch keeps the first page's query plan
+    // simple and correct with no cursor at all.
+    const result = await database.query(
+      `SELECT id, organization_id, idempotency_key, status, created_at, completed_at
+       FROM review
+       WHERE organization_id = $1
+         AND ($2::text IS NULL OR status = $2)
+         AND (
+           $4::timestamptz IS NULL
+           OR (created_at, id) < ($4::timestamptz, $5::uuid)
+         )
+       ORDER BY created_at DESC, id DESC
+       LIMIT $3`,
+      [orgId, status ?? null, limit, afterCreatedAt, afterId],
+    );
+
+    const rows = result.rows as Array<{
+      id: string;
+      organization_id: string;
+      idempotency_key: string | null;
+      status: string;
+      created_at: string;
+      completed_at: string | null;
+    }>;
+
+    const last = rows[rows.length - 1];
+    // node-pg returns timestamptz columns as JS Date objects, not strings —
+    // despite the `created_at: string` type above (pg does not narrow the
+    // type at the type-checker level, only at runtime). Cursor encoding does
+    // manual string concatenation, so it MUST call toISOString() explicitly:
+    // a bare template-literal interpolation of a Date silently calls its
+    // locale-formatted toString() (e.g. "Wed Sep 02 2026 10:59:04
+    // GMT-0400 (Eastern Daylight Time)") instead, which is not a valid
+    // timestamptz literal and makes the next page's query 500 — caught by
+    // actually paginating against a running server, not by typecheck (see
+    // HANDOFF.md's account of the review-orchestrator bugs for why "tsc
+    // passed" is never sufficient here).
+    const nextCursor =
+      rows.length === limit && last
+        ? encodeReviewCursor({ createdAt: new Date(last.created_at).toISOString(), id: last.id })
+        : null;
+
+    return res.status(200).json({
+      reviews: rows.map((row) => ({
+        id: row.id,
+        organization_id: row.organization_id,
+        idempotency_key: row.idempotency_key,
+        status: row.status,
+        created_at: row.created_at,
+        completed_at: row.completed_at,
+      })),
+      next_cursor: nextCursor,
+    });
+  });
+
+  // GET /v1/reviews/:id — one review plus its claims (ordered by ordinal) plus
+  // each claim's evidence_match rows joined to evidence. 404 (not 403) when
+  // the review does not belong to the authenticated org — same
+  // don't-leak-existence discipline as the claim-creation route above.
+  router.get("/v1/reviews/:id", async (req, res) => {
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      logEvent({ event: "auth_failed", error_cause: "missing_bearer", path: "deterministic-only" });
+      return res.status(401).json({ error: "missing Authorization: Bearer <api-key> header" });
+    }
+    const presentedKey = authHeader.slice(BEARER_PREFIX.length).trim();
+    const auth = await verifyApiKey(presentedKey, database);
+    if (!auth.ok) {
+      logEvent({ event: "auth_failed", error_cause: `api_key_${auth.reason}`, path: "deterministic-only" });
+      return res.status(401).json({ error: "invalid or revoked API key" });
+    }
+    const orgId = auth.organizationId;
+
+    // Validate the route param shape BEFORE it reaches a query — same
+    // malformed-uuid-must-be-400-not-500 discipline as the claims route below
+    // (§ HANDOFF.md's account of the review-orchestrator bugs).
+    const { id } = req.params;
+    if (!z.string().uuid().safeParse(id).success) {
+      return res.status(400).json({ error: "invalid review id" });
+    }
+
+    const reviewResult = await database.query(
+      "SELECT id, organization_id, idempotency_key, status, created_at, completed_at FROM review WHERE id = $1 AND organization_id = $2",
+      [id, orgId],
+    );
+    if (!reviewResult.rowCount) {
+      return res.status(404).json({ error: "review not found for this organization" });
+    }
+    const review = reviewResult.rows[0] as {
+      id: string;
+      organization_id: string;
+      idempotency_key: string | null;
+      status: string;
+      created_at: string;
+      completed_at: string | null;
+    };
+
+    const claimsResult = await database.query(
+      `SELECT id, review_id, ordinal, text, decontextualized_form, materiality, state, no_source, state_reason, policy_version, created_at
+       FROM claim
+       WHERE review_id = $1
+       ORDER BY ordinal ASC`,
+      [id],
+    );
+    const claims = claimsResult.rows as Array<{
+      id: string;
+      review_id: string;
+      ordinal: number;
+      text: string;
+      decontextualized_form: string | null;
+      materiality: boolean;
+      state: string;
+      no_source: boolean;
+      state_reason: string | null;
+      policy_version: string;
+      created_at: string;
+    }>;
+
+    const claimIds = claims.map((c) => c.id);
+    const matchesResult =
+      claimIds.length > 0
+        ? await database.query(
+            `SELECT
+               em.id, em.claim_id, em.evidence_id, em.locator, em.resolved_text_hash, em.excerpt_ref,
+               em.applicability_json, em.relation, em.method, em.evaluator_version, em.evaluated_at,
+               ev.origin, ev.submitted_url, ev.canonical_url, ev.retrieval_status, ev.retrieved_at
+             FROM evidence_match em
+             JOIN evidence ev ON ev.id = em.evidence_id
+             WHERE em.claim_id = ANY($1::uuid[])`,
+            [claimIds],
+          )
+        : { rows: [] as Array<Record<string, unknown>> };
+
+    const matchesByClaimId = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of matchesResult.rows as Array<Record<string, unknown>>) {
+      const claimId = row.claim_id as string;
+      const list = matchesByClaimId.get(claimId) ?? [];
+      list.push({
+        id: row.id,
+        evidence_id: row.evidence_id,
+        locator: row.locator,
+        resolved_text_hash: row.resolved_text_hash,
+        excerpt_ref: row.excerpt_ref,
+        applicability_json: row.applicability_json,
+        relation: row.relation,
+        method: row.method,
+        evaluator_version: row.evaluator_version,
+        evaluated_at: row.evaluated_at,
+        evidence: {
+          id: row.evidence_id,
+          origin: row.origin,
+          submitted_url: row.submitted_url,
+          canonical_url: row.canonical_url,
+          retrieval_status: row.retrieval_status,
+          retrieved_at: row.retrieved_at,
+        },
+      });
+      matchesByClaimId.set(claimId, list);
+    }
+
+    return res.status(200).json({
+      review: {
+        id: review.id,
+        organization_id: review.organization_id,
+        idempotency_key: review.idempotency_key,
+        status: review.status,
+        created_at: review.created_at,
+        completed_at: review.completed_at,
+      },
+      claims: claims.map((c) => ({
+        id: c.id,
+        review_id: c.review_id,
+        ordinal: c.ordinal,
+        text: c.text,
+        decontextualized_form: c.decontextualized_form,
+        materiality: c.materiality,
+        state: c.state,
+        no_source: c.no_source,
+        state_reason: c.state_reason,
+        policy_version: c.policy_version,
+        created_at: c.created_at,
+        evidence_matches: matchesByClaimId.get(c.id) ?? [],
+      })),
     });
   });
 

@@ -108,6 +108,29 @@ export async function verifyApiKey(presentedKey: string, db: pg.Pool): Promise<A
   return { ok: true, organizationId: row.organization_id, keyId: row.id };
 }
 
+export interface ApiKeySummary {
+  id: string;
+  key_prefix: string;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+/**
+ * Lists an organization's API keys for dashboard display. Never returns
+ * key_hash — only the non-secret prefix, matching the "logs/UI carry the
+ * prefix, never the secret" discipline documented above.
+ */
+export async function listApiKeys(organizationId: string, db: pg.Pool): Promise<ApiKeySummary[]> {
+  const result = await db.query(
+    `SELECT id, key_prefix, created_at, revoked_at
+     FROM organization_api_key
+     WHERE organization_id = $1
+     ORDER BY created_at DESC`,
+    [organizationId],
+  );
+  return result.rows as ApiKeySummary[];
+}
+
 /** Revokes a key by id. A revoked key stops working on the next verification. */
 export async function revokeApiKey(keyId: string, db: pg.Pool): Promise<{ ok: boolean }> {
   const result = await db.query(

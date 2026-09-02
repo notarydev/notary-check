@@ -1,0 +1,11 @@
+-- Notary Check engine — Clerk-to-organization join key.
+--
+-- Foundation piece for wiring real Clerk OAuth into the MCP server (server/):
+-- each real, human, Clerk-authenticated user needs their OWN isolated
+-- organization/API-key scope instead of everyone sharing one shared test
+-- account. clerk_user_id is that join key — it maps one Clerk user id to
+-- exactly one Notary organization row. UNIQUE (not NOT NULL: pre-existing
+-- organizations, and any organization created outside this flow, have no
+-- Clerk user and must stay valid) so a lookup by clerk_user_id can never
+-- resolve to more than one organization.
+ALTER TABLE organization ADD COLUMN clerk_user_id text UNIQUE;

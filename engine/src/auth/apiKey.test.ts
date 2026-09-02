@@ -14,6 +14,7 @@ import {
   hashApiKey,
   isWellFormedApiKey,
   issueApiKey,
+  listApiKeys,
   revokeApiKey,
   verifyApiKey,
   API_KEY_PREFIX,
@@ -105,6 +106,43 @@ test(
       assert.ok(!malformed.ok && malformed.reason === "malformed_key");
       const unknown = await verifyApiKey(`${API_KEY_PREFIX}${"0".repeat(API_KEY_SECRET_HEX_LENGTH)}`, pool);
       assert.ok(!unknown.ok && unknown.reason === "unknown_key");
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "listApiKeys: returns an org's keys newest-first, never the key_hash, and is scoped per organization",
+  { ...skip },
+  async () => {
+    const pool: pg.Pool = await freshPool();
+    try {
+      const orgA = await createOrganization(pool);
+      const orgB = await createOrganization(pool);
+
+      const first = await issueApiKey(orgA, pool);
+      const second = await issueApiKey(orgA, pool);
+      await issueApiKey(orgB, pool); // a different org's key must never show up for orgA
+
+      const keys = await listApiKeys(orgA, pool);
+      assert.equal(keys.length, 2);
+      // Newest first.
+      assert.deepEqual(
+        keys.map((k) => k.id),
+        [second.keyId, first.keyId],
+      );
+      for (const k of keys) {
+        assert.ok(k.key_prefix.startsWith(API_KEY_PREFIX));
+        assert.ok(k.created_at);
+        assert.equal(k.revoked_at, null);
+        assert.ok(!("key_hash" in k), "key_hash must never be returned to a caller");
+      }
+
+      await revokeApiKey(first.keyId, pool);
+      const afterRevoke = await listApiKeys(orgA, pool);
+      const revokedRow = afterRevoke.find((k) => k.id === first.keyId);
+      assert.ok(revokedRow?.revoked_at, "a revoked key's revoked_at must be reflected in the listing");
     } finally {
       await pool.end();
     }

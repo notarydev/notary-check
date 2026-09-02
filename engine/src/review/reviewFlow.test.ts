@@ -50,6 +50,14 @@ const CLAIM_FIELDS: ClaimFields = {
 const SUPPORT_TEXT = "Acme's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
 // Identical but for the value: 12%, so the ONLY residue is valueUnit.
 const CONTRADICT_TEXT = "Acme's revenue increased 12% in FY25, compared to the prior year, actual company-wide figures.";
+// Locked case 2's paraphrased variant (§ HANDOFF.md "2026-09-02 — live-endpoint
+// verification pass" — the live bug found and fixed this session). Operator is
+// paraphrased ("declined" vs the claim's "increase"/"grew") AND the value
+// differs, so BOTH operator and valueUnit are judge residue (neither appears
+// verbatim in the text): the deterministic pass never finds the literal string
+// "increase" or "17" anywhere in this passage.
+const PARAPHRASED_CONTRADICT_TEXT =
+  "Acme's revenue declined 12 percent in fiscal 2025, compared to the prior year, actual company-wide figures.";
 // Wrong entity: every field resolves deterministically EXCEPT entity — "Acme"
 // never appears, so entity is the single residual field. Under a denied quota
 // it resolves to cannot_be_determined (unestablished), so the row comes back
@@ -170,6 +178,48 @@ test(
       assert.equal(matches.relation, "contradicts");
       assert.equal(matches.method, "entailed");
       assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v2");
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "paraphrased contradiction (locked case 2 variant): operator paraphrase ('declined' → decrease) + differing value → CONTRADICTED, not UNSUPPORTED",
+  { ...judgeSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, PARAPHRASED_CONTRADICT_TEXT);
+
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [evidenceId],
+        },
+        pool,
+      );
+
+      // Before the fix, applicability.ts treated an operator mismatch like any
+      // other STRING_FIELD mismatch (entity/period/...), excluding the row as
+      // inapplicable instead of registering it as a contradiction — the row
+      // produced no relation at all, and the claim fell through to
+      // UNSUPPORTED/no_support_after_completed_checks.
+      assert.equal(result.state, "CONTRADICTED");
+      assert.equal(result.stateReason, "contradicting_applicable_relation");
+      assert.equal(result.rejectedCandidates.length, 0, "the row must not be excluded as inapplicable");
+      assert.equal(result.matches.length, 1);
+      assert.deepEqual(result.matches[0], { evidenceId, relation: "contradicts", method: "entailed" });
+
+      const matches = (await pool.query("SELECT * FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
+      assert.equal(matches.relation, "contradicts");
+      assert.equal(matches.method, "entailed");
     } finally {
       await pool.end();
     }

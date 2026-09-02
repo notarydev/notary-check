@@ -201,13 +201,63 @@ test("same fact, different wording, resolves to matching metric+operator (the bu
   assert.ok(result.matched.includes("operator"));
 });
 
-test("operator disagreement (grew vs declined) excludes the candidate", () => {
-  // Same metric, same everything else, but the evidence asserts the opposite
-  // direction of change — "revenue grew" vs "revenue declined". The direction
-  // is material: the candidate cannot support the claim.
+test("operator disagreement (grew vs declined) is a contradiction, not an exclusion", () => {
+  // Same entity/period/metric/baseline, but the evidence asserts the opposite
+  // direction of change — "revenue grew" vs "revenue declined". This is NOT a
+  // reason the candidate fails to apply (that would silently downgrade a real
+  // contradiction to "no evidence found"): it is the reason the candidate
+  // CONTRADICTS, exactly like a differing value does (see the module-level
+  // comment on why operator gets the same treatment as valueUnit).
   const claim: ClaimFields = { ...CLAIM };
   const evidence: EvidenceFields = { ...CLAIM, operator: "decrease" };
   const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, true);
+  assert.deepEqual(result.mismatched, []);
+  assert.equal(result.valueConflicts, true);
+  const operatorField = result.fields.find((f) => f.field === "operator");
+  assert.equal(operatorField?.status, "value_conflict");
+});
+
+test("operator the evidence never addresses at all is unestablished, not a contradiction", () => {
+  // Distinguish "evidence disagrees" (contradiction, above) from "evidence
+  // never says" (genuinely unaddressed, still excludes the candidate exactly
+  // like any other unestablished field).
+  const claim: ClaimFields = { ...CLAIM };
+  const evidence: EvidenceFields = { ...CLAIM };
+  delete evidence.operator;
+  const result = assessApplicability(claim, evidence);
   assert.equal(result.applicable, false);
   assert.ok(result.mismatched.includes("operator"));
+  assert.equal(result.valueConflicts, false);
+});
+
+// ---------------------------------------------------------------------------
+// Locked test case 2's paraphrased variant — the live bug found this session
+// (§ HANDOFF.md "2026-09-02 — live-endpoint verification pass"). An operator
+// PARAPHRASE ("declined" recognized by the judge as "decrease") combined with
+// a differing value must still resolve to a contradiction, exactly like the
+// exact-wording flagship case, not to an inapplicable/excluded candidate.
+// ---------------------------------------------------------------------------
+
+test("paraphrased contradiction (locked case 2 variant): operator paraphrase + differing value both contradict", () => {
+  // Claim: "Acme Inc revenue grew 17% in FY25" (operator "increase", value 17).
+  // Evidence (already through judge extraction + Tier A.5 normalization):
+  // "Acme Inc revenue declined 12 percent in fiscal 2025" resolves to operator
+  // "decrease", value "12" — same entity/period/metric/baseline, opposite
+  // direction AND a differing value.
+  const claim: ClaimFields = { ...CLAIM, entity: "Acme Inc" };
+  const evidence: EvidenceFields = {
+    ...CLAIM,
+    entity: "Acme Inc",
+    operator: "decrease",
+    valueUnit: { value: "12", unit: "%" },
+  };
+  const result = assessApplicability(claim, evidence);
+  assert.equal(result.applicable, true, "must remain applicable, not excluded");
+  assert.deepEqual(result.mismatched, []);
+  assert.equal(result.valueConflicts, true);
+  const operatorField = result.fields.find((f) => f.field === "operator");
+  const valueField = result.fields.find((f) => f.field === "valueUnit");
+  assert.equal(operatorField?.status, "value_conflict");
+  assert.equal(valueField?.status, "value_conflict");
 });

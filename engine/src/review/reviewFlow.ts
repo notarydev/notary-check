@@ -290,7 +290,17 @@ export async function runReview(input: RunReviewInput, db: pg.Pool): Promise<Run
     // came from the judge; quoted_or_computed if every contributing field was
     // deterministic.
     const usedFields = new Set<ApplicabilityField>(applicability.matched);
-    if (applicability.valueConflicts) usedFields.add("valueUnit");
+    // A conflicting field (value and/or operator — applicability.ts's
+    // value_conflict status) contributed to the result just as much as a
+    // matched one; derive which field(s) actually conflicted from
+    // applicability.fields rather than assuming it was always valueUnit, since
+    // an operator conflict alone (same value, opposite direction) also sets
+    // valueConflicts.
+    if (applicability.valueConflicts) {
+      for (const f of applicability.fields) {
+        if (f.status === "value_conflict") usedFields.add(f.field);
+      }
+    }
     const method: "quoted_or_computed" | "entailed" = [...usedFields].some((f) => judgePresentFields.has(f))
       ? "entailed"
       : "quoted_or_computed";

@@ -18,6 +18,25 @@
 // case 2: 17% vs 12%, same entity, period, metric, and baseline; the value
 // conflicts). A UNIT mismatch, by contrast, is a material applicability
 // failure like any other.
+//
+// OPERATOR gets the same treatment as VALUE, for the same reason. "operator"
+// is not an identifying field like entity/period/metric — together with
+// valueUnit it IS the compared quantity ("revenue [operator] [value]"). A
+// claim asserting "increase" against evidence that establishes "decrease" for
+// the very same entity/period/metric/baseline is not evidence about a
+// different subject (that's what entity/period/scope mismatches mean) — it is
+// a direct denial of the claim's asserted direction, i.e. a contradiction.
+// Excluding the candidate as merely "inapplicable" would silently downgrade
+// the flagship paraphrased-contradiction scenario (claim "grew 17%" vs.
+// evidence "declined 12%") to UNSUPPORTED instead of CONTRADICTED — the
+// judge's own operator-extraction prompt (promptTemplates.ts) is explicitly
+// authorized to recognize "declined" as "decrease", so once the judge has
+// done that recognition, a differing operator must reach the state machine as
+// a contradiction, exactly like a differing value does. An operator the
+// evidence never addresses at all is still a genuine applicability failure
+// (unestablished direction, same as any other unaddressed field) — only a
+// materially differing operator that IS established gets contradiction
+// treatment.
 
 import { compareField, compareValueUnit } from "./normalization.ts";
 import type { NormalizationRuleId } from "./normalization.ts";
@@ -108,25 +127,23 @@ export interface ApplicabilityResult {
   matched: ApplicabilityField[];
   /** every field that materially mismatched, by exact field name. */
   mismatched: ApplicabilityField[];
-  /** true when every applicability field matched but the claimed VALUE differs. */
+  /** true when every applicability field matched but the claimed VALUE and/or
+   * OPERATOR (direction of change) differs from what the evidence establishes
+   * — see the module-level comment on why operator gets the same treatment as
+   * value. */
   valueConflicts: boolean;
   /** per-field detail, one entry per field, for display and logging. */
   fields: FieldResult[];
 }
 
-// String-valued applicability fields. valueUnit is handled separately below
-// because it is structured (value + unit) and because a value difference is a
-// contradiction, not an applicability failure.
-type StringField = Exclude<ApplicabilityField, "valueUnit">;
-const STRING_FIELDS: StringField[] = [
-  "entity",
-  "period",
-  "metric",
-  "operator",
-  "comparatorBaseline",
-  "modality",
-  "scope",
-];
+// String-valued applicability fields that use plain applicability semantics
+// (a mismatch excludes the candidate). valueUnit and operator are both
+// handled separately below: valueUnit because it is structured (value +
+// unit), and operator because — like valueUnit — a materially differing
+// established operator is a contradiction, not an applicability failure (see
+// the module-level comment above).
+type StringField = Exclude<ApplicabilityField, "valueUnit" | "operator">;
+const STRING_FIELDS: StringField[] = ["entity", "period", "metric", "comparatorBaseline", "modality", "scope"];
 
 function describe(valueUnit: ValueUnit): string {
   return valueUnit.unit !== undefined && valueUnit.unit !== ""
@@ -195,6 +212,58 @@ export function assessApplicability(claim: ClaimFields, evidence: EvidenceFields
         });
         mismatched.push(field);
       }
+    }
+  }
+
+  // operator — same value_conflict/contradiction treatment as valueUnit
+  // below, not plain applicability semantics (see the module-level comment).
+  const claimedOperator = claim.operator;
+  const evOperator = evidence.operator;
+  if (claimedOperator === undefined) {
+    // The claim asserts no direction of change; nothing to fail.
+    fields.push({ field: "operator", status: "matched" });
+    matched.push("operator");
+  } else if (evOperator === undefined) {
+    // The evidence never establishes a direction at all — genuinely
+    // unestablished, not a contradiction (there is nothing to deny).
+    fields.push({
+      field: "operator",
+      status: "mismatched",
+      claimed: claimedOperator,
+      evidence: evOperator,
+      detail: "unestablished: evidence does not address the claimed field",
+    });
+    mismatched.push("operator");
+  } else {
+    const comparison = compareField("operator", claimedOperator, evOperator);
+    if (comparison.status === "matched") {
+      fields.push({
+        field: "operator",
+        status: "matched",
+        claimed: claimedOperator,
+        evidence: evOperator,
+        normalizedClaimed: comparison.claimed.normalized,
+        normalizedEvidence: comparison.evidence.normalized,
+        rule: comparison.claimed.ruleId,
+      });
+      matched.push("operator");
+    } else {
+      // Evidence establishes a DIFFERENT, materially opposite direction for
+      // the same entity/period/metric/baseline — a denial of the claim's
+      // asserted direction, i.e. a contradiction, not an applicability
+      // exclusion. Contributes to valueConflicts exactly like a differing
+      // value does, so the caller (reviewFlow.ts) routes it to "contradicts".
+      fields.push({
+        field: "operator",
+        status: "value_conflict",
+        claimed: claimedOperator,
+        evidence: evOperator,
+        detail: `operator conflict: "${claimedOperator}" vs "${evOperator}"`,
+        normalizedClaimed: comparison.claimed.normalized,
+        normalizedEvidence: comparison.evidence.normalized,
+        rule: comparison.claimed.ruleId,
+      });
+      valueConflicts = true;
     }
   }
 
