@@ -552,6 +552,8 @@ The general notification-design literature gives the sharpest, most directly cit
 
 ### The experience
 
+**Superseded 2026-09-03 for presentation, unchanged for substance — read this before the button-row examples below.** The `[Open evidence] [Qualify] [Dismiss] [Recheck]`-style button rows in this section describe what's actually deployed today (Phase 0's shipped card), not the target design. The locked replacement (full rationale: `docs/guide/proposals/system-definition-synthesis.md` Part 11 § UI interaction model) is: Track 1 renders as a small icon (not a text pill, not a button row) — hover for the one-line reason, click expands inline to show the finding AND its evidence together, no separate "Open evidence" step. "Qualify"/"Replace" stop being Track 1's own buttons and become Advance-generated suggestions instead (Track 1's own template is deliberately unable to write a good sentence; Track 2 can). "Recheck" is dropped as a manual button — it happens for free when Claude naturally re-invokes the tool on its next answer. The only thing that stays purely local to Track 1's expanded view is **Dismiss**. Every rule below this note about *when* a card states what (quiet-by-default, no severity, exact claim/passage, the three states) is unchanged — only how those states are drawn on screen changed.
+
 The card is quiet when no material issue is found. It does not display a green “truth” badge. It states exactly one of:
 
 - **material issue found** — exact claim, exact passage, and applicability reason;
