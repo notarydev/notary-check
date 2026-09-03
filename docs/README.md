@@ -73,7 +73,7 @@ guide/
 ├── canonical-product-definition.md   — canonical — the authority doc
 ├── grounded-decision-records-paper.md — reference — scholarly backing, not a rule source
 └── proposals/
-    ├── system-definition-synthesis.md      — proposal — Track 1/2, corrected against canonical+GDR
+    ├── system-definition-synthesis.md      — proposal — Track 1/2, corrected against canonical+GDR; Part 11 adds "Advance," a distinct Track 2 successor (also a proposal, not a build target)
     ├── claim-ambiguity-detection.md        — proposal
     └── ai-reasoning-evidence-filter.md     — proposal — positioning idea
 
