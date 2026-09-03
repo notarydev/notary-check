@@ -96,12 +96,13 @@ interface ClaimResult {
   matches: EngineMatch[];
   rejectedCandidates: EngineRejectedCandidate[];
   // Track 2 / Challenge layer (docs/build/tier-1-build-and-operating-plan.md's
-  // "Track 2 / Challenge layer" section). NOT YET PRESENT in the engine's
-  // actual response as of this writing — confirmed by grepping engine/src for
-  // "challenge"/"track2" (zero hits). Typed here `unknown` and parsed
-  // defensively (parseChallengeItems below) specifically so that landing this
-  // field later doesn't require another round-trip through this file: if it's
-  // absent, findingFor/reviewAnswer below simply produce no challenges.
+  // "Track 2 / Challenge layer" section). PRESENT in the engine's response —
+  // engine/src/routes/reviews.ts maps its internal ChallengeItem[] to this
+  // wire shape. Still typed `unknown` and parsed strictly (parseChallengeItems
+  // below), same discipline as the Track 1 judge output: a caller must never
+  // trust the wire shape just because a field exists, and an org with the
+  // track2_enabled flag off (or a review with no material claims) legitimately
+  // sends no challenges at all, which must render as "none" rather than error.
   challenges?: unknown;
 }
 
@@ -293,6 +294,15 @@ function toCardRejectedCandidates(
 // INDETERMINATE in that case, this makes the client's own trust boundary
 // explicit rather than depending on the engine never regressing that
 // invariant.
+// result.state_reason is an internal snake_case code from
+// engine/src/verification/stateMachine.ts (e.g. "contradicting_applicable_relation"),
+// never prose — it is not a display-text fallback source. It used to be spliced
+// into `text` via `?? "..."`, but stateMachine.ts's assignState() always returns
+// a non-null reason for a completed claim, so that fallback never actually
+// triggered: the card was rendering the raw internal code as the finding text.
+// `text` below is now always the fixed, human-readable copy; the code itself is
+// preserved in `why` (already a stable, separate field for exactly this) for
+// logs/telemetry, never for display.
 function findingFor(
   result: ClaimResult["claim"],
   claimText: string,
@@ -302,7 +312,7 @@ function findingFor(
     return {
       finding: {
         label: claimText,
-        text: result.state_reason ?? "This claim could not be checked against the supplied evidence.",
+        text: "This claim could not be checked against the supplied evidence.",
         why: result.no_source ? "no_inspectable_evidence" : "unresolved_applicability",
         evidence,
       },
@@ -322,7 +332,7 @@ function findingFor(
       return {
         finding: {
           label: claimText,
-          text: result.state_reason ?? "The supplied evidence contradicts this claim.",
+          text: "The supplied evidence contradicts this claim.",
           why: "direct_contradiction",
           evidence,
         },
@@ -332,7 +342,7 @@ function findingFor(
       return {
         finding: {
           label: claimText,
-          text: result.state_reason ?? "No supplied evidence supports this claim.",
+          text: "No supplied evidence supports this claim.",
           why: "unsupported_claim",
           evidence,
         },
@@ -342,7 +352,7 @@ function findingFor(
       return {
         finding: {
           label: claimText,
-          text: result.state_reason ?? "This claim could not be checked against the supplied evidence.",
+          text: "This claim could not be checked against the supplied evidence.",
           why: "unresolved_applicability",
           evidence,
         },
@@ -420,9 +430,11 @@ export async function reviewAnswer(
     if (finding === undefined) continue;
     if (needsCheck) uncheckedFindings.push(finding);
     else issueFindings.push(finding);
-    // Defensive: absent today (see the comment on ClaimResult.challenges),
-    // renders nothing until the engine actually lands this field. Overall cap
-    // of 4 per invocation, per the plan doc.
+    // Parsed strictly regardless of whether the engine sent any (see the
+    // comment on ClaimResult.challenges) — an org with the flag off, or a
+    // review the engine judged non-material, legitimately sends none, and
+    // that must render as "no challenges", never an error. Overall cap of 4
+    // per invocation, per the plan doc.
     if (challenges.length < 4) {
       challenges.push(...parseChallengeItems(outcome.result.challenges).slice(0, 4 - challenges.length));
     }

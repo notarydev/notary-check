@@ -79,6 +79,16 @@ export async function checkGlobalSpendCap(db: pg.Pool): Promise<QuotaResult> {
  * The single quota gate: per-org monthly limit first, then the global spend
  * cap. Returns the FIRST reason that fires. Callers are expected to treat a
  * `{ allowed: false }` as "do not do the expensive work for this org now".
+ *
+ * KNOWN LIMITATION, not yet fixed: this is read-then-decide (sum historical
+ * usage_event rows, compare, return), not an atomic reservation. Two
+ * concurrent calls for the same org can each read "under the cap" and both
+ * proceed, each later writing its own usage_event — the cap is a best-effort
+ * preflight check under concurrency, not a hard, race-free ceiling. Low real
+ * risk at alpha's traffic volume (docs/build/tier-1-build-and-operating-plan.md
+ * § Release gates, "Cost" row), but a true hard cap under higher concurrency
+ * needs an atomic reservation (e.g. an increment-and-check inside one
+ * transaction), not an aggregate historical-usage read.
  */
 export async function checkQuota(organizationId: string, db: pg.Pool): Promise<QuotaResult> {
   const orgCost = await organizationMonthCostCents(organizationId, db);

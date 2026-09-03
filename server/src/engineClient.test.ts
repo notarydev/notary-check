@@ -160,7 +160,10 @@ test("mixed review: one claim CONTRADICTED, one claim's submission fails -> issu
           claim: {
             id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
             state: "CONTRADICTED",
-            state_reason: "The supplied evidence contradicts this claim.",
+            // A real snake_case internal code, as engine/src/verification/stateMachine.ts
+            // actually returns — not prose. Regression coverage for the bug where
+            // engineClient.ts spliced this raw code into the card's display text.
+            state_reason: "contradicting_applicable_relation",
             no_source: false,
             lifecycle_state: "completed",
             lifecycle_detail: null,
@@ -185,6 +188,16 @@ test("mixed review: one claim CONTRADICTED, one claim's submission fails -> issu
 
     assert.equal(result.status, "issue_found");
     assert.equal(result.findings?.length, 1);
+    assert.equal(
+      result.findings?.[0]?.text,
+      "The supplied evidence contradicts this claim.",
+      "the card must show fixed human-readable copy, never the raw internal state_reason code",
+    );
+    assert.doesNotMatch(
+      result.findings?.[0]?.text ?? "",
+      /_/,
+      "finding text must never contain a raw snake_case internal code",
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

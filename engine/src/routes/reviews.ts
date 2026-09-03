@@ -469,6 +469,20 @@ export function reviewsRouter(database: pg.Pool): Router {
       // can say WHICH source could not be inspected rather than only that one
       // could not be.
       evidence_statuses: result.evidenceStatuses,
+      // Track 2 / Challenge layer. Was previously omitted entirely from this
+      // response — runTrack2Challenge() generated and persisted challenge_item
+      // rows correctly, but nothing carried them out over the wire, so the
+      // MCP server's card could never render them regardless of the org
+      // feature flag. Mapped to the locked wire contract's snake_case keys
+      // (server/src/engineClient.ts's parseChallengeItems requires an exact
+      // 4-key match — the engine's own camelCase ChallengeItem type is
+      // deliberately not reused as the wire shape here).
+      challenges: result.challenges.map((c) => ({
+        challenge_type: c.challengeType,
+        prompt: c.prompt,
+        why_it_matters: c.whyItMatters,
+        action: c.action,
+      })),
     });
   });
 
