@@ -129,20 +129,44 @@ export interface Track2EvidenceConstraint {
 export type AdvanceMove = "clarify" | "test" | "compare" | "repair";
 
 /**
- * The ENTIRE output contract the model must return, and — deliberately — the
- * entire type available to represent it. There is no answer, summary,
- * verdict, confidence, score, citation, fact, evidence_relation, or
- * recommended_state field on this type, which is what makes "Advance never
- * produces a verdict" a property TypeScript itself enforces on any code that
- * constructs a Track2ModelDraft, not a rule someone has to remember to
- * follow (same discipline as ChallengeItem in
+ * ONE suggestion — the entire output shape the model may fill in per item,
+ * and — deliberately — the entire type available to represent it. There is
+ * no answer, summary, verdict, confidence, score, citation, fact,
+ * evidence_relation, or recommended_state field, which is what makes
+ * "Advance never produces a verdict" a property TypeScript itself enforces
+ * on any code that constructs an AdvanceSuggestion, not a rule someone has
+ * to remember to follow (same discipline as ChallengeItem in
  * ../judge/challengeGeneration.ts). validator.ts's `.strict()` zod schema
  * enforces the same shape at the boundary where untrusted model text
- * actually enters the system.
+ * actually enters the system, plus the content/authority checks types alone
+ * cannot express (§ Track 2 / Advance build order step 3, layers 4/6).
  */
-export interface Track2ModelDraft {
+export interface AdvanceSuggestion {
+  /** Unique within one response — lets the UI and later persistence address one item without ambiguity. */
+  id: string;
+  /**
+   * A short, scannable headline shown by default (e.g. "This answer has a
+   * mistake: left door stays open") — NOT the full prompt. Its own, tighter
+   * character limit (validator.ts's MAX_SHORT_LABEL_CHARS) — the point of
+   * having it at all is that it's short enough to read at a glance.
+   */
+  short_label: string;
   /** One of the four closed moves, chosen from whatever set policy.ts allowed for this invocation — never an open choice. */
   move: AdvanceMove;
-  /** The single actionable ask shown to the user, editable and sendable (never auto-sent) — not a paragraph, not a transcript, not a justification. */
+  /** The full actionable ask, generated eagerly alongside short_label but only revealed in the UI on click — editable and sendable (never auto-sent) — not a paragraph, not a transcript, not a justification, not a stated conclusion. */
   prompt: string;
+}
+
+/**
+ * The ENTIRE output contract the model must return for one round: zero, one,
+ * or two suggestions (Part 11 § Suggestion cardinality, locked 2026-09-03 —
+ * supersedes an earlier "always exactly one" version of this type). Zero is
+ * a legitimate, expected result ("no useful intervention"), never treated as
+ * a failure. A second item is only ever legal because the MODEL judged it a
+ * materially distinct next move — code enforces the count and structural
+ * shape (validator.ts), never the semantic judgment of whether two items
+ * actually differ.
+ */
+export interface AdvanceModelResponse {
+  suggestions: readonly AdvanceSuggestion[];
 }
