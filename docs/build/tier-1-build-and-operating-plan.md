@@ -632,9 +632,11 @@ INDETERMINATE / abstained or non-matching field    → unresolved_applicability 
 
 The "Finding type" column above is exactly what `Claim.state_reason` already exists to hold (§ Core data model) — this table is that field's enumeration, made explicit rather than left as an implicit "some string." It's what lets § Monitoring segment `could_not_check` telemetry by actual cause (a broken source is a different problem from an out-of-class document, which is a different problem from a judge abstention) instead of averaging them into one undifferentiated rate. The card's own copy can stay quiet and undifferentiated between these `could_not_check` causes if that's the right UX call — the requirement is that `state_reason` isn't lossy, not that the UI must expose every distinction.
 
-### Track 2 / Challenge layer — "What to pressure-test" (added 2026-09-02, product decision, not an engineering default)
+### Track 2 / Challenge layer — SUPERSEDED 2026-09-03, kept for reference only
 
-**Status**: in scope for the current build, per an explicit product decision superseding this doc's earlier default (Track 2 was previously deferred behind proven Track 1 repeat value — see `docs/guide/proposals/system-definition-synthesis.md` Part 6/9 for that history and the corrected design this section implements). This is an addition to the card contract above, not a replacement — every rule above (three-state compression, no severity levels, no trust score, mechanical-vs-AI-inferred labeling) is unchanged and still governs the **evidence record** register described below.
+**Status: superseded, not the build target.** This section describes Track 2 v1 ("Challenge"), which is built, tested, and isolation-verified — but as of 2026-09-03 it is a frozen, non-default feature (`track2_enabled` stays off), not the thing being developed further. **"Track 2" now means "Advance"** — see the new § Track 2 / Advance section immediately below this one, and `docs/guide/proposals/system-definition-synthesis.md` Part 11 for the full design. This section is retained because the code still exists and is referenced elsewhere in this doc (e.g. § Release gates), not because it's current guidance for new work. Do not extend this implementation; build against § Track 2 / Advance instead.
+
+**Original status note, kept for history**: this was in scope for the current build, per an explicit product decision superseding this doc's earlier default (Track 2 was previously deferred behind proven Track 1 repeat value — see `docs/guide/proposals/system-definition-synthesis.md` Part 6/9 for that history and the corrected design this section implements). This is an addition to the card contract above, not a replacement — every rule above (three-state compression, no severity levels, no trust score, mechanical-vs-AI-inferred labeling) is unchanged and still governs the **evidence record** register described below.
 
 **The decision, precisely**: Track 1 and Track 2 are two outputs of one Notary invocation, not two separate user journeys or a second button. `review_source_backed_answer` runs both — **as built, Track 2 runs immediately after Track 1 completes for the same claim, not concurrently with it; that wording was aspirational and didn't match what this feature structurally requires.** Track 2's entire input is Track 1's *resolved* finding (state, applicability comparison, surviving passages) — it generates questions about a finding, so it cannot start before that finding exists. True concurrency (starting before Track 1 finishes, working from task state rather than a resolved claim) is a different feature — see `docs/guide/proposals/system-definition-synthesis.md` Part 11 ("Advance"), which is proposed, not built. Both outputs still return in **one combined card** with two registers, which is the part of the original decision that does hold:
 
@@ -677,7 +679,62 @@ No `verdict`, `confidence`, `answer`, or free-form transcript field, ever — sa
 
 **Feature-gated at the organization level** for initial rollout — ship dark first, per the existing "not yet validated" posture on the whole product (no held-out eval gate exists yet, see `docs/build/architecture-and-progress.md`).
 
-**2026-09-02, later the same day: a larger successor design ("Advance") was proposed and discussed at length, but is explicitly NOT a change to this section.** Everything above — output contract, per-claim cap, feature flag, migration `0012` — is built, tested, and remains the alpha build target unchanged. The successor proposal is recorded in full at `docs/guide/proposals/system-definition-synthesis.md` Part 11; it is a *distinct, larger* feature (invocation-level rather than claim-level, starts concurrently with Track 1 rather than after it, revises/extends rather than being generated once) gated behind an offline evaluation study that has not run yet. Do not build toward it without a separate, explicit go-ahead once that evaluation exists.
+### Track 2 / Advance — the current build target (decided 2026-09-03)
+
+**Status: in scope for the current build.** This supersedes the Challenge layer above. Full design and rationale: `docs/guide/proposals/system-definition-synthesis.md` Part 11. This section is the build spec, kept in sync with what's actually implemented — Part 11 is the design history, this is the executable contract.
+
+**The one-sentence version**: Track 1 tells you what you can rely on; Track 2 helps you decide what to do about it. **Precise property, not just "independent"**: Track 2 has independent authority, execution, and inputs, with exactly one controlled information channel from Track 1 — Track 2 never waits for Track 1 to produce its initial move, and Track 1 never controls Track 2's execution. That one channel is one-directional: if Track 1 establishes something materially important, it sends Track 2 one sealed statement (`boundary_text`), and Track 2 may revise its recommendation. Track 2 never verifies evidence, never invents facts, has no tools (no browser/retrieval/APIs/agents in alpha), never acts for the user, and chooses only one of four moves.
+
+**The four moves — closed vocabulary, nothing else is a valid output**:
+```
+clarify  — something important is missing; get it
+test     — don't guess; run a small, reversible test
+compare  — multiple live explanations/options exist; distinguish them
+repair   — something in the current work needs fixing; fix it without
+           carrying the bad premise forward
+```
+
+**Build order for the v1 slice — corrected 2026-09-03: schema/policy/validator/fixtures BEFORE any live model call, not after.** A live model call must never become the de facto specification before fidelity has been tested against real examples — so the isolated unit below has to exist and be exercised against frozen, rights-cleared example cases before a real model is wired in, not the other way around.
+```
+1. Bounded task-state input: define InvocationContext exactly
+   (user_request, Claude's answer, explicit constraints, prior attempts
+   when available — no Claude reasoning trace, no private tool output,
+   no retrieval corpus), as a type/schema, with fixture examples.
+2. Define the policy table: task_mode x EvidenceUpdate-present? ->
+   allowed move set, as versioned data, with fixture coverage — before
+   any model exists to consume it.
+3. Define the strict output parser/validator: exactly { move, prompt },
+   move restricted to clarify | test | compare | repair, no verdict/
+   confidence/score/extra key, same discipline as fieldExtraction.ts and
+   challengeGeneration.ts already use. Write this against HAND-WRITTEN
+   example outputs first (valid and invalid), not model output.
+4. Freeze a set of real, rights-cleared example cases (the offline-
+   evaluation groundwork from Part 11) and run the schema/policy/
+   validator against them as pure fixtures — no network call yet. This
+   is what proves the SHAPE of the problem is right before a model is
+   in the loop at all.
+5. Only now introduce ONE bounded, live model call — no tools, no
+   retrieval, no browsing — feeding the same InvocationContext/policy/
+   validator built and fixture-tested in steps 1-4. The model is the
+   last piece added, not the first.
+6. Code validates before anything reaches the user — an invalid or
+   out-of-policy response produces NO suggestion, never a fallback
+   guess.
+7. User sees the recommendation as an editable, sendable action —
+   never auto-sent.
+8. A later sealed Track 1 boundary revises the CURRENT logical
+   suggestion (new version, phase=evidence_updated) if and only if the
+   user has not yet acted on it — "acted" meaning shown edited, copied,
+   sent, OR dismissed; merely having been shown does not count. If the
+   user HAS acted, the original suggestion is never mutated and the
+   update is rendered as a separate, additional suggestion instead.
+   Locked design, not an open question — see Part 11 § Delivery
+   mechanism for the full rule and the state diagram.
+```
+
+**Explicitly deferred out of the v1 slice** (build these once steps 1-7 are working and validated, not before): the persisted `invocation`/`track2_suggestion`/`track2_event` lifecycle tables, the conditional-replace logic (step 8), the authenticated status-polling channel for the embedded UI, and the connector changes needed to pass a real `user_request` through. The frozen example cases used in step 4 are the same real, rights-cleared coding-agent transcripts (plus the user's own historical non-coding transcripts) that Part 11's offline evaluation describes — building the fixture set and running the schema/policy/validator against it (step 4) IS the first phase of that evaluation, not a separate later task. Don't let persistence/database shape dictate step 1-4's behavior before the isolated unit has been proven against those fixtures.
+
+**Track 2 v1 (Challenge)'s org feature flag (`track2_enabled`, migration `0012`) stays off and is not reused for Advance** — Advance gets its own flag once it has its own persisted state to gate. The two features are not variants of the same flag.
 
 ### Promise and non-promise
 

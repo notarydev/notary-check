@@ -332,9 +332,11 @@ Track 2/Challenge stays a **future feature, not canonical product scope today**,
 
 ---
 
-## PART 11 — Proposal, 2026-09-02: "Advance" — a distinct, larger successor to Track 2, not a build target yet
+## PART 11 — "Advance" — Track 2, decided, 2026-09-03
 
-**Status: proposal only, gated behind an offline evaluation that has not run.** Track 2 v1 (Part 6, Part 10; built, tested, shipped dark; spec unchanged at `docs/build/tier-1-build-and-operating-plan.md` § Track 2 / Challenge layer) is unaffected by this section and remains the alpha build target. This section exists because the same-day design conversation that produced it materially changes what "Track 2" could become, and that has to be on the record before it's mistaken for an extension of v1 rather than a different feature.
+**Status update, 2026-09-03: promoted from proposal to build target, per an explicit product decision.** Everything below this line was written as a proposal on 2026-09-02; the design didn't change, but its status did. **Track 2 v1 (Challenge, Part 6/Part 10 — the per-claim, after-Track-1, "what to pressure-test" implementation) is superseded.** Its code is not deleted — it's tested, isolation-verified, and stays in the repo — but it is frozen: the `track2_enabled` flag stays off, it does not get further feature work, and it is not the thing being hardened going forward. "Advance," described in this Part, is now what "Track 2" means in this product. The offline-evaluation gate described below is retained as a **build-order recommendation** (validate the task-state-fidelity slice before building the polling/revision channel), not as a pre-condition for starting the build at all — the product decision to build Advance does not wait on that evaluation; the evaluation shapes how it's built and tuned.
+
+**One-sentence version, as given directly by the product owner**: *Track 1 tells you what you can rely on. Track 2 helps you decide what to do about it.* Track 1 (Verify) and Track 2 (Advance) are independent from the same invocation — Track 2 does not wait for Track 1, and Track 1 does not control Track 2. The only connection: if Track 1 establishes something materially important, it sends Track 2 one sealed statement, and Track 2 revises its recommendation. Track 2 never verifies evidence, never invents facts, never uses tools, never acts for the user, and only ever chooses one of four moves — Clarify, Test, Compare, Repair. Model proposes; code checks; user decides; Claude executes.
 
 ### Why this is a different feature, not v1.1
 
@@ -361,9 +363,41 @@ Given that constraint, Case 1's justification is *not* "Advance knows something 
 
 Part 2's rule — AI parses, code judges — was written for Track 1, where AI turns free text into structured fields (claim extraction, evidence-field extraction) and code alone compares and decides. Advance's move-selection is a different shape: picking one of four labeled actions is closer to a judgment than a parse. That's why the design puts a deterministic **policy layer** between the model and the output — code supplies the allowed move set (by task mode and by whether a Case-2 finding exists), the model chooses and phrases within that closed set, and a validator rejects anything with a verdict, confidence, score, new asserted fact, or a move outside the allowed set. The model never gets an open choice; it gets a constrained one, same discipline as `fieldExtraction.ts`'s strict-parsing posture, applied to a judgment-shaped task instead of a parsing-shaped one.
 
-### Delivery mechanism — decided direction, engineering detail left open
+### Delivery mechanism — locked, 2026-09-03: conditional replace-with-fallback
 
-**Additional, not revise-in-place.** A Case-2 finding renders as a *second, separate suggestion* alongside the initial Case-1 one, visually marked as refining it — never a silent mutation of text the user may have already read, copied, or started editing. This removes most of the complexity a "revise the same suggestion" design would need (version-guarding against overwriting user edits, race conditions between a user acting and a finding arriving) at the cost of a live open question: what happens when the two suggestions actually disagree. Recommendation, not yet decided: keep both, let the evidence-linked one read as "refines the above," never silently replace or hide the first.
+**An earlier pass of this document (and a same-day verbal correction) proposed "always additional" — a Case-2 finding always renders as a second, separate suggestion, never touching the first. That was a mistake and is superseded by this section.** It flattened a real product distinction that the original design (§ Persistence, `track2_suggestion.version`/`phase`) already got right: the rule is not about *Track 1's* state, it's about *user interaction state*.
+
+**The locked rule**: when a material Track 1 update arrives *before* the user has acted on the current suggestion, Notary produces a new version of that **same logical suggestion** and presents it as the current one — the prior version is never destructively mutated, it stays in the row exactly as generated, just superseded for display. Once the user *has* acted on a suggestion (see "touched," below), a later update must not overwrite it; it produces a separate, additional suggestion instead.
+
+```
+           Track 1 update arrives
+                    │
+                    ▼
+           user_touched(current)?
+             │              │
+            no              yes
+             │              │
+             ▼              ▼
+   same logical suggestion   original suggestion stays
+   → version N+1             immutable
+   phase=evidence_updated    → new, separate suggestion
+   UI shows N+1 as current   version N+1, phase=evidence_updated
+                             UI shows BOTH
+```
+
+**Why this is the better design, not just the original design restored**: the suggestion is conceptually one intervention for one invocation, not a stream of unrelated messages. If Track 1 learns something material before the user has touched anything, the honest framing is "the thing I was about to suggest has changed" — showing two suggestions in that case is unnecessary choice and reads as an accumulating-notification product, not a single considered recommendation. But once the user has edited, copied, or sent that text, it has acquired user history; silently overwriting it would destroy something the user actually interacted with. At that point the update has to become a new, additional item instead. The invariant is: **Track 1 may revise Track 2's proposed move, but it is never allowed to rewrite user history.**
+
+**"Touched" is a derived concept, not a new state** — computed from the existing `SuggestionStatus` vocabulary, not a new column:
+```
+shown      → NOT touched (seeing a suggestion must not block Notary from improving it)
+edited     → touched
+copied     → touched
+sent       → touched
+dismissed  → touched (a rejection is an action — a later update must not silently
+                       resurrect what the user already turned down)
+```
+
+**Schema implication, made explicit**: "replace in place" means *logical* replacement, never destructive mutation — the v1 row's `prompt`/`move` are never rewritten. A logical suggestion is the (invocation_id, lineage) grouping; `track2_suggestion.version` walks that lineage, `phase` records why a version exists (`"initial"` vs `"evidence_updated"`), and the UI's "what's current" query is `user_touched(version 1) ? show both v1 and v2 : show only the latest version`. This is exactly the schema already specified below (§ Persistence) — nothing about the tables changes, only the rule for how the UI selects and renders rows changes.
 
 Since Track 1 typically finishes after Advance's initial draft, the second card has to *appear* asynchronously. For alpha-scale traffic, polling (the embedded UI periodically checks "anything new for this invocation") is sufficient and far simpler to build correctly than a push/held-connection design — the few seconds of latency before a Case-2 card appears is not a real problem at 5-10 customers. Push is a legitimate upgrade once volume or latency actually demands it, not a v1 requirement.
 
@@ -388,7 +422,7 @@ No published study tests the exact intervention (one deterministic next-move car
 
 **Sources for this section**: Baumann et al., 2026, *SWE-chat: Coding Agent Interactions From Real Users in the Wild* (arXiv) — dataset scale/survival-rate figures. Wu et al., 2026, *SWE-Together: Evaluating Coding Agents in Interactive User Sessions* (arXiv) — evaluation-design precedent (correctness + corrective-turn count). Qian & Wexler, 2024, *Take It, Leave It, or Fix It: Measuring Productivity and Trust in Human-AI Collaboration* (IUI) — expertise/question-type-dependent effects, automation complacency. Lepine et al., 2025, *Precision Proactivity: Measuring Cognitive Load in Real-World AI-Assisted Work* (arXiv) — model-initiated task switching as the strongest driver of cognitive-load decline; direct basis for the single-move, non-interrupting card constraint above. Chen et al., 2021, *Action-Based Conversations Dataset* (NAACL) — precedent for action-state tracking as a modeling abstraction, not UX evidence for Advance specifically. `choucsan/mimo-claude-code-traces-1k` (Hugging Face) — noted explicitly as *not* usable for outcome evaluation (synthetic, unverified production work); usable only for parser/schema robustness testing if needed.
 
-**Not resolved by this section, left open deliberately**: exact schema for the offline-evaluation labeling tool; whether SWE-chat/SWE-Together's licenses actually permit this use (needs checking, not assumed); the conflict-resolution UI treatment when a Case-1 and Case-2 suggestion disagree; push vs. extended-polling as a post-alpha upgrade decision.
+**Not resolved by this section, left open deliberately**: exact schema for the offline-evaluation labeling tool; whether SWE-chat/SWE-Together's licenses actually permit this use (needs checking, not assumed); push vs. extended-polling as a post-alpha upgrade decision. (The conditional-replace-vs-additional question, previously listed here as open, is now locked — see § Delivery mechanism above.)
 
 ---
 
