@@ -51,18 +51,11 @@
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     padding: 2rem 1.25rem 4rem;
+    line-height: 1.55;
   }
-  main { max-width: 980px; margin: 0 auto; }
-  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
-  h2.target { font-size: 1.15rem; margin: 0 0 0.2rem; }
-  .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
-  .updated { font-size: 0.8rem; color: var(--muted); margin-bottom: 2rem; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
-  th, td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
-  td.area { font-weight: 600; }
-  td.pct { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .table-wrap { overflow-x: auto; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
+  .sub { color: var(--muted); font-size: 0.88rem; margin: 0 0 1.5rem; }
   .badge {
     display: inline-flex; align-items: center; gap: 0.35rem;
     padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.76rem; font-weight: 600;
@@ -73,321 +66,191 @@
   .badge.red { background: var(--red-bg); color: var(--red); }
   .badge.grey { background: var(--grey-bg); color: var(--grey); }
   .badge.blue { background: var(--blue-bg); color: var(--blue); }
-  .badge.teal { background: var(--teal-bg); color: var(--teal); }
+  .badge.purple { background: var(--purple-bg); color: var(--purple); }
   .owner {
-    display: inline-block; min-width: 5.6rem; font-size: 0.66rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.45rem; border-radius: 6px;
-    text-align: center; vertical-align: middle; white-space: nowrap;
+    display: inline-block; min-width: 3.6rem; font-size: 0.64rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.03em; padding: 0.12rem 0.4rem; border-radius: 6px;
+    text-align: center; vertical-align: middle; white-space: nowrap; flex-shrink: 0;
   }
   .owner.you { background: var(--blue-bg); color: var(--blue); }
   .owner.build { background: var(--teal-bg); color: var(--teal); }
   .owner.both { background: var(--amber-bg); color: var(--amber); }
-  .owner.green { background: var(--green-bg); color: var(--green); }
-  .owner.grey { background: var(--grey-bg); color: var(--grey); }
-  .legend { display: flex; gap: 1.25rem; flex-wrap: wrap; margin: 1rem 0 1.5rem; font-size: 0.8rem; color: var(--muted); }
-  .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
-  section { margin-top: 2.75rem; }
-  section h2 { font-size: 1rem; margin-bottom: 0.6rem; }
-  section h3 { font-size: 0.85rem; margin: 1.3rem 0 0.5rem; color: var(--fg); }
-  ul { margin: 0; padding-left: 1.2rem; font-size: 0.88rem; line-height: 1.7; }
-  ul.plain { list-style: none; padding-left: 0; }
-  ul.plain li { margin-bottom: 0.45rem; }
-  .target-card {
-    border: 1px solid var(--border); border-radius: 14px; padding: 1.5rem 1.5rem 1.75rem; margin-top: 1.25rem;
-    background: var(--card);
+  .owner.done { background: var(--green-bg); color: var(--green); }
+
+  /* ---- Hero / TL;DR ---- */
+  .hero {
+    border: 1px solid var(--border); border-radius: 14px; padding: 1.25rem 1.4rem;
+    background: var(--card); margin-bottom: 1.75rem;
   }
-  .target-card.alpha { border-top: 3px solid var(--blue); }
-  .target-card.beta { border-top: 3px solid var(--purple); }
-  .target-goal {
-    font-size: 0.85rem; padding: 0.7rem 0.9rem; border-radius: 8px; margin: 0.6rem 0 1.2rem;
-    background: var(--bg); border: 1px dashed var(--border); line-height: 1.5;
+  .hero p { margin: 0 0 0.6rem; font-size: 0.93rem; }
+  .hero p:last-child { margin-bottom: 0; }
+  .hero .kicker { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; margin-bottom: 0.5rem; }
+
+  .counts { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 1rem 0 0; }
+  .count-pill {
+    flex: 1; min-width: 130px; border: 1px solid var(--border); border-radius: 10px;
+    padding: 0.6rem 0.8rem; text-align: center; background: var(--bg);
   }
+  .count-pill .n { font-size: 1.4rem; font-weight: 700; display: block; }
+  .count-pill .l { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .count-pill.you .n { color: var(--blue); }
+  .count-pill.both .n { color: var(--amber); }
+  .count-pill.build .n { color: var(--teal); }
+  .count-pill.done .n { color: var(--green); }
+
+  /* ---- Action list ---- */
+  section { margin-top: 2.25rem; }
+  section > h2 { font-size: 1.05rem; margin: 0 0 0.2rem; }
+  section > .section-sub { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.9rem; }
+  ol.actions { list-style: none; margin: 0; padding: 0; counter-reset: item; }
+  ol.actions li {
+    display: flex; align-items: flex-start; gap: 0.65rem;
+    padding: 0.6rem 0; border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+  }
+  ol.actions li:last-child { border-bottom: none; }
+  ol.actions li .txt { flex: 1; }
+  ol.actions li .txt .file { font-family: ui-monospace, monospace; font-size: 0.82rem; color: var(--muted); }
+
+  details.group { border: 1px solid var(--border); border-radius: 10px; margin-top: 0.9rem; overflow: hidden; }
+  details.group summary {
+    padding: 0.7rem 1rem; cursor: pointer; font-size: 0.88rem; font-weight: 600;
+    list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+  }
+  details.group summary::-webkit-details-marker { display: none; }
+  details.group summary .arrow { color: var(--muted); font-size: 0.8rem; }
+  details.group[open] summary .arrow { transform: rotate(90deg); display: inline-block; }
+  details.group .group-body { padding: 0 1rem 0.9rem; }
+
   .not-a-gate {
-    border: 1px dashed var(--border); border-radius: 12px; padding: 1.2rem 1.4rem; margin-top: 1rem;
+    border: 1px dashed var(--border); border-radius: 12px; padding: 1rem 1.2rem; margin-top: 0.75rem;
+    font-size: 0.85rem; color: var(--muted);
   }
-  .note {
-    margin-top: 2.5rem; padding: 0.9rem 1rem; background: var(--card); border: 1px solid var(--border);
-    border-radius: 10px; font-size: 0.8rem; color: var(--muted); line-height: 1.5;
+  .not-a-gate strong { color: var(--fg); }
+
+  .history-item { margin-bottom: 0.9rem; font-size: 0.85rem; }
+  .history-item .date { font-family: ui-monospace, monospace; font-size: 0.72rem; color: var(--muted); display: block; margin-bottom: 0.2rem; }
+
+  footer.note {
+    margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+    font-size: 0.78rem; color: var(--muted); line-height: 1.5;
   }
 </style>
 </head>
 <body>
 <main>
   <h1>Notary Check — build tracker</h1>
-  <p class="sub">Informal live status board, mirrors <code>PROGRESS.md</code> in the repo. Not published product documentation.</p>
-  <p class="updated" id="updated">Last updated: 2026-09-03 — A second external review received and checked against current source (not taken on trust). Its headline claim was stale — the previous review pass had already fixed exactly that. Two more real bugs found and fixed this pass (a Track 2 cap race, a missing top-level error boundary), one business decision made explicit (payment failure = immediate lockout, not a grace period), two real gaps documented but not yet fixed (no CI, dev-only Vite advisories). engine 291/199/0/92, server 4/4, both typecheck clean. Full detail in PROGRESS.md.</p>
+  <p class="sub">A punch list, not a diary. Detailed audit trail lives in <code>PROGRESS.md</code>; this page answers "what's left" and "who owns it," first.</p>
 
-  <div class="table-wrap">
-  <table>
-    <thead>
-      <tr><th>Area</th><th>%</th><th>Status</th><th>What's left</th></tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td class="area">Track 1 — Verification engine (Evidence)</td>
-        <td class="pct">~90%</td>
-        <td><span class="badge green">P0s closed</span></td>
-        <td>All 5 audit P0 correctness bugs fixed and tested, both engine and MCP sides. Held-out eval gate still 0% — the hard pre-alpha requirement, not a "later" item</td>
-      </tr>
-      <tr>
-        <td class="area">Track 2 — Challenge ("what to pressure-test")</td>
-        <td class="pct">100% built</td>
-        <td><span class="badge green">done, ships dark</span></td>
-        <td>Built and isolation-verified. Two real gaps found and fixed across two review passes: challenges weren't reaching the card (missing response field, now wired end to end), and the per-review item cap could race under concurrent submission (now serialized per-review via a Postgres advisory lock). Org feature flag still defaults off — not yet turned on for any org</td>
-      </tr>
-      <tr>
-        <td class="area">Source control (local → GitHub main)</td>
-        <td class="pct">100%</td>
-        <td><span class="badge green">pushed</span></td>
-        <td>All of Rounds 1-2 plus this review pass's fixes are on <code>origin/main</code> (7 commits total). Nothing local/unstaged as of this update</td>
-      </tr>
-      <tr>
-        <td class="area">Engine backend for dashboard</td>
-        <td class="pct">100%</td>
-        <td><span class="badge green">done</span></td>
-        <td>Not deployed live yet</td>
-      </tr>
-      <tr>
-        <td class="area">Dashboard frontend</td>
-        <td class="pct">~90%</td>
-        <td><span class="badge green">done</span></td>
-        <td>Not deployed live yet; no live Clerk session exercised end-to-end</td>
-      </tr>
-      <tr>
-        <td class="area">Live MCP connector (mcp.getnotary.ai)</td>
-        <td class="pct">live</td>
-        <td><span class="badge green">working</span></td>
-        <td>Older build — no Clerk auth, doesn't have this session's fixes</td>
-      </tr>
-      <tr>
-        <td class="area">Billing + entitlement</td>
-        <td class="pct">~90%</td>
-        <td><span class="badge green">built, tested</span></td>
-        <td>Entitlement gating, cancellation, payment-failure handling, webhook monitoring all built. Live-key swap is an operational step (zero code change) still to do at deploy time</td>
-      </tr>
-      <tr>
-        <td class="area">Marketing site (getnotary.ai)</td>
-        <td class="pct">unknown</td>
-        <td><span class="badge grey">unscoped</span></td>
-        <td>Deprioritized for alpha; needed for beta's unified journey</td>
-      </tr>
-      <tr>
-        <td class="area">Deploy sync (local → Lightsail)</td>
-        <td class="pct">0% deployed</td>
-        <td><span class="badge red">blocked</span></td>
-        <td>Held back deliberately — needs explicit go-ahead</td>
-      </tr>
-      <tr>
-        <td class="area">Legal (alpha-scope terms/privacy)</td>
-        <td class="pct">0%</td>
-        <td><span class="badge red">not started</span></td>
-        <td>Lighter than full public ToS/Privacy/DPA, but still required before any invited user</td>
-      </tr>
-    </tbody>
-  </table>
-  </div>
-
-  <div class="legend">
-    <span><span class="badge green">green</span> done / verified</span>
-    <span><span class="badge amber">amber</span> real but partial or unverified</span>
-    <span><span class="badge red">red</span> not started</span>
-    <span><span class="badge grey">grey</span> correctly deferred / unscoped</span>
+  <div class="hero">
+    <div class="kicker">Where things stand — 2026-09-03</div>
+    <p><strong>Verify (Track 1)</strong> is real: built, and the known issues surfaced in two completed review passes are fixed and covered where the relevant test environment ran (engine 291 tests / 199 pass / 0 fail / 92 skipped — skips are live-model-gated tests this shell has no key for, not failures; no CI gate exists yet, see below).</p>
+    <p><strong>Track 2 has two states, don't confuse them.</strong> The old design ("Challenge" — pressure-test questions about an already-resolved claim) is built and tested, but <strong>frozen</strong>: its feature flag stays off, it's not being developed further. <strong>"Advance"</strong> — the real next-move recommender (Clarify/Test/Compare/Repair) — is the decided design going forward, fully specified, but <strong>zero code exists for it yet</strong>.</p>
+    <p><strong>Nothing left is an unknown.</strong> Every remaining alpha item below is either pure engineering (do it once directed) or a decision/action only you can take — there's no more research or design ambiguity standing between here and alpha.</p>
+    <div class="counts">
+      <div class="count-pill you"><span class="n">7</span><span class="l">you-only</span></div>
+      <div class="count-pill both"><span class="n">5</span><span class="l">your call, then build</span></div>
+      <div class="count-pill build"><span class="n">3</span><span class="l">pure engineering</span></div>
+      <div class="count-pill done"><span class="n">12</span><span class="l">done</span></div>
+    </div>
   </div>
 
   <section>
-    <h2>Two release targets</h2>
-    <p class="sub">Private alpha is a <strong>paid</strong> product launch to a deliberately small cohort — not an internal prototype with invited testers. It proves the full customer journey (discover → pay → use → get support) is real, just narrow. Public beta proves Notary can safely operate as <em>open self-serve</em> SaaS at scale. Neither blocks the other's own scope — alpha doesn't inherit beta's release machinery, beta doesn't wait on alpha's polish.</p>
-    <div class="legend" style="margin-top:0;">
-      <span><span class="owner you">you</span> a decision or real-world action only you can make/do</span>
-      <span><span class="owner build">build</span> pure engineering, executable once directed</span>
-      <span><span class="owner both">both</span> needs your decision first, then build</span>
-    </div>
+    <h2>🔵 Alpha — the only things standing between here and launch</h2>
+    <p class="section-sub">A <strong>paid</strong> launch to 5–10 invited customers. Sorted so the items blocking everything else come first.</p>
+
+    <ol class="actions">
+      <li><span class="owner you">you</span><span class="txt">Held-out eval set annotated (2 independent annotators + adjudication) — <span class="file">tooling exists, judgment calls don't</span></span></li>
+      <li><span class="owner you">you</span><span class="txt">Numeric pre-pilot gate thresholds set and met (false-supported rate, wrong-source acceptance = 0, contradiction precision, no-source integrity = 100%)</span></li>
+      <li><span class="owner you">you</span><span class="txt">Scripted user test plan — people/scheduling, not engineering</span></li>
+      <li><span class="owner you">you</span><span class="txt">Terms/Privacy pages, alpha-scope disclosure content (what's stored, retention, subprocessors)</span></li>
+      <li><span class="owner you">you</span><span class="txt">Named incident owner, outage contact, support inbox</span></li>
+      <li><span class="owner you">you</span><span class="txt">Named billing-support owner</span></li>
+      <li><span class="owner you">you</span><span class="txt">Go-ahead to deploy the current authenticated build to the live MCP service</span></li>
+      <li><span class="owner both">both</span><span class="txt">A real, maintained alpha site — product boundary, pricing/alpha offer, sign-up/request-access flow (you're scoping design/copy, I build to spec)</span></li>
+      <li><span class="owner both">both</span><span class="txt">Support/status/contact paths reachable from the site — and how this reconciles with the separate, stale <span class="file">getnotary.ai</span></span></li>
+      <li><span class="owner both">both</span><span class="txt">A real Claude client completes the full chain live (OAuth → card → open evidence → recheck) — currently only demonstrated via the older, unauthenticated build</span></li>
+      <li><span class="owner both">both</span><span class="txt">Invitation-only enforced at both layers — app-gate (done) + Clerk Restricted-mode (not yet confirmed set)</span></li>
+      <li><span class="owner both">both</span><span class="txt">Refund/credit policy — the webhook handling is built, the business rule isn't decided</span></li>
+      <li><span class="owner build">build</span><span class="txt">Release versioning, health/readiness endpoints, separate staging environment, one rollback drill</span></li>
+      <li><span class="owner build">build</span><span class="txt">Live-key operational swap — re-run <span class="file">bootstrapProducts.ts</span> against the live Stripe key, create the live-mode webhook endpoint</span></li>
+      <li><span class="owner build">build</span><span class="txt">Product logs (completion / could_not_check / evidence-open / corrective-action / recheck / latency / cost)</span></li>
+    </ol>
+
+    <details class="group">
+      <summary>Already done for alpha (12) <span class="arrow">▸</span></summary>
+      <div class="group-body">
+        <ol class="actions">
+          <li><span class="owner done">✓</span><span class="txt">All 5 audit P0 correctness bugs — real exact locators, per-claim lifecycle states, evidence-status split, full revocation purge, extraction quota gate</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Engine entitlement check — 402 before any model work runs for a non-active org, tested</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Track 2 (Challenge) built, isolation-verified, ships dark — frozen, not the current build target (see Advance below)</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Live-billing lifecycle: activation, cancellation, payment-failure handling, refund logging, webhook outcome logging</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Rate-limit middleware, a real backup/restore drill (verified against live Postgres), a kill-switch runbook grounded in actual code</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Connector setup page ("Connect to Claude")</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Plan display reads real billing data</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Track 2's engine→card wiring fixed (challenges now actually reach the UI)</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Track 2's per-review item cap race fixed (atomic via per-review advisory lock)</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Card display bug fixed (was showing a raw internal code instead of prose)</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Top-level review error boundary — an engine-side failure now degrades to a card instead of throwing uncaught</span></li>
+          <li><span class="owner done">✓</span><span class="txt">Entitlement/grace-period contradiction resolved — immediate lockout confirmed as intended, docs corrected to match</span></li>
+        </ol>
+      </div>
+    </details>
+
+    <details class="group">
+      <summary>Known, real, deliberately not fixed yet <span class="arrow">▸</span></summary>
+      <div class="group-body">
+        <ol class="actions">
+          <li><span class="owner build">build</span><span class="txt">Cost-quota check (<span class="file">checkQuota()</span>) is read-then-decide, not atomic — best-effort under concurrency, low risk at alpha's traffic volume, needs a reservation redesign before real scale</span></li>
+          <li><span class="owner build">build</span><span class="txt">No CI workflow exists (<span class="file">.github/workflows</span> absent) — tests only run when someone runs them locally</span></li>
+          <li><span class="owner build">build</span><span class="txt"><span class="file">ui</span>'s pinned Vite has 2 dependency advisories — confirmed dev-server-only via <span class="file">npm audit --omit=dev</span>, not a runtime risk in the shipped bundle</span></li>
+        </ol>
+      </div>
+    </details>
   </section>
 
-  <!-- ============================= ALPHA ============================= -->
-  <div class="target-card alpha">
-    <h2 class="target">🔵 Target 1 — Private Alpha <span class="badge blue" style="font-size:0.6rem;vertical-align:middle;">paid</span></h2>
-    <div class="target-goal">
-      <strong>Done when:</strong> 5–10 invited <em>customers</em> can discover Notary on a working website, request or receive access, sign up, pay through live billing, connect Claude, run the combined CHECK + Challenge flow, inspect retained evidence, act on the result, recheck, manage their account, and reach support — end to end.
-    </div>
-
-    <h3>A. Website — firm alpha gate, not "can be small"</h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner both">both</span></td><td>A real, maintained alpha site (not a polished brand project) — product boundary explained honestly, the pricing/alpha offer, sign-up or request-access flow</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Connector setup instructions — built this session ("Connect to Claude" page)</td></tr>
-        <tr><td><span class="owner you">you</span></td><td>Terms/Privacy pages live (content from alpha-scope legal, section C below)</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Support and status/contact paths reachable from the site</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Decide how this reconciles with the separate, stale <code>getnotary.ai</code> site — reuse/refresh it or ship the dashboard's own landing page as the alpha site</td></tr>
-      </tbody>
-    </table></div>
-
-    <h3>B. Product correctness — non-negotiable <span class="badge green" style="font-size:0.6rem;">done, verified</span></h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner green">✓</span></td><td>Extraction/submission failure never renders <code>no_issue</code> — per-claim lifecycle states, on <strong>both</strong> engine and MCP sides (audit P0-1). The MCP-side fix was the one thing left incomplete when an agent was cut off by a rate limit — finished and tested directly.</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Unusable evidence (unparsed PDF, judge abstention) reaches <code>could_not_check</code>/<code>INDETERMINATE</code>, never <code>UNSUPPORTED</code> (audit P0-2)</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Real exact locators — char-offset/JSONPath/caller-excerpt coordinate systems, real PDF text extraction (<code>pdf-parse</code>), every locator re-dereferenced before a match counts (audit P0-3). Honest scope note: PDF locators are page-level, not full bounding-box.</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Revocation actually purges retrievable content, incl. <code>resolved_text</code>, in one transaction (audit P0-4)</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Claim extraction is budgeted/quota-gated like the judge path (audit P0-5). Caveat found: cost estimation rounds to whole cents, so a typical call meters as 0¢ and doesn't accumulate toward either cap — pre-existing, worth its own pass.</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Card renders persisted evidence matches, not raw source input; labels origin (fetched/host/uploaded/caller-supplied)</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td><strong>Track 2 ships in its constrained first form</strong> — built, tested, statically verified to never touch state assignment/applicability, hold no DB/network handle, or define a verdict/confidence field. Ships dark (org flag, default off).</td></tr>
-      </tbody>
-    </table></div>
-    <p class="sub" style="margin-top:0.5rem;">Full suite verified after fixing three real issues an interrupted agent left behind (a corrupted migration file, two ironic test false-positives from comments naming the pattern they forbade, and the MCP-side extraction-failure fix above): engine 291/287/0/4, server 3/3, <code>ui</code> build clean, all typechecks clean. Nothing committed yet.</p>
-
-    <h3>C. End-to-end product proof — a deployment gate, not a documentation claim</h3>
-    <p class="sub" style="margin:0 0 0.6rem;">The exact chain that must work, live, with a real Claude client — not simulated, not claimed from source-reading:</p>
-    <p style="font-size:0.82rem;font-family:ui-monospace,monospace;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem;line-height:1.9;">
-      Claude OAuth → authenticated connector → engine entitlement check → review card → persisted exact evidence → Track 2 → action/recheck → dashboard/history
-    </p>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner you">you</span></td><td>Go-ahead to deploy the current authenticated build to the live MCP service</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Real Claude client completes OAuth → tool call → card → open evidence → recheck, end to end (currently: still the older unauthenticated build live; dashboard/Clerk path never demonstrated in a live client)</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Engine entitlement check — <code>POST /v1/reviews/:reviewId/claims</code> now returns 402 for a non-active org, before any model work runs. Tested.</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Release carries revision id, migration version, runtime config version, health/readiness state</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Test/staging environment separate from prod — separate creds, model budget, Stripe mode, identity config</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>One rollback drill completed (deploy → verify → roll back app code → verify DB compatibility)</td></tr>
-      </tbody>
-    </table></div>
-
-    <h3>D. Operational minimum — non-negotiable</h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner green">✓</span></td><td>Backup/restore drill — a real script, run for real against live local Postgres: dump → restore into a throwaway container → verify row counts across all 9 tables → tear down. Passed.</td></tr>
-        <tr><td><span class="owner you">you</span></td><td>Named incident owner, outage contact, support inbox</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Kill-switch runbook — written from the actual code (confirmed <em>two</em> real chokepoints, not the one a stale comment in the code itself claimed — caught and flagged in the runbook)</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Rate-limit middleware — generalized, applied globally (300/min/IP) plus a tighter limit on the public waitlist route (5/min); per-org spend controls now cover extraction too (see B)</td></tr>
-        <tr><td><span class="owner you">you</span></td><td>Alpha-scope terms/privacy disclosure — what's stored, retention, deletion, which model provider/subprocessors receive content</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Invitation-only enforced at both layers — app-level waitlist gate (done) + Clerk Restricted sign-up mode (not yet confirmed set)</td></tr>
-      </tbody>
-    </table></div>
-
-    <h3>E. Billing — <span class="badge blue" style="font-size:0.6rem;">closed: LIVE Stripe</span>, required complete for alpha</h3>
-    <p class="sub" style="margin:0 0 0.6rem;">Decision closed: alpha runs on <strong>live</strong> Stripe, not test mode — this is a paid launch.</p>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner build">build</span></td><td>Live checkout, successful end to end — code needs zero changes for the key swap (confirmed), but re-running <code>bootstrapProducts.ts</code> against the live key and creating a live-mode webhook endpoint (separate signing secret per Stripe mode) are still needed operational steps</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Entitlement activation — <code>entitlement_status</code> column + migration, flips on <code>checkout.session.completed</code>/subscription webhooks, checked by the engine gate in §C</td></tr>
-        <tr><td><span class="owner grey">n/a</span></td><td>Receipts/invoices — confirmed this is entirely a Stripe Dashboard setting, not code; nothing to build</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Payment-failure handling — <code>invoice.payment_failed</code> now sets entitlement to <code>past_due</code> without touching plan (Stripe's own dunning gets a chance to recover it)</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td><code>POST /v1/billing/cancel</code> built; refund handling (<code>charge.refunded</code>) logged, deliberately doesn't touch entitlement (a refund isn't a cancellation)</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>The actual refund/credit <em>policy</em> — the handling code is built, the business rule (when/how much) is still a decision</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Webhook monitoring — every event now logs a real outcome (applied/skipped/ignored/error), handler failures are loud in the logs</td></tr>
-        <tr><td><span class="owner you">you</span></td><td>A named billing-support owner — who a customer's payment question actually reaches</td></tr>
-        <tr><td><span class="owner green">✓</span></td><td>Plan display wired to real data</td></tr>
-      </tbody>
-    </table></div>
-
-    <h3>F. Learning gate — required BEFORE alpha, confirmed (not "during")</h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner you">you</span></td><td>Held-out eval set real annotation — 2 independent annotators + adjudication. I can build tooling, not do the judgment calls.</td></tr>
-        <tr><td><span class="owner you">you</span></td><td>Numeric pre-pilot gate thresholds set and met (false-supported rate, wrong-source acceptance = 0, contradiction precision, no-source integrity = 100%) — per <code>tier-1-build-and-operating-plan.md</code> § Pre-pilot engine gate, this is required <em>before</em> the cohort ever sees the product</td></tr>
-        <tr><td><span class="owner you">you</span></td><td>Scripted user test plan — a people/scheduling task</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Product logs: completion, <code>could_not_check</code>, evidence-open, corrective action, recheck, latency, cost — without retaining unnecessary content</td></tr>
-      </tbody>
-    </table></div>
-  </div>
-
-  <!-- ============================= BETA ============================= -->
-  <div class="target-card beta">
-    <h2 class="target">🟣 Target 2 — Public Beta</h2>
-    <div class="target-goal">
-      <strong>Done when:</strong> a new user can sign up, understand the product boundary, connect Claude, receive a correct and inspectable result, manage payment and data, get support during failure, and encounter a service whose deployment, cost, security, and correction procedures are operated intentionally — not just "alpha with an open signup button."
-    </div>
-
-    <h3>A. Versioning, sandboxes, and release management — this is where they belong, not alpha</h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner build">build</span></td><td>Environment ladder: local → shared sandbox → staging → production, sandbox never a disguised prod</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Versioned contracts: MCP tool schema, card schema, Track 1 state policy, Track 2 challenge schema, prompts, normalization rules, parser/canonicalizer, migration level</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Versioned outputs — persist which version produced each review/match/challenge item</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Release promotion: same immutable artifact through sandbox → staging → prod, auto migration/integration/E2E/security/contract tests before promotion</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Feature flags (Track 2 variants, ambiguity prototype, parser versions, UX copy) — each needs an owner, population, expiry, metrics, rollback</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Compatibility rules: additive schema fields, no blind rewrite on failed migration, corrections = linked revisions never mutation</td></tr>
-      </tbody>
-    </table></div>
-
-    <h3>B. Accounts, billing, customer lifecycle</h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner build">build</span></td><td>Verified signup + account recovery tested end-to-end</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Organization membership/roles model (v1 could be just owner/admin/member) — needs your call on the model</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Scoped, expiring, rotatable API/session credentials + audit trail — the API-key lifecycle redesign flagged earlier</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Production Stripe config, webhook replay procedure, cancel/downgrade/refund/payment-failure handling</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Transactional email provider with authenticated sending domain + bounce/suppression handling</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Data export, account deletion, evidence deletion, support escalation flows</td></tr>
-      </tbody>
-    </table></div>
-
-    <h3>C. Production reliability and security operations</h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner build">build</span></td><td>CI: DB service, clean-DB migrations, typecheck, build, dependency audit, integration + connector E2E tests, opt-in budgeted real-model suite</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Monitoring/alerting on availability, failed auth, cost cap, queue/DB saturation, model failure, source-resolution failure, anomalous state distribution — needs a tool decision</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Tested backup/restore, recovery objectives, prod access policy, secrets rotation, incident process</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>General rate limits/WAF, explicit trusted-proxy config</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Security contact/vulnerability handling, periodic dependency/credential review</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Accessible, tested failure states — including partial completion and "could not check"</td></tr>
-      </tbody>
-    </table></div>
-
-    <h3>D. Product and trust boundary</h3>
-    <div class="table-wrap"><table>
-      <tbody>
-        <tr><td><span class="owner you">you</span></td><td>Held-out gate re-adjudicated at beta scale; a continuation/public-language threshold approved for wider claims</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Published evidence policy — inputs, parsing limits, origins, storage, locators, retention, deletion, non-results</td></tr>
-        <tr><td><span class="owner build">build</span></td><td>Public docs match the deployed release; CHECK's scope/limits stay prominent</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>One unified journey: website → dashboard → connector setup → support → status → legal, under a maintained domain</td></tr>
-        <tr><td><span class="owner both">both</span></td><td>Names the model provider/subprocessors, describes AI's role in Track 1 vs. Track 2 publicly</td></tr>
-      </tbody>
-    </table></div>
-  </div>
+  <section>
+    <h2>🟣 Beta — self-serve at scale</h2>
+    <p class="section-sub">Doesn't wait on alpha's polish, doesn't inherit alpha's shortcuts. Condensed — full detail in <code>PROGRESS.md</code>.</p>
+    <ol class="actions">
+      <li><span class="owner build">build</span><span class="txt">Environment ladder, versioned contracts/outputs, release promotion pipeline, CI, tested backup/restore at scale</span></li>
+      <li><span class="owner both">both</span><span class="txt">Org roles model, API-key lifecycle redesign, production Stripe config, transactional email provider, monitoring/alerting tool decision</span></li>
+      <li><span class="owner you">you</span><span class="txt">Held-out gate re-adjudicated at beta scale, public-language threshold approved for wider claims</span></li>
+      <li><span class="owner both">both</span><span class="txt">Published evidence policy, unified website→dashboard→connector→support journey, subprocessor disclosure</span></li>
+    </ol>
+  </section>
 
   <section>
-    <h2>Proposed, not a build target: "Advance" (Track 2 v2)</h2>
+    <h2>Designed, not built: "Advance" (the real Track 2)</h2>
+    <p class="section-sub">Not an alpha blocker. Full spec: <code>docs/guide/proposals/system-definition-synthesis.md</code> Part 11 and <code>docs/build/tier-1-build-and-operating-plan.md</code> § Track 2 / Advance.</p>
     <div class="not-a-gate">
-      <p style="margin:0 0 0.8rem;font-size:0.88rem;line-height:1.6;">Full design: <code>docs/guide/proposals/system-definition-synthesis.md</code> Part 11. Track 2 v1 above (§B, shipped dark) is unchanged by this — Advance is a distinct, larger feature, not v1.1: it works <strong>per-invocation</strong> instead of per-claim, starts <strong>concurrent with Track 1</strong> instead of after it, and — when Track 1 later finds something material — adds a <strong>second, separate suggestion</strong> rather than mutating the first.</p>
-      <p style="margin:0 0 0.8rem;font-size:0.88rem;line-height:1.6;"><strong>Gated on, in order:</strong> (1) an offline evaluation built from real, rights-cleared coding-agent transcripts (SWE-chat, SWE-Together) plus the user's own historical non-coding transcripts — explicitly not synthetic traces — each snapshot labeled with the real next action taken <em>and</em>, separately, an independent outcome judgment; (2) a causal in-alpha A/B test (Claude alone vs. Claude + Advance), with the no-finding case and the Track-1-finding case reported separately, since the no-finding case's value is unproven and the honest fallback if it fails is Case-2-only.</p>
-      <p style="margin:0;font-size:0.85rem;color:var(--muted);">Nothing here blocks or is blocked by alpha's current punch list. Do not start building the invocation/polling infrastructure without the evaluation above existing first.</p>
+      <strong>Design is locked</strong> — four moves (Clarify/Test/Compare/Repair), one sealed channel from Track 1, conditional-replace-with-fallback (untouched suggestion is replaced in place with a new version; touched suggestion is preserved and the update becomes a separate item), zero-fallback validation (bad output → no suggestion, never a guess). <strong>Zero code exists.</strong> Build order, corrected: task-state schema → policy table → strict validator → fixtures against frozen real examples — <em>then</em>, only then, one bounded live model call. Don't let the database shape or a live model call get ahead of the fixtures.
     </div>
   </section>
 
   <section>
-    <h2>Explicitly not a gate — for either target</h2>
+    <h2>Explicitly not a gate, for either target</h2>
     <div class="not-a-gate">
-      <ul>
-        <li>SOC 2 Type II, ISO certifications, enterprise SSO/SAML, dedicated support tooling, full team administration.</li>
-        <li>CAPTURE-grade retention/legal hold, full correction/supersession workflow, decision-family packs, examiner portal, obligation registry, cross-party boundary records.</li>
-        <li>Broad PDF/document-class support, before the retained-payload/locator design (alpha item A) is sound.</li>
-        <li>A polished, broad marketing rebrand.</li>
-      </ul>
-      <p style="margin-top:0.8rem;color:var(--muted);font-size:0.85rem;">Rule: scope the promise to the controls actually operated, not "defer trust" indefinitely. If an item doesn't help alpha or beta's own scorecard, it's enterprise/CAPTURE work or a deliberate research item — not invisible "SaaS polish."</p>
+      SOC 2/ISO/enterprise SSO, CAPTURE-grade retention/correction/decision-record features, broad PDF/document-class support (before the locator design is sound), a polished marketing rebrand. <strong>Rule</strong>: scope the promise to the controls actually operated — not indefinite deferral, not invisible scope creep either.
     </div>
   </section>
 
   <section>
-    <h2>What changed most recently</h2>
-    <ul>
-      <li><strong>Rounds 1 and 2 of the alpha build are both done and independently verified.</strong> All 5 audit P0s closed on both engine and MCP sides, Track 2 built and isolation-tested (ships dark), the entitlement check wired and gating real requests, billing webhook/cancellation lifecycle built, ops groundwork (rate limiting, backup/restore, kill-switch runbook) done. Final state: engine 291/287/0/4, server 3/3, <code>ui</code> build clean.</li>
-      <li>Two of five dispatched agents were cut off mid-task by a session rate limit. Verified everything myself afterward and found three real issues left behind — a corrupted migration file (one stray line broke 102 tests), two isolation tests that were false-positiving on their own explanatory comments, and the original extraction-failure bug not yet fixed on the MCP side when the agent was cut off. All three fixed and re-verified directly.</li>
-      <li>Alpha confirmed as a <strong>paid</strong> product launch, not an invite-only trial with free access — website, live billing, and the full journey are now firm alpha gates.</li>
-      <li>Billing decision closed: alpha runs on live Stripe, not test mode. New requirements added: entitlement activation, cancellation/refund policy, named billing-support owner.</li>
-      <li>New requirement: an engine-side entitlement check (paid/active status), not just API-key validity, gates every review.</li>
-      <li>Restructured the entire tracker around two explicit release targets (private alpha, public beta) per a second external review.</li>
-      <li>Confirmed: Track 2 and complete working billing are both required for alpha, not deferred to beta.</li>
-      <li>Confirmed: the held-out eval gate is required <em>before</em> alpha, matching the canonical build plan's own § Pre-pilot engine gate — not softened to "during."</li>
-      <li>External repo audit received and partially verified — 3 of its most severe P0 claims confirmed against source.</li>
-      <li>Pushed everything from this session to origin/main (4 commits: engine, server, dashboard, docs).</li>
-      <li>New, separate: "Advance" (Track 2 v2) designed as a proposal, not a build target — see the callout above and <code>docs/guide/proposals/system-definition-synthesis.md</code> Part 11. Corrects an early flaw (Advance seeing roughly the same context as Claude, adding nothing) via a shared-context/independent-signal split, and grounds the pre-build evaluation plan in real external datasets (SWE-chat, SWE-Together) rather than assumption.</li>
-      <li><strong>External review received and checked point-by-point against source, same day.</strong> Two real, live bugs found and fixed: (1) the card was displaying a raw internal <code>state_reason</code> code instead of prose — a test fixture had fabricated prose in its mock, masking it; fixed with a regression test. (2) Track 2's generated challenges never actually reached the card — the engine's HTTP response was missing the field entirely, not just a stale comment as first suspected; now wired end to end with the correct wire-contract field names. Also fixed: a doc claiming Track 2 "runs concurrently" with Track 1 when it structurally can't (its input is Track 1's resolved finding) — corrected, true concurrency is the separate Advance proposal. One real gap documented but not yet fixed: the cost-quota check is read-then-decide, not atomic, so it's best-effort under concurrency rather than a true hard cap — low risk at alpha's traffic volume, flagged in both the code and the build plan for before scale.</li>
-      <li><strong>Second external review received 2026-09-03, checked against current source.</strong> Its headline finding (Track 2 not reaching the card) was accurate at the commit it audited but stale by the time it arrived — already fixed in the pass above. Its framing that Track 2 v1 "violates the approved product boundary" by not being Advance was a false premise — Advance is an explicit proposal, never approved as a build target. Two more real bugs found and fixed: a Track 2 per-review cap race (fixed with a per-review Postgres advisory lock serializing the count/generate/insert sequence), and a missing top-level error boundary in <code>reviewAnswer()</code> that let an engine-side failure throw uncaught instead of degrading to a card. One real doc/code contradiction resolved with an explicit decision: a failed payment locks a customer out immediately — the migration comment's promise of a "grace period" didn't match what the code has always done, and the decision was to keep the immediate-lockout behavior and fix the comment, not build a grace period. Two real gaps confirmed but not yet fixed: no CI workflow exists, and the UI's pinned Vite has two dependency advisories (confirmed dev-server-only via <code>npm audit --omit=dev</code>, not a runtime risk in the shipped bundle).</li>
-    </ul>
+    <h2>History</h2>
+    <details class="group">
+      <summary>Recent activity, newest first <span class="arrow">▸</span></summary>
+      <div class="group-body">
+        <div class="history-item"><span class="date">2026-09-03</span>Advance design locked (conditional-replace rule, build order corrected to fixtures-before-live-model, "independent" sharpened to precise property) after two rounds of external review on the design itself. Old Track 2 ("Challenge") formally marked superseded/frozen, not deleted. This page rebuilt from a chronological narrative into an actionable punch list.</div>
+        <div class="history-item"><span class="date">2026-09-03</span>Second external review of the codebase: two real bugs found and fixed (Track 2 per-review cap race; missing top-level error boundary in <span class="file">reviewAnswer()</span>). Its headline finding was already stale (fixed one commit earlier). Its "violates the approved Advance boundary" framing rested on a false premise — Advance was not yet approved at that point. Entitlement grace-period doc/code contradiction resolved with an explicit decision (immediate lockout, comment fixed to match).</div>
+        <div class="history-item"><span class="date">2026-09-02 → 09-03</span>First external review of the codebase: two real bugs found and fixed (card showing a raw internal code instead of prose; Track 2's generated challenges never reaching the card due to a missing response field). Quota-check concurrency gap documented, not fixed. "Advance" (Track 2 v2) designed and written up as a proposal.</div>
+        <div class="history-item"><span class="date">2026-09-02</span>Rounds 1–2 of the alpha build completed and independently verified: all 5 audit P0 correctness bugs, entitlement check, live-billing lifecycle, ops groundwork (rate limiting, backup/restore, kill-switch runbook), Track 2 v1 built and isolation-verified. Three issues left by a rate-limit-interrupted background agent found and fixed (corrupted migration file, two false-positive isolation tests, one incomplete MCP-side fix). Everything pushed to <code>origin/main</code>.</div>
+      </div>
+    </details>
   </section>
 
-  <p class="note">This page is redeployed by hand as work lands — a snapshot, not a live dashboard wired to real data. Mirrored copy also kept in <code>~/Downloads/notary-check-tracker.html</code>. <code>noindex</code>, not linked anywhere public.</p>
+  <footer class="note">
+    Redeployed by hand as work lands — a snapshot, not a live dashboard. Mirrored to <code>~/Downloads/notary-check-tracker.html</code>. <code>noindex</code>, not linked anywhere public.
+  </footer>
 </main>
 </body>
 </html>

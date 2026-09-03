@@ -2,11 +2,12 @@
 
 > Informal, fast-moving status board for this build push. Not governed by
 > `docs/README.md`'s status-header system (same carve-out as `HANDOFF.md`) —
-> this is a scratch tracker, not product documentation. Updated in place as
-> work lands, not append-only. Local file — not published anywhere. Full
-> scorecard detail (every item, owner-tagged) lives in `status-page/index.html`
-> and mirrors `~/Downloads/notary-check-tracker.html` — this file is the
-> condensed version.
+> this is a scratch tracker, not product documentation. Local file — not
+> published anywhere. **This file is the detailed audit trail** (every
+> review pass, every bug found and fixed, full history). For the
+> actionable, at-a-glance punch list, see `status-page/index.html` (mirrored
+> to `~/Downloads/notary-check-tracker.html`) — rebuilt 2026-09-03 to lead
+> with "what's left and who owns it" instead of a chronological narrative.
 
 **Last updated**: 2026-09-03 — Two rounds of external review, both independently checked against source rather than trusted, real bugs found and fixed in each, all pushed to `origin/main`. See the two review callouts below for detail. Rounds 1 and 2 of the alpha build (all 5 audit P0s, Track 2, entitlement, billing, ops groundwork) remain complete as of 2026-09-02.
 
