@@ -32,13 +32,42 @@ const WRONG_ENTITY_TEXT_2 = "Initech's revenue increased 17% in FY25, compared t
 const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
 
 interface ClaimResponse {
-  claim: { id: string; review_id: string; state: string; state_reason: string; no_source: boolean };
-  matches: Array<{ evidenceId: string; relation: string; method: string }>;
+  claim: {
+    id: string;
+    review_id: string;
+    state: string;
+    state_reason: string;
+    no_source: boolean;
+    // WHERE the claim got to, alongside WHAT the evidence showed. A caller may
+    // only read `state` as a finding when lifecycle_state === "completed".
+    lifecycle_state: string;
+    lifecycle_detail: string | null;
+    checks_completed: boolean;
+  };
+  matches: Array<{
+    evidenceId: string;
+    relation: string;
+    method: string;
+    // The real, re-dereferenced passage coordinate (audit bug 1).
+    locator: { kind: string; provenance?: string; contentKind?: string; start?: number; end?: number; quote?: string; page?: number };
+  }>;
   rejectedCandidates: Array<{
     evidenceId: string;
     locator: string | null;
     mismatchedFields: string[];
     details: Array<{ field: string; detail: string }>;
+  }>;
+  // Per-source fetched/parsed/locator-resolved/usable split (audit bug 3).
+  evidence_statuses: Array<{
+    evidenceId: string;
+    fetched: boolean;
+    parsed: boolean;
+    locatorResolved: boolean;
+    usableForClaim: boolean;
+    retrievalStatus: string;
+    parseStatus: string;
+    parseError: string | null;
+    provenance: string | null;
   }>;
 }
 
@@ -241,24 +270,33 @@ test(
         }),
       });
       assert.equal(claimRes.status, 201);
-      const claimJson = (await claimRes.json()) as {
-        claim: { id: string; review_id: string; state: string; state_reason: string; no_source: boolean };
-        matches: Array<{ evidenceId: string; relation: string; method: string }>;
-        rejectedCandidates: Array<{
-          evidenceId: string;
-          locator: string | null;
-          mismatchedFields: string[];
-          details: Array<{ field: string; detail: string }>;
-        }>;
-      };
+      const claimJson = (await claimRes.json()) as ClaimResponse;
       assert.equal(claimJson.claim.review_id, reviewId);
       assert.equal(claimJson.claim.state, "SUPPORTED");
       assert.equal(claimJson.claim.no_source, false);
-      assert.deepEqual(claimJson.matches, [
-        { evidenceId: evJson.evidence.id, relation: "supports", method: "quoted_or_computed" },
-      ]);
+      assert.equal(claimJson.matches.length, 1);
+      assert.equal(claimJson.matches[0].evidenceId, evJson.evidence.id);
+      assert.equal(claimJson.matches[0].relation, "supports");
+      assert.equal(claimJson.matches[0].method, "quoted_or_computed");
       // The new response-shape field is always present; nothing was inapplicable here.
       assert.deepEqual(claimJson.rejectedCandidates, []);
+
+      // REGRESSION (audit bugs 1 + 2 + 3), at the API boundary. A caller must be
+      // able to tell "checked, clean" from "could not check" WITHOUT reading the
+      // engine's source, and a match must point at a passage.
+      assert.equal(claimJson.claim.lifecycle_state, "completed");
+      assert.equal(claimJson.claim.lifecycle_detail, null);
+      assert.equal(claimJson.claim.checks_completed, true);
+      assert.equal(claimJson.matches[0].locator.kind, "text_offsets");
+      // This row was registered as an INLINE payload with no URL: its
+      // provenance must say caller_supplied, never be presented as fetched.
+      assert.equal(claimJson.matches[0].locator.provenance, "caller_supplied");
+      assert.equal(claimJson.matches[0].locator.contentKind, "inline_excerpt");
+      assert.equal(claimJson.evidence_statuses.length, 1);
+      assert.equal(claimJson.evidence_statuses[0].fetched, true);
+      assert.equal(claimJson.evidence_statuses[0].parsed, true);
+      assert.equal(claimJson.evidence_statuses[0].locatorResolved, true);
+      assert.equal(claimJson.evidence_statuses[0].usableForClaim, true);
 
       // Persisted for real: a claim row and an evidence_match row exist.
       const claimRow = await server.pool.query("SELECT 1 FROM claim WHERE id = $1", [claimJson.claim.id]);
@@ -322,6 +360,27 @@ test(
   },
 );
 
+test(
+  "POST /v1/reviews/:reviewId/claims: an org whose entitlement is not 'active' is rejected with 402, before any model work",
+  { ...skip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const reviewId = await createReview(server.pool, orgId);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+      await server.pool.query("UPDATE organization SET entitlement_status = 'canceled' WHERE id = $1", [orgId]);
+
+      const res = await postClaim(server, plaintextKey, reviewId, []);
+      assert.equal(res.status, 402);
+      const json = (await res.json()) as { error: string; reason: string };
+      assert.equal(json.reason, "entitlement_canceled");
+    } finally {
+      await server.close();
+    }
+  },
+);
+
 async function registerInlineEvidence(server: TestServer, bearer: string, reviewId: string, payload: string): Promise<{ id: string }> {
   const res = await fetch(`${server.baseUrl}/v1/evidence`, {
     method: "POST",
@@ -368,14 +427,20 @@ test(
         const claimJson = (await claimRes.json()) as ClaimResponse;
 
         assert.equal(claimJson.claim.state, "SUPPORTED");
-        assert.deepEqual(claimJson.matches, [
-          { evidenceId: support.id, relation: "supports", method: "quoted_or_computed" },
-        ]);
+        assert.equal(claimJson.matches.length, 1);
+        assert.equal(claimJson.matches[0].evidenceId, support.id);
+        assert.equal(claimJson.matches[0].relation, "supports");
+        assert.equal(claimJson.matches[0].method, "quoted_or_computed");
 
         assert.equal(claimJson.rejectedCandidates.length, 1, "exactly one rejected candidate (the wrong-entity row)");
         const candidate = claimJson.rejectedCandidates[0];
         assert.equal(candidate.evidenceId, rejected.id);
-        assert.equal(candidate.locator, `inline:${sha256(WRONG_ENTITY_TEXT)}`, "inline-payload rows fall back to an inline:<hash> locator");
+        // REGRESSION (audit bug 1). The rejected candidate's source label must
+        // say the text was CALLER-SUPPLIED. The old `inline:<hash>` form did not
+        // — and on a row carrying both a pasted excerpt and a URL, the flow
+        // reported the URL instead, presenting text the system never fetched as
+        // if it had been proved to come from there.
+        assert.equal(candidate.locator, `caller-excerpt:${sha256(WRONG_ENTITY_TEXT).slice(0, 16)}`);
         assert.deepEqual(candidate.mismatchedFields, ["entity"]);
         assert.equal(candidate.details[0].field, "entity");
         assert.ok(candidate.details[0].detail.length > 0, "the detail string is non-empty");
@@ -395,7 +460,7 @@ test(
 );
 
 test(
-  "POST /v1/reviews/:reviewId/claims: all bound rows inapplicable → UNSUPPORTED, matches empty, rejectedCandidates one per row",
+  "POST /v1/reviews/:reviewId/claims: all bound rows inapplicable under a denied quota → INDETERMINATE, matches empty, rejectedCandidates one per row",
   { ...skip },
   async () => {
     const server = await startServer();
@@ -414,8 +479,15 @@ test(
         assert.equal(claimRes.status, 201);
         const claimJson = (await claimRes.json()) as ClaimResponse;
 
-        assert.equal(claimJson.claim.state, "UNSUPPORTED");
-        assert.equal(claimJson.claim.state_reason, "no_support_after_completed_checks");
+        // REGRESSION (audit bugs 3 + 5), at the API boundary: with the quota
+        // denied nothing could be established, so the checks did not complete.
+        // Reporting UNSUPPORTED here told the caller the evidence had been
+        // examined and found wanting, which never happened.
+        assert.equal(claimJson.claim.state, "INDETERMINATE");
+        assert.equal(claimJson.claim.state_reason, "checks_did_not_complete");
+        assert.equal(claimJson.claim.lifecycle_state, "not_checkable");
+        assert.equal(claimJson.claim.lifecycle_detail, "quota_denied");
+        assert.equal(claimJson.claim.checks_completed, false);
         assert.deepEqual(claimJson.matches, []);
 
         assert.equal(claimJson.rejectedCandidates.length, 2, "one rejected candidate per inapplicable row");

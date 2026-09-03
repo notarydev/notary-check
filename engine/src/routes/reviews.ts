@@ -6,6 +6,7 @@ import { Router } from "express";
 import type pg from "pg";
 import { z } from "zod";
 import { verifyApiKey } from "../auth/apiKey.ts";
+import { checkEntitlement } from "../auth/entitlement.ts";
 import { logEvent } from "../observability/log.ts";
 import { runReview } from "../review/reviewFlow.ts";
 
@@ -272,7 +273,8 @@ export function reviewsRouter(database: pg.Pool): Router {
     };
 
     const claimsResult = await database.query(
-      `SELECT id, review_id, ordinal, text, decontextualized_form, materiality, state, no_source, state_reason, policy_version, created_at
+      `SELECT id, review_id, ordinal, text, decontextualized_form, materiality, state, no_source, state_reason, policy_version, created_at,
+              lifecycle_state, lifecycle_detail
        FROM claim
        WHERE review_id = $1
        ORDER BY ordinal ASC`,
@@ -290,6 +292,8 @@ export function reviewsRouter(database: pg.Pool): Router {
       state_reason: string | null;
       policy_version: string;
       created_at: string;
+      lifecycle_state: string;
+      lifecycle_detail: string | null;
     }>;
 
     const claimIds = claims.map((c) => c.id);
@@ -297,9 +301,11 @@ export function reviewsRouter(database: pg.Pool): Router {
       claimIds.length > 0
         ? await database.query(
             `SELECT
-               em.id, em.claim_id, em.evidence_id, em.locator, em.resolved_text_hash, em.excerpt_ref,
+               em.id, em.claim_id, em.evidence_id, em.locator, em.locator_json, em.locator_resolved,
+               em.payload_revoked_at, em.resolved_text_hash, em.excerpt_ref,
                em.applicability_json, em.relation, em.method, em.evaluator_version, em.evaluated_at,
-               ev.origin, ev.submitted_url, ev.canonical_url, ev.retrieval_status, ev.retrieved_at
+               ev.origin, ev.submitted_url, ev.canonical_url, ev.retrieval_status, ev.retrieved_at,
+               ev.parse_status, ev.text_provenance, ev.access_revoked_at
              FROM evidence_match em
              JOIN evidence ev ON ev.id = em.evidence_id
              WHERE em.claim_id = ANY($1::uuid[])`,
@@ -315,6 +321,14 @@ export function reviewsRouter(database: pg.Pool): Router {
         id: row.id,
         evidence_id: row.evidence_id,
         locator: row.locator,
+        // The real, machine-dereferenceable coordinate (migration 0010). The
+        // flat `locator` above is a human-readable label only.
+        locator_json: row.locator_json,
+        locator_resolved: row.locator_resolved,
+        // Non-null means this finding's evidence payload was revoked AFTER the
+        // finding was made: the result stands as a truthful record of what was
+        // assessed, but its locator no longer dereferences to anything.
+        payload_revoked_at: row.payload_revoked_at,
         resolved_text_hash: row.resolved_text_hash,
         excerpt_ref: row.excerpt_ref,
         applicability_json: row.applicability_json,
@@ -329,6 +343,11 @@ export function reviewsRouter(database: pg.Pool): Router {
           canonical_url: row.canonical_url,
           retrieval_status: row.retrieval_status,
           retrieved_at: row.retrieved_at,
+          // Fetched is not parsed (migration 0010): a source whose bytes
+          // arrived but whose content could not be read is not evidence.
+          parse_status: row.parse_status,
+          text_provenance: row.text_provenance,
+          access_revoked_at: row.access_revoked_at,
         },
       });
       matchesByClaimId.set(claimId, list);
@@ -355,6 +374,8 @@ export function reviewsRouter(database: pg.Pool): Router {
         state_reason: c.state_reason,
         policy_version: c.policy_version,
         created_at: c.created_at,
+        lifecycle_state: c.lifecycle_state,
+        lifecycle_detail: c.lifecycle_detail,
         evidence_matches: matchesByClaimId.get(c.id) ?? [],
       })),
     });
@@ -376,6 +397,16 @@ export function reviewsRouter(database: pg.Pool): Router {
       return res.status(401).json({ error: "invalid or revoked API key" });
     }
     const orgId = auth.organizationId;
+
+    // Entitlement gate, checked here rather than at review-creation: this is
+    // the route that actually triggers billable model work (runReview below
+    // calls the judge). A valid API key proves identity, not that the org is
+    // still paying — those are different questions (auth/entitlement.ts).
+    const entitlement = await checkEntitlement(orgId, database);
+    if (!entitlement.allowed) {
+      logEvent({ event: "entitlement_denied", organization_id: orgId, error_cause: entitlement.reason, path: "deterministic-only" });
+      return res.status(402).json({ error: "organization is not currently entitled to run reviews", reason: entitlement.reason });
+    }
 
     const parsed = createClaimSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -415,6 +446,12 @@ export function reviewsRouter(database: pg.Pool): Router {
       database,
     );
 
+    // The claim's LIFECYCLE travels with its state, at the same level, so a
+    // caller cannot read one without the other. `state` says what the evidence
+    // showed; `lifecycle_state` says whether we actually got to look. Only
+    // lifecycle_state === "completed" licenses reading `state` as a finding
+    // about the world — a claim that came back "not_checkable" carries
+    // state INDETERMINATE and must never be rendered as clean.
     return res.status(201).json({
       claim: {
         id: result.claimId,
@@ -422,9 +459,16 @@ export function reviewsRouter(database: pg.Pool): Router {
         state: result.state,
         state_reason: result.stateReason,
         no_source: result.noSource,
+        lifecycle_state: result.lifecycle,
+        lifecycle_detail: result.lifecycleDetail,
+        checks_completed: result.checksCompleted,
       },
       matches: result.matches,
       rejectedCandidates: result.rejectedCandidates,
+      // Per-source fetched/parsed/locator-resolved/usable status, so a caller
+      // can say WHICH source could not be inspected rather than only that one
+      // could not be.
+      evidence_statuses: result.evidenceStatuses,
     });
   });
 

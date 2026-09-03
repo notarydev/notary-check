@@ -31,11 +31,13 @@ export class FakeStripe {
   prices: FakePrice[] = [];
   customersCreated: Array<{ id: string; metadata: Record<string, string> }> = [];
   sessionsCreated: Array<Record<string, unknown>> = [];
+  subscriptionsCanceled: string[] = [];
 
   productCreateCalls = 0;
   priceCreateCalls = 0;
   customerCreateCalls = 0;
   sessionCreateCalls = 0;
+  subscriptionCancelCalls = 0;
 
   private nextProduct = 1;
   private nextPrice = 1;
@@ -132,6 +134,14 @@ export class FakeStripe {
     },
   };
 
+  subscriptionsApi = {
+    cancel: async (id: string): Promise<{ id: string; status: string }> => {
+      this.subscriptionCancelCalls += 1;
+      this.subscriptionsCanceled.push(id);
+      return { id, status: "canceled" };
+    },
+  };
+
   /** Casts the fake to the SDK's Stripe type for injection. */
   asStripe(): Stripe {
     return {
@@ -139,6 +149,7 @@ export class FakeStripe {
       prices: this.pricesApi,
       customers: this.customersApi,
       checkout: this.checkoutApi,
+      subscriptions: this.subscriptionsApi,
     } as unknown as Stripe;
   }
 }

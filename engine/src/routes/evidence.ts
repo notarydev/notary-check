@@ -190,11 +190,30 @@ export function evidenceRouter(database: pg.Pool): Router {
     // (migration 0005 documents this column as the narrow stand-in for the
     // future object-store payload store).
     let resolvedText: string | null = null;
+    // Inline-excerpt provenance (migration 0010). A caller-supplied excerpt is
+    // legitimate evidence — often the ONLY checkable text there is — but this
+    // system did not fetch it and has proved nothing about where it came from.
+    // The MCP layer sends `payload` (the pasted excerpt) and `submitted_url`
+    // TOGETHER on one registration, and this route marks the row 'retrieved'
+    // from the payload alone without ever fetching that URL. Recording
+    // provenance as 'caller_supplied' — even when a URL is present — is what
+    // stops a downstream locator from presenting the excerpt as if the system
+    // had proved it appears at that URL. (The inverse bug, dropping the
+    // excerpt in favour of an unresolved URL, is in HANDOFF.md; neither
+    // direction is acceptable.)
+    let contentKind: string | null = null;
+    let textProvenance: string | null = null;
+    let canonicalTextHash: string | null = null;
+    let parseStatus = "not_attempted";
     if (payload !== undefined) {
       payloadHash = createHash("sha256").update(payload, "utf8").digest("hex");
       resolvedText = payload;
       retrievalStatus = "retrieved";
       retrievedAt = new Date().toISOString();
+      contentKind = "inline_excerpt";
+      textProvenance = "caller_supplied";
+      canonicalTextHash = payloadHash; // sha256 of the exact text retained
+      parseStatus = "parsed"; // the text IS the canonical text; nothing to parse
     }
 
     // canonical_url and locator_scheme are left null: assigning an immutable
@@ -204,9 +223,10 @@ export function evidenceRouter(database: pg.Pool): Router {
       `INSERT INTO evidence (
          review_id, origin, submitted_url, canonical_url, payload_ref, payload_hash,
          retrieval_status, retrieved_at, locator_scheme, retention_until,
-         submitted_by, snapshot_reuse_policy, access_revoked_at, resolved_text
+         submitted_by, snapshot_reuse_policy, access_revoked_at, resolved_text,
+         content_kind, text_provenance, canonical_text_hash, parse_status
        )
-       VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULL, $8, $9, $10, NULL, $11)
+       VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULL, $8, $9, $10, NULL, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         review_id,
@@ -220,6 +240,10 @@ export function evidenceRouter(database: pg.Pool): Router {
         submitted_by ?? null,
         snapshot_reuse_policy ?? null,
         resolvedText,
+        contentKind,
+        textProvenance,
+        canonicalTextHash,
+        parseStatus,
       ],
     );
 

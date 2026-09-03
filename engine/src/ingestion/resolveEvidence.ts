@@ -19,24 +19,81 @@
 // review flow may call this once per claim that references the same evidence
 // row, and every call after the first is a no-op.
 //
-// Canonicalization scope boundary, matching safeFetch.ts's own header comment
-// ("it does not parse HTML or PDF"): the HTML canonicalizer below is a simple
-// regex-based tag stripper, NOT a full HTML parser. And no PDF parser is wired
-// in anywhere in this codebase, so a PDF row's resolved_text stays NULL — its
-// raw bytes are hashed instead. No fake PDF text extraction.
+// TWO THINGS CHANGED HERE, both closing confirmed bugs:
+//
+// 1. FETCHED IS NOT PARSED. This function used to return a single status
+//    ("retrieved" / "unavailable") that conflated "the bytes arrived" with
+//    "there is readable, locatable content". A fetched PDF had no parser at
+//    all: resolved_text stayed NULL, raw bytes were hashed, and the row was
+//    still written as `retrieved` — which the review flow then counted as an
+//    addressable, check-completing source. That turned "Notary could not
+//    inspect this evidence" into "the evidence did not support the claim".
+//    ResolvedEvidence now carries the fetch, parse and usability facts
+//    separately, and a PDF is really parsed (parsePdf.ts).
+//
+// 2. REVOKED CONTENT IS REFUSED HERE, NOT ONLY AT DELETE TIME. This function
+//    previously returned whatever cached content the row held without ever
+//    looking at access_revoked_at. Revocation is now checked on every call, on
+//    both the fast path and the pending path, so a revoked row can never feed
+//    a new review — the check lives at the read, where it is load-bearing, not
+//    only at the write, where it is a courtesy.
+//
+// Canonicalization scope boundary: the HTML canonicalizer below is still a
+// simple regex-based tag stripper, NOT a full HTML parser (matching
+// safeFetch.ts's own documented boundary). That is unchanged.
 
 import { createHash } from "node:crypto";
 import type pg from "pg";
+import type { LocatorContentKind, LocatorProvenance, PageRange } from "../evidence/locators.ts";
+import { extractPdfText } from "./parsePdf.ts";
 import { fetchSource } from "./safeFetch.ts";
 import type { SafeFetchOptions } from "./safeFetch.ts";
 
+/**
+ * Whether readable content was actually produced — deliberately separate from
+ * retrieval status. Mirrors evidence.parse_status (migration 0010).
+ */
+export type EvidenceParseStatus = "not_attempted" | "parsed" | "parse_failed" | "not_parseable";
+
 /** The resolved state of one Evidence row, returned for every call path. */
 export interface ResolvedEvidence {
-  status: "retrieved" | "unavailable";
-  /** Canonicalized text (HTML rows), NULL for PDF rows (no parser) and unavailable rows. */
+  /**
+   * `revoked` is a distinct status, not a flavour of `unavailable`: unavailable
+   * means the source could not be reached, revoked means its payload was
+   * deliberately destroyed and must never be used again.
+   */
+  status: "retrieved" | "unavailable" | "revoked";
+  /** Canonicalized text. NULL when unavailable, revoked, or unparseable. */
   resolvedText: string | null;
-  /** canonical_url (or submitted_url when canonical is null) for a retrieved row; null when unavailable. */
+  /** canonical_url (or submitted_url) for a retrieved row; null otherwise.
+   * NOTE this is a SOURCE URL, not an exact locator — see evidence/locators.ts
+   * for the real coordinate system. Kept because callers still want the URL. */
   locator: string | null;
+  /** Which coordinate system resolvedText is expressed in. */
+  contentKind: LocatorContentKind | null;
+  /**
+   * Whether this system fetched the text or the caller supplied it. Never
+   * inferred from the presence of a URL: a row may carry BOTH a pasted excerpt
+   * and a URL, and in that case the text is caller_supplied even though a URL
+   * exists.
+   */
+  provenance: LocatorProvenance | null;
+  /** sha256 of resolvedText — the hash a locator's offsets are anchored to. */
+  canonicalTextHash: string | null;
+  parseStatus: EvidenceParseStatus;
+  parseError: string | null;
+  /** PDF page boundaries into resolvedText; null for every other content kind. */
+  pageRanges: PageRange[] | null;
+  /** The bytes arrived (or were supplied). */
+  fetched: boolean;
+  /** Readable canonical text was produced. */
+  parsed: boolean;
+  /**
+   * The row may be used as evidence for a claim: fetched AND parsed AND holding
+   * non-empty text AND not revoked. This is the flag the review flow must gate
+   * on — `status === "retrieved"` is NOT sufficient and was the bug.
+   */
+  usableForClaim: boolean;
 }
 
 export interface ResolveEvidenceOptions {
@@ -47,6 +104,68 @@ export interface ResolveEvidenceOptions {
    * safeFetch.test.ts's `allowLoopback`). Production callers never pass it.
    */
   fetchOptions?: SafeFetchOptions;
+}
+
+const sha256Text = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
+
+/** The unavailable/revoked result, with every derived flag consistently false. */
+function terminal(status: "unavailable" | "revoked"): ResolvedEvidence {
+  return {
+    status,
+    resolvedText: null,
+    locator: null,
+    contentKind: null,
+    provenance: null,
+    canonicalTextHash: null,
+    parseStatus: "not_attempted",
+    parseError: null,
+    pageRanges: null,
+    fetched: false,
+    parsed: false,
+    usableForClaim: false,
+  };
+}
+
+interface EvidenceRow {
+  id: string;
+  retrieval_status: string;
+  submitted_url: string | null;
+  canonical_url: string | null;
+  payload_hash: string | null;
+  resolved_text: string | null;
+  access_revoked_at: Date | string | null;
+  content_kind: string | null;
+  text_provenance: string | null;
+  canonical_text_hash: string | null;
+  parse_status: string;
+  parse_error: string | null;
+  page_ranges: PageRange[] | null;
+}
+
+/** Builds the ResolvedEvidence for an already-resolved row, from the row itself. */
+function fromStoredRow(row: EvidenceRow): ResolvedEvidence {
+  const parseStatus = (row.parse_status ?? "not_attempted") as EvidenceParseStatus;
+  const text = row.resolved_text;
+  // A row written before migration 0010 has parse_status 'not_attempted' but
+  // may hold real resolved_text (an inline payload, or a resolved HTML page).
+  // Treat retained non-empty text as parsed: the text is genuinely there and
+  // genuinely locatable, and back-dating it to "unparsed" would wrongly turn
+  // every pre-existing row INDETERMINATE. Absence of text is still unparsed.
+  const parsed = parseStatus === "parsed" || (parseStatus === "not_attempted" && text !== null && text.length > 0);
+  return {
+    status: "retrieved",
+    resolvedText: text,
+    locator: row.canonical_url ?? row.submitted_url,
+    contentKind: (row.content_kind as LocatorContentKind | null) ?? (text !== null ? "plaintext" : null),
+    provenance: (row.text_provenance as LocatorProvenance | null) ?? null,
+    canonicalTextHash: row.canonical_text_hash ?? (text !== null ? sha256Text(text) : null),
+    parseStatus: parsed ? "parsed" : parseStatus,
+    parseError: row.parse_error,
+    pageRanges: row.page_ranges ?? null,
+    fetched: true,
+    parsed,
+    usableForClaim: parsed && text !== null && text.length > 0,
+  };
 }
 
 /**
@@ -83,7 +202,9 @@ export async function resolveEvidenceRow(
   try {
     await client.query("BEGIN");
     const result = await client.query(
-      `SELECT id, retrieval_status, submitted_url, canonical_url, payload_hash, resolved_text
+      `SELECT id, retrieval_status, submitted_url, canonical_url, payload_hash, resolved_text,
+              access_revoked_at, content_kind, text_provenance, canonical_text_hash,
+              parse_status, parse_error, page_ranges
        FROM evidence
        WHERE id = $1
        FOR UPDATE`,
@@ -91,16 +212,19 @@ export async function resolveEvidenceRow(
     );
     if (!result.rowCount) {
       await client.query("COMMIT");
-      return { status: "unavailable", resolvedText: null, locator: null };
+      return terminal("unavailable");
     }
-    const row = result.rows[0] as {
-      id: string;
-      retrieval_status: string;
-      submitted_url: string | null;
-      canonical_url: string | null;
-      payload_hash: string | null;
-      resolved_text: string | null;
-    };
+    const row = result.rows[0] as EvidenceRow;
+
+    // REVOCATION IS CHECKED FIRST, BEFORE ANY CACHED CONTENT IS RETURNED and
+    // before any fetch is attempted. Both conditions are checked, not just one:
+    // retrieval_status = 'revoked' is the new first-class marker, and
+    // access_revoked_at covers any row revoked before migration 0010. A revoked
+    // row yields no text on any path.
+    if (row.retrieval_status === "revoked" || row.access_revoked_at !== null) {
+      await client.query("COMMIT");
+      return terminal("revoked");
+    }
 
     // Already resolved (or already permanently unavailable): return the
     // current state as-is — idempotent, no re-fetch, no re-write. This is the
@@ -108,13 +232,9 @@ export async function resolveEvidenceRow(
     if (row.retrieval_status !== "pending") {
       await client.query("COMMIT");
       if (row.retrieval_status === "retrieved") {
-        return {
-          status: "retrieved",
-          resolvedText: row.resolved_text,
-          locator: row.canonical_url ?? row.submitted_url,
-        };
+        return fromStoredRow(row);
       }
-      return { status: "unavailable", resolvedText: null, locator: null };
+      return terminal("unavailable");
     }
 
     // A pending row with no URL has nothing to fetch. Inline-payload rows are
@@ -127,7 +247,7 @@ export async function resolveEvidenceRow(
         [evidenceId],
       );
       await client.query("COMMIT");
-      return { status: "unavailable", resolvedText: null, locator: null };
+      return terminal("unavailable");
     }
 
     const fetched = await fetchSource(row.submitted_url, options.fetchOptions);
@@ -137,37 +257,88 @@ export async function resolveEvidenceRow(
         [evidenceId],
       );
       await client.query("COMMIT");
-      return { status: "unavailable", resolvedText: null, locator: null };
+      return terminal("unavailable");
     }
 
     let resolvedText: string | null = null;
     let payloadHash: string;
+    let contentKind: LocatorContentKind;
+    let parseStatus: EvidenceParseStatus;
+    let parseError: string | null = null;
+    let pageRanges: PageRange[] | null = null;
+
     if (fetched.mimeType === "text/html") {
+      contentKind = "html";
       resolvedText = stripHtml(fetched.body);
-      payloadHash = createHash("sha256").update(resolvedText, "utf8").digest("hex");
+      payloadHash = sha256Text(resolvedText);
+      // The stripper cannot fail, but it can legitimately produce nothing (a
+      // page that is all script/style/markup). Empty text is NOT parsed
+      // content: there is nothing to locate in it.
+      parseStatus = resolvedText.length > 0 ? "parsed" : "parse_failed";
+      if (parseStatus === "parse_failed") parseError = "html_canonicalization_produced_no_text";
     } else {
-      // application/pdf — no parser is wired in anywhere in this codebase
-      // (safeFetch.ts's header comment confirms the same boundary). resolved_text
-      // stays NULL; the raw bytes are hashed instead.
+      // application/pdf — really parsed now (parsePdf.ts). The payload hash
+      // stays a hash of the RAW BYTES for a PDF (it identifies the file that
+      // arrived); the canonical TEXT gets its own hash below, because a
+      // locator's offsets are anchored to the text, never to the bytes.
+      contentKind = "pdf";
       payloadHash = createHash("sha256").update(fetched.body).digest("hex");
+      const extraction = await extractPdfText(fetched.body);
+      if (extraction.ok) {
+        resolvedText = extraction.canonicalText;
+        pageRanges = extraction.pageRanges;
+        parseStatus = "parsed";
+      } else {
+        // A PDF that arrives but yields no text is FETCHED-BUT-NOT-PARSED. It
+        // must never look like usable evidence — that conflation is the bug.
+        parseStatus = extraction.reason === "no_extractable_text" ? "not_parseable" : "parse_failed";
+        parseError = extraction.detail !== undefined ? `${extraction.reason}: ${extraction.detail}` : extraction.reason;
+      }
     }
 
+    const textHash = resolvedText !== null ? sha256Text(resolvedText) : null;
     await client.query(
       `UPDATE evidence
        SET retrieval_status = 'retrieved',
            retrieved_at = now(),
            canonical_url = $2,
            payload_hash = $3,
-           resolved_text = $4
+           resolved_text = $4,
+           content_kind = $5,
+           text_provenance = 'fetched',
+           canonical_text_hash = $6,
+           parse_status = $7,
+           parse_error = $8,
+           page_ranges = $9
        WHERE id = $1`,
-      [evidenceId, fetched.finalUrl, payloadHash, resolvedText],
+      [
+        evidenceId,
+        fetched.finalUrl,
+        payloadHash,
+        resolvedText,
+        contentKind,
+        textHash,
+        parseStatus,
+        parseError,
+        pageRanges === null ? null : JSON.stringify(pageRanges),
+      ],
     );
     await client.query("COMMIT");
 
+    const parsed = parseStatus === "parsed";
     return {
       status: "retrieved",
       resolvedText,
       locator: fetched.finalUrl ?? row.submitted_url,
+      contentKind,
+      provenance: "fetched",
+      canonicalTextHash: textHash,
+      parseStatus,
+      parseError,
+      pageRanges,
+      fetched: true,
+      parsed,
+      usableForClaim: parsed && resolvedText !== null && resolvedText.length > 0,
     };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});

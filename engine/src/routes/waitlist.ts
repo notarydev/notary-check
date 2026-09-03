@@ -10,36 +10,24 @@ import { Router } from "express";
 import type pg from "pg";
 import { z } from "zod";
 import { logEvent } from "../observability/log.ts";
+import { rateLimit } from "../middleware/rateLimit.ts";
 
 const waitlistSchema = z.object({
   email: z.string().email(),
   source: z.string().optional(),
 });
 
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_PER_WINDOW = 5;
-
-/** ip -> request timestamps within the current window. Process-lifetime, in-memory — matches this codebase's existing apiKeyCache-style tradeoff (server/src/orgResolver.ts): simple and sufficient for a single-instance deployment, resets on restart. */
-const requestLog = new Map<string, number[]>();
-
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const timestamps = (requestLog.get(ip) ?? []).filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-  timestamps.push(now);
-  requestLog.set(ip, timestamps);
-  return timestamps.length > RATE_LIMIT_MAX_PER_WINDOW;
-}
+// This route has no API-key gate to lean on for abuse resistance (it's the
+// one deliberately public, unauthenticated route — see header comment
+// above), so it keeps its own tight per-IP limit rather than relying on the
+// generous global default applied in server.ts. Same numbers as before the
+// refactor to the shared middleware factory.
+const waitlistRateLimit = rateLimit({ windowMs: 60_000, max: 5, message: "too many requests, try again shortly" });
 
 export function waitlistRouter(database: pg.Pool): Router {
   const router = Router();
 
-  router.post("/v1/waitlist", async (req, res) => {
-    const ip = req.ip ?? "unknown";
-    if (isRateLimited(ip)) {
-      logEvent({ event: "waitlist_rate_limited", path: "deterministic-only" });
-      return res.status(429).json({ error: "too many requests, try again shortly" });
-    }
-
+  router.post("/v1/waitlist", waitlistRateLimit, async (req, res) => {
     const parsed = waitlistSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "invalid request body", details: parsed.error.flatten() });

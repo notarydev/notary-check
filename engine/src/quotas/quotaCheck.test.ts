@@ -112,15 +112,32 @@ test(
         fetchBytes: 0,
         estimatedCostCents: estimateDeepSeekCostCents(1_000_000, 0),
       };
+      // The GLOBAL sum spans every organization in the database, so it is not
+      // isolated from other tests the way a fresh org's sum is. node --test runs
+      // test FILES in parallel processes against this same Postgres, so
+      // asserting an exact global total silently asserted "no other test in this
+      // whole suite has ever written a usage_event this month" — which held only
+      // by luck, and stopped holding the moment claim extraction started
+      // metering its own calls. Measure the DELTA instead: that is what this
+      // test actually cares about (the global query is not org-filtered).
+      const globalBefore = await globalMonthCostCents(pool);
+
       const id = await insertUsageEvent(pool, event);
       assert.ok(id);
       const row = await pool.query("SELECT * FROM usage_event WHERE id = $1", [id]);
       assert.equal(row.rows[0].organization_id, orgId);
       assert.equal(row.rows[0].estimated_cost_cents, 22);
       assert.equal(row.rows[0].input_tokens, 1_000_000);
-      // Both sum queries see it.
+      // The per-org sum IS isolated (orgId is freshly created here), so it stays
+      // an exact assertion — that is where the real weight of this test sits.
       assert.equal(await organizationMonthCostCents(orgId, pool), 22);
-      assert.equal(await globalMonthCostCents(pool), 22);
+      // The global sum must have grown by at least this row's cost. `>=` rather
+      // than `=== globalBefore + 22` because a concurrently-running test file
+      // may legitimately land its own row between these two reads.
+      assert.ok(
+        (await globalMonthCostCents(pool)) >= globalBefore + 22,
+        "the global sum must include this row (it is not filtered by organization)",
+      );
     } finally {
       await pool.query("DELETE FROM usage_event WHERE organization_id = $1", [orgId]);
       await pool.end();

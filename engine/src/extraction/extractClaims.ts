@@ -25,9 +25,30 @@
 // criterion stated in the domain's vocabulary, (b) an explicit structure forcing
 // step-by-step reasoning, (c) a strict mapping from that reasoning to a
 // deterministic structured output, (d) explicit edge-case handling, plus the
-// anti-verbosity clause. Defensive parsing: the model's JSON is validated
-// against a strict zod schema; anything that does not parse degrades to an empty
-// array (no claims extracted) with a logEvent, never a crash.
+// anti-verbosity clause.
+//
+// TWO CONFIRMED BUGS ARE CLOSED IN THIS FILE.
+//
+// 1. FAILURE WAS INDISTINGUISHABLE FROM EMPTINESS. This module used to return
+//    `ExtractedClaim[]`, and EVERY failure mode — no API key, a thrown client,
+//    a provider error, unparseable JSON, a schema violation, the kill switch —
+//    degraded to an empty array with only a log line. An empty array is also
+//    the correct, meaningful answer for an answer that genuinely asserts
+//    nothing checkable. Downstream (server/src/engineClient.ts) turns an empty
+//    claim list into the `no_issue` card, so a broken extractor rendered as
+//    "no issue found". A log line is not a return value: nothing in the call
+//    chain could branch on it. The return type is now a discriminated result,
+//    so a caller cannot accidentally treat a failure as an empty answer — the
+//    type system refuses.
+//
+// 2. THE EXTRACTION CALL WAS UNMETERED. This module imported
+//    estimateDeepSeekCostCents (for a log line) but never called checkQuota,
+//    and never wrote a usage_event. Only the field-judge path was gated. So any
+//    valid API key could drive unlimited extraction calls straight past BOTH
+//    the per-org monthly limit and the global provider spend cap — the cap that
+//    exists precisely because per-org limits do not bound aggregate spend.
+//    Extraction is now quota-gated BEFORE the network call and writes a usage
+//    event after it, using the same pattern the judge path already uses.
 
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
@@ -40,8 +61,10 @@ import {
   type JudgeClient,
 } from "../judge/judgeClient.ts";
 import { logEvent } from "../observability/log.ts";
-import { estimateDeepSeekCostCents } from "../quotas/usage.ts";
+import { checkQuota } from "../quotas/quotaCheck.ts";
+import { estimateDeepSeekCostCents, insertUsageEvent, usageEventFromExtractionCall } from "../quotas/usage.ts";
 import type { ClaimFields, ValueUnit } from "../verification/applicability.ts";
+import type pg from "pg";
 
 /** Version string persisted with every extraction call (§ requirement #6).
  * Bump on any change to the prompt text or the output schema. */
@@ -66,6 +89,42 @@ export interface ExtractedClaim {
   claimFields: ClaimFields;
 }
 
+/**
+ * Why an extraction produced no claim list. Each value is a DIFFERENT thing to
+ * tell a user, which is the whole reason they are not collapsed into `[]`:
+ * `quota_denied` is a billing state, `judge_kill_switch_active` is an operator
+ * action, and `model_output_unparseable` is a provider fault.
+ */
+export type ExtractClaimsFailure =
+  | "quota_denied"
+  | "judge_kill_switch_active"
+  | "judge_client_unavailable"
+  | "judge_client_threw"
+  | "judge_returned_error"
+  | "model_output_unparseable";
+
+/**
+ * The result of an extraction attempt.
+ *
+ * `{ ok: true, claims: [] }` means the extractor RAN and this answer asserts no
+ * checkable claims — a real, reportable finding. `{ ok: false }` means no such
+ * finding exists. Nothing may treat the second as the first; that conflation is
+ * the bug this type exists to make unrepresentable.
+ */
+export type ExtractClaimsResult =
+  | {
+      ok: true;
+      claims: ExtractedClaim[];
+      /**
+       * Claims the model emitted that were REJECTED as not verbatim from the
+       * answer. Non-zero means the model's output was partially unusable — a
+       * smaller version of the same silent-drop problem — so it is surfaced
+       * rather than only logged.
+       */
+      droppedCount: number;
+    }
+  | { ok: false; reason: ExtractClaimsFailure; detail?: string };
+
 export interface ExtractClaimsOptions {
   /** Injected judge client. Defaults to a real client over the network. */
   client?: JudgeClient;
@@ -74,32 +133,43 @@ export interface ExtractClaimsOptions {
   maxTokens?: number;
   /** Wall-clock cap for the underlying HTTP call. Defaults to the client's. */
   timeoutMs?: number;
-  /** Organization context for observability only (§ Monitoring): the call's
-   * log lines carry it so cost/latency can be rolled up per organization. It
-   * never affects extraction. */
+  /** Organization context. Used for observability (§ Monitoring) AND — when
+   * `db` is also supplied — as the scope for the quota check and the usage
+   * event. It never affects what is extracted. */
   organizationId?: string;
+  /**
+   * The database, for quota enforcement and usage metering. When BOTH `db` and
+   * `organizationId` are supplied, the extraction call is gated by checkQuota
+   * before any network traffic and writes a usage_event afterwards.
+   *
+   * Optional rather than required because this module's prompt/parse behaviour
+   * is unit-tested without a database, and a mandatory pool would force every
+   * such test to stand one up. The production caller — routes/extractClaims.ts,
+   * the only path a paying customer's request can take — always passes it.
+   */
+  db?: pg.Pool;
+  /** Review context for the usage event, when the extraction belongs to one. */
+  reviewId?: string;
 }
 
 /**
  * Decomposes an answer's text into its individual factual claims via the judge.
  *
- * Never throws on model/parse failures: any output that cannot be parsed into
- * the strict zod schema (or a client that cannot be configured) degrades to an
- * empty array — no claims extracted — with the failure logged. The caller is
- * never crashed by a bad model response.
+ * Never throws on model/parse failures — but never HIDES them either. Every
+ * failure mode returns `{ ok: false, reason }`, distinct from the successful
+ * `{ ok: true, claims: [] }` that means "this answer asserts nothing checkable".
+ *
+ * Quota-gated (bug 5): when a pool and an organization are supplied, checkQuota
+ * runs BEFORE the client is even constructed. A denial makes no network call at
+ * all — the same shape as the kill-switch short-circuit — and reports
+ * `quota_denied` rather than pretending the answer had no claims.
  */
 export async function extractClaims(
   answerText: string,
   options: ExtractClaimsOptions = {},
-): Promise<ExtractedClaim[]> {
+): Promise<ExtractClaimsResult> {
   const promptVersion = options.promptVersion ?? CLAIM_EXTRACTION_PROMPT_VERSION;
   const { system, user, question } = buildClaimPrompt(answerText);
-
-  const recordBase: JudgeCallRecord = {
-    model: options.model ?? DEFAULT_JUDGE_MODEL,
-    promptVersion,
-    question,
-  };
 
   // Kill switch (§ killSwitch.ts): claim extraction is a model (semantic) call
   // with real cost, so it is gated at the same chokepoint as extractField —
@@ -112,7 +182,28 @@ export async function extractClaims(
       error_cause: "judge_kill_switch_active",
       organization_id: options.organizationId,
     });
-    return [];
+    return { ok: false, reason: "judge_kill_switch_active" };
+  }
+
+  // QUOTA GATE (bug 5). Before this existed, extraction was the one model call
+  // in the system that nothing metered: extractClaims imported the cost
+  // estimator for a log line and never called checkQuota, so both the per-org
+  // monthly limit and the hard global provider spend cap could be walked
+  // straight past by any valid API key. The gate runs BEFORE the client is
+  // constructed, so a denial costs exactly zero network traffic — the same
+  // ordering the kill switch above uses, and the same ordering reviewFlow.ts
+  // uses on the judge path.
+  if (options.db !== undefined && options.organizationId !== undefined) {
+    const quota = await checkQuota(options.organizationId, options.db);
+    if (!quota.allowed) {
+      logEvent({
+        event: "claim_extraction",
+        path: "judge-involved",
+        error_cause: `quota_${quota.reason}`,
+        organization_id: options.organizationId,
+      });
+      return { ok: false, reason: "quota_denied", detail: quota.reason };
+    }
   }
 
   let client: JudgeClient;
@@ -126,7 +217,7 @@ export async function extractClaims(
       error_cause: (err as Error).message,
       organization_id: options.organizationId,
     });
-    return [];
+    return { ok: false, reason: "judge_client_unavailable", detail: (err as Error).message };
   }
 
   const input: JudgeCallInput = {
@@ -152,7 +243,7 @@ export async function extractClaims(
       error_cause: "judge_client_threw",
       organization_id: options.organizationId,
     });
-    return [];
+    return { ok: false, reason: "judge_client_threw", detail: (err as Error).message };
   }
   const latencyMs = Math.round(performance.now() - startedAt);
 
@@ -164,7 +255,7 @@ export async function extractClaims(
       error_cause: result.record.error,
       organization_id: options.organizationId,
     });
-    return [];
+    return { ok: false, reason: "judge_returned_error", detail: result.record.error };
   }
 
   // Observability (§ Monitoring): every extraction call logs its latency and
@@ -176,6 +267,21 @@ export async function extractClaims(
     cost_cents: estimateDeepSeekCostCents(result.record.inputTokens ?? 0, result.record.outputTokens ?? 0),
     organization_id: options.organizationId,
   });
+
+  // USAGE METERING (bug 5, second half). A gate that never records what it
+  // spent stops being a gate: checkQuota sums usage_event rows, so an
+  // unrecorded call is one the NEXT check cannot see. The token count on the
+  // record is the true signal that a real call reached the network — exactly
+  // the test reviewFlow.ts already applies on the judge path.
+  if (options.db !== undefined && options.organizationId !== undefined && result.record.inputTokens !== undefined) {
+    await insertUsageEvent(
+      options.db,
+      usageEventFromExtractionCall(result.record, {
+        organizationId: options.organizationId,
+        reviewId: options.reviewId,
+      }),
+    );
+  }
 
   return parseExtractionOutput(result.record.answer ?? "", answerText);
 }
@@ -415,24 +521,27 @@ function toExtractedClaim(ordinal: number, item: ParsedClaimOutput): ExtractedCl
 
 /**
  * Validates the model's raw answer against the strict schema and maps it to
- * ExtractedClaim records. Any failure to parse — non-JSON, schema violation,
- * a claim whose text is not actually verbatim in the answer — degrades to
- * skipping the offending data and is logged, never thrown.
+ * ExtractedClaim records.
+ *
+ * A WHOLE-OUTPUT failure (non-JSON, schema violation) is now a returned
+ * `{ ok: false }`, not an empty array: the model produced nothing usable, which
+ * is categorically different from an answer with no claims in it. A SINGLE
+ * claim that is not verbatim from the answer is still dropped — a
+ * model-invented claim must not travel downstream — but the count of dropped
+ * claims comes back with the result rather than living only in a log line.
  */
-export function parseExtractionOutput(rawAnswer: string, answerText: string): ExtractedClaim[] {
+export function parseExtractionOutput(rawAnswer: string, answerText: string): ExtractClaimsResult {
   const json = extractJsonObject(rawAnswer);
   if (json === undefined) {
     logEvent({ event: "claim_extraction_parse_failure", error_cause: "model output is not a valid JSON object" });
-    return [];
+    return { ok: false, reason: "model_output_unparseable", detail: "model output is not a valid JSON object" };
   }
   const parsed = extractionOutputSchema.safeParse(json);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
-    logEvent({
-      event: "claim_extraction_parse_failure",
-      error_cause: `model output failed schema validation: ${first?.message ?? "unknown"}`,
-    });
-    return [];
+    const detail = `model output failed schema validation: ${first?.message ?? "unknown"}`;
+    logEvent({ event: "claim_extraction_parse_failure", error_cause: detail });
+    return { ok: false, reason: "model_output_unparseable", detail };
   }
 
   // "text" is defined as the VERBATIM claim as it appears in answerText. A
@@ -441,8 +550,10 @@ export function parseExtractionOutput(rawAnswer: string, answerText: string): Ex
   // than pass a model-invented claim downstream.
   const normalizedAnswer = normalizeForVerbatim(answerText);
   const claims: ExtractedClaim[] = [];
+  let droppedCount = 0;
   for (const [index, item] of parsed.data.claims.entries()) {
     if (!normalizedAnswer.includes(normalizeForVerbatim(item.text))) {
+      droppedCount += 1;
       logEvent({
         event: "claim_extraction_claim_dropped",
         error_cause: "extracted text is not verbatim from the answer",
@@ -452,5 +563,5 @@ export function parseExtractionOutput(rawAnswer: string, answerText: string): Ex
     }
     claims.push(toExtractedClaim(claims.length + 1, item));
   }
-  return claims;
+  return { ok: true, claims, droppedCount };
 }

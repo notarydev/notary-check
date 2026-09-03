@@ -11,14 +11,17 @@
 //      gain one); it returns token/cost data, and THIS module is the contract
 //      a caller uses to store it.
 //
-// WIRING-POINT STATUS, stated honestly: as of build-order step 5 there is NO
-// caller in this codebase that persists judge usage to the database yet — the
-// judge runs only through extractField(), which returns a JudgeFieldAnswer
-// carrying the full JudgeCallRecord, and nothing downstream writes it. So the
-// mapping below is real and tested, but the end-to-end "judge call → usage row"
-// path is DEFERRED until the orchestrator that owns reviews and organizations
-// actually calls the judge and persists usage. No fake integration is invented
-// here to paper over that gap.
+// WIRING-POINT STATUS. Both DeepSeek call sites now persist usage:
+//   - evidence-field judging — ../review/reviewFlow.ts, via
+//     usageEventFromJudgeCall, written for every call that actually reached the
+//     network (a token count on the record is the test);
+//   - claim extraction — ../extraction/extractClaims.ts, via
+//     usageEventFromExtractionCall. This one was MISSING until the audit found
+//     it: extraction called DeepSeek, imported the cost estimator for a log
+//     line, and wrote no ledger row and ran no quota check. Since checkQuota
+//     sums exactly these rows, an unrecorded call is invisible to every later
+//     check — the gap was not just a reporting hole, it was a hole in the
+//     enforcement itself.
 
 import type pg from "pg";
 import type { JudgeCallRecord } from "../judge/judgeClient.ts";
@@ -72,6 +75,59 @@ export function usageEventFromJudgeCall(record: JudgeCallRecord, meta: JudgeUsag
     userId: meta.userId,
     reviewId: meta.reviewId,
     eventType: "judge_call",
+    inputTokens,
+    outputTokens,
+    fetchBytes: 0,
+    estimatedCostCents: estimateDeepSeekCostCents(inputTokens, outputTokens),
+  };
+}
+
+/**
+ * Maps a CLAIM-EXTRACTION call's record to a UsageEvent-shaped row.
+ *
+ * Identical arithmetic to usageEventFromJudgeCall — same provider, same prices
+ * — but a DIFFERENT event_type, and that difference is the point. Claim
+ * extraction and evidence-field judging are two distinct DeepSeek call sites
+ * with different volumes and different cost profiles; rolling them into one
+ * "judge_call" bucket would make the per-org cost breakdown unable to answer
+ * "what is actually driving this bill". Extraction was previously not recorded
+ * at ALL (see extractClaims.ts's header), so every quota sum in the system was
+ * computed against an incomplete ledger.
+ */
+export function usageEventFromExtractionCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+  const inputTokens = record.inputTokens ?? 0;
+  const outputTokens = record.outputTokens ?? 0;
+  return {
+    organizationId: meta.organizationId,
+    userId: meta.userId,
+    reviewId: meta.reviewId,
+    eventType: "claim_extraction",
+    inputTokens,
+    outputTokens,
+    fetchBytes: 0,
+    estimatedCostCents: estimateDeepSeekCostCents(inputTokens, outputTokens),
+  };
+}
+
+/**
+ * Maps a TRACK 2 / CHALLENGE-GENERATION call's record to a UsageEvent row.
+ *
+ * Same arithmetic again, third distinct event_type, for the same reason
+ * extraction got its own: Track 2 is an ADDITIONAL DeepSeek call per material
+ * claim on top of the field-judging calls, so folding it into "judge_call"
+ * would hide exactly the cost question the feature flag exists to answer —
+ * "what did enabling Track 2 for this org actually add to the bill". It goes
+ * through insertUsageEvent like every other call site, which is what makes it
+ * visible to checkQuota's sums rather than a fourth unmetered path.
+ */
+export function usageEventFromChallengeCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+  const inputTokens = record.inputTokens ?? 0;
+  const outputTokens = record.outputTokens ?? 0;
+  return {
+    organizationId: meta.organizationId,
+    userId: meta.userId,
+    reviewId: meta.reviewId,
+    eventType: "challenge_generation",
     inputTokens,
     outputTokens,
     fetchBytes: 0,

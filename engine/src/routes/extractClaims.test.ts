@@ -65,9 +65,9 @@ interface TestServer {
   close: () => Promise<void>;
 }
 
-async function startServer(): Promise<TestServer> {
+async function startServer(injected?: JudgeClient): Promise<TestServer> {
   const pool: pg.Pool = await freshPool();
-  const { client } = fakeExtractionClient();
+  const client = injected ?? fakeExtractionClient().client;
   const app = express();
   app.use(express.json());
   app.use(extractClaimsRouter(pool, { client }));
@@ -125,6 +125,13 @@ test(
       assert.equal(json.claims[0].claimFields.entity, "Acme");
       assert.equal(json.claims[0].claimFields.period, "FY25");
       assert.deepEqual(json.claims[0].claimFields.valueUnit, { value: "17", unit: "%" });
+      // REGRESSION (audit bug 2): a successful response says so explicitly, and
+      // says how far the claims got. A claim that has only been EXTRACTED has
+      // not been verified against anything, and no caller may read it as checked.
+      const meta = json as unknown as { extraction_status: string; lifecycle_state: string; dropped_claim_count: number };
+      assert.equal(meta.extraction_status, "ok");
+      assert.equal(meta.lifecycle_state, "extracted");
+      assert.equal(meta.dropped_claim_count, 0);
     } finally {
       await server.close();
     }
@@ -167,6 +174,112 @@ test(
       const empty = await postExtractClaims(server, { ...bearer, body: { answer_text: "" } });
       assert.equal(empty.status, 400);
     } finally {
+      await server.close();
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// REGRESSION (audit bug 2) — the response CONTRACT is the fix.
+//
+// This route used to answer 200 { claims: [] } for a broken extractor and
+// 200 { claims: [] } for an answer with nothing checkable in it — byte-identical
+// responses for two situations that must never be shown to a user the same way.
+// server/src/engineClient.ts reads an empty claim list as the `no_issue` card,
+// so a provider outage or a blown spend cap rendered as "no issue found".
+// ---------------------------------------------------------------------------
+
+test(
+  "POST /v1/extract-claims: an answer with no checkable claims is a 200 SUCCESS with an empty list",
+  { ...skip },
+  async () => {
+    // The case that must keep working: this is a real, reportable finding.
+    const emptyClient: JudgeClient = {
+      async call(input: JudgeCallInput): Promise<JudgeCallResult> {
+        return {
+          status: "ok",
+          record: { model: input.model ?? DEFAULT_JUDGE_MODEL, promptVersion: input.promptVersion, question: input.question, answer: JSON.stringify({ claims: [] }) },
+        };
+      },
+    };
+    const server = await startServer(emptyClient);
+    try {
+      const orgId = await createOrganization(server.pool);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+      const res = await postExtractClaims(server, { bearer: plaintextKey });
+      assert.equal(res.status, 200);
+      const json = (await res.json()) as { extraction_status: string; claims: unknown[] };
+      assert.equal(json.extraction_status, "ok");
+      assert.deepEqual(json.claims, []);
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/extract-claims: a provider failure is 502 and carries NO claims key at all",
+  { ...skip },
+  async () => {
+    const brokenClient: JudgeClient = {
+      async call(): Promise<JudgeCallResult> {
+        throw new Error("provider down");
+      },
+    };
+    const server = await startServer(brokenClient);
+    try {
+      const orgId = await createOrganization(server.pool);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+      const res = await postExtractClaims(server, { bearer: plaintextKey });
+
+      assert.equal(res.status, 502, "a broken extractor is not a successful review");
+      const json = (await res.json()) as Record<string, unknown>;
+      assert.equal(json.extraction_status, "failed");
+      assert.equal(json.reason, "judge_client_threw");
+      assert.equal(json.lifecycle_state, "not_extracted");
+      // The belt-and-braces half: a client that ignores status codes and reads
+      // body.claims gets undefined, not an empty array it could mistake for
+      // "nothing to report".
+      assert.equal("claims" in json, false, "a failure response must not carry a claims key");
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/extract-claims: a denied quota is 429, makes no model call, and carries no claims key",
+  { ...skip },
+  async () => {
+    // REGRESSION (audit bug 5) at the HTTP boundary. Extraction was previously
+    // ungated entirely: any valid API key could drive unlimited DeepSeek calls
+    // past both the per-org monthly limit and the global spend cap.
+    let called = false;
+    const countingClient: JudgeClient = {
+      async call(input: JudgeCallInput): Promise<JudgeCallResult> {
+        called = true;
+        return {
+          status: "ok",
+          record: { model: input.model ?? DEFAULT_JUDGE_MODEL, promptVersion: input.promptVersion, question: input.question, answer: JSON.stringify({ claims: [] }) },
+        };
+      },
+    };
+    const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+    process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+    const server = await startServer(countingClient);
+    try {
+      const orgId = await createOrganization(server.pool);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+      const res = await postExtractClaims(server, { bearer: plaintextKey });
+
+      assert.equal(res.status, 429);
+      const json = (await res.json()) as Record<string, unknown>;
+      assert.equal(json.reason, "quota_denied");
+      assert.equal("claims" in json, false);
+      assert.equal(called, false, "a denied quota must cost zero network traffic");
+    } finally {
+      if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
       await server.close();
     }
   },

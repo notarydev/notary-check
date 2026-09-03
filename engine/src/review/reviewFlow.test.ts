@@ -114,9 +114,24 @@ test(
       assert.equal(result.state, "SUPPORTED");
       assert.equal(result.stateReason, "supporting_applicable_relation");
       assert.equal(result.noSource, false);
-      assert.deepEqual(result.matches, [
-        { evidenceId, relation: "supports", method: "quoted_or_computed" },
-      ]);
+      assert.equal(result.matches.length, 1);
+      assert.equal(result.matches[0].evidenceId, evidenceId);
+      assert.equal(result.matches[0].relation, "supports");
+      assert.equal(result.matches[0].method, "quoted_or_computed");
+      // REGRESSION (audit bug 1): the match must carry a REAL passage
+      // coordinate, not a URL. The first contributing field is entity ("Acme"),
+      // which opens SUPPORT_TEXT, so the span is exactly [0, 4).
+      const locator = result.matches[0].locator;
+      assert.equal(locator.kind, "text_offsets");
+      assert.equal(locator.kind === "text_offsets" && locator.start, 0);
+      assert.equal(locator.kind === "text_offsets" && locator.end, 4);
+      assert.equal(locator.kind === "text_offsets" && locator.quote, "Acme");
+      assert.equal(locator.kind === "text_offsets" && locator.provenance, "fetched");
+      assert.equal(locator.kind === "text_offsets" && locator.canonicalTextHash, sha256(SUPPORT_TEXT));
+      // The pipeline ran to completion, so `state` is readable as a finding.
+      assert.equal(result.lifecycle, "completed");
+      assert.equal(result.lifecycleDetail, null);
+      assert.equal(result.checksCompleted, true);
 
       const claim = (await pool.query("SELECT * FROM claim WHERE id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
       assert.equal(claim.review_id, reviewId);
@@ -128,7 +143,18 @@ test(
 
       const matches = (await pool.query("SELECT * FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
       assert.equal(matches.evidence_id, evidenceId);
-      assert.equal(matches.locator, "https://example.com/report");
+      // The human-readable locator column now names the PASSAGE, not just the
+      // source: "<url>#chars=<start>-<end>". Before the fix it was the bare URL.
+      assert.equal(matches.locator, "https://example.com/report#chars=0-4");
+      // ...and the structured coordinate is persisted alongside it, with proof
+      // it was actually dereferenced against the retained text.
+      assert.equal(matches.locator_resolved, true);
+      assert.ok(matches.locator_resolved_at !== null);
+      const locatorJson = matches.locator_json as { primary: { kind: string; start: number; end: number; quote: string } };
+      assert.equal(locatorJson.primary.kind, "text_offsets");
+      assert.equal(locatorJson.primary.quote, "Acme");
+      assert.equal(SUPPORT_TEXT.slice(locatorJson.primary.start, locatorJson.primary.end), "Acme");
+      assert.equal((claim as { lifecycle_state: string }).lifecycle_state, "completed");
       assert.equal(matches.resolved_text_hash, sha256(SUPPORT_TEXT));
       assert.equal(matches.relation, "supports");
       assert.equal(matches.method, "quoted_or_computed");
@@ -172,12 +198,17 @@ test(
       assert.equal(result.stateReason, "contradicting_applicable_relation");
       assert.equal(result.noSource, false);
       assert.equal(result.matches.length, 1);
-      assert.deepEqual(result.matches[0], { evidenceId, relation: "contradicts", method: "entailed" });
+      assert.equal(result.matches[0].evidenceId, evidenceId);
+      assert.equal(result.matches[0].relation, "contradicts");
+      assert.equal(result.matches[0].method, "entailed");
 
       const matches = (await pool.query("SELECT * FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
       assert.equal(matches.relation, "contradicts");
       assert.equal(matches.method, "entailed");
       assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v2");
+      // A contradiction is a POSITIVE finding about the evidence, so it may
+      // only be persisted with a locator that actually dereferenced.
+      assert.equal(matches.locator_resolved, true);
     } finally {
       await pool.end();
     }
@@ -215,7 +246,15 @@ test(
       assert.equal(result.stateReason, "contradicting_applicable_relation");
       assert.equal(result.rejectedCandidates.length, 0, "the row must not be excluded as inapplicable");
       assert.equal(result.matches.length, 1);
-      assert.deepEqual(result.matches[0], { evidenceId, relation: "contradicts", method: "entailed" });
+      assert.equal(result.matches[0].evidenceId, evidenceId);
+      assert.equal(result.matches[0].relation, "contradicts");
+      assert.equal(result.matches[0].method, "entailed");
+      // The judge derives operator "decrease" from the word "declined", so that
+      // value is by construction NOT a literal in the passage. The row is still
+      // required to produce a real locator — from another contributing field —
+      // before it may contradict; a closed-vocabulary field alone can never
+      // carry a match (see CLOSED_VOCABULARY_FIELDS in reviewFlow.ts).
+      assert.equal(result.matches[0].locator.kind, "text_offsets");
 
       const matches = (await pool.query("SELECT * FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
       assert.equal(matches.relation, "contradicts");
@@ -467,10 +506,18 @@ test("quota exceeded (NOTARY_ORG_MONTHLY_LIMIT_CENTS=0): residual fields resolve
       pool,
     );
 
-    // Source present, but no field could be established → UNSUPPORTED, not a
-    // crash, and never SUPPORTED/CONTRADICTED (which would require the judge).
-    assert.equal(result.state, "UNSUPPORTED");
-    assert.equal(result.stateReason, "no_support_after_completed_checks");
+    // REGRESSION (audit bugs 3 + 5). This test previously asserted UNSUPPORTED
+    // / no_support_after_completed_checks — i.e. "the defined checks completed
+    // and the evidence did not support the claim". That was false: the checks
+    // did NOT complete, they were refused for lack of budget. Reporting a
+    // quota denial as a substantive finding about the evidence is exactly the
+    // UNSUPPORTED/INDETERMINATE conflation the audit found. checksCompleted is
+    // now derived from real completion, so this lands INDETERMINATE.
+    assert.equal(result.state, "INDETERMINATE");
+    assert.equal(result.stateReason, "checks_did_not_complete");
+    assert.equal(result.checksCompleted, false);
+    assert.equal(result.lifecycle, "not_checkable");
+    assert.equal(result.lifecycleDetail, "quota_denied");
     assert.deepEqual(result.matches, []);
     // Zero usage events proves no real judge call reached the network.
     assert.equal(await countUsageEvents(pool, orgId, reviewId), 0);
@@ -507,9 +554,10 @@ test(
       );
 
       assert.equal(result.state, "SUPPORTED");
-      assert.deepEqual(result.matches, [
-        { evidenceId: supportId, relation: "supports", method: "quoted_or_computed" },
-      ]);
+      assert.equal(result.matches.length, 1);
+      assert.equal(result.matches[0].evidenceId, supportId);
+      assert.equal(result.matches[0].relation, "supports");
+      assert.equal(result.matches[0].method, "quoted_or_computed");
 
       assert.equal(result.rejectedCandidates.length, 1, "exactly one rejected candidate (the wrong-entity row)");
       const rejected = result.rejectedCandidates[0];
@@ -534,7 +582,7 @@ test(
 );
 
 test(
-  "all bound rows inapplicable (wrong entity) → matches empty, state UNSUPPORTED, rejectedCandidates has one entry per inapplicable row",
+  "all bound rows inapplicable (wrong entity) under a denied quota → matches empty, state INDETERMINATE, rejectedCandidates has one entry per inapplicable row",
   { ...dbSkip },
   async () => {
     const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
@@ -558,10 +606,16 @@ test(
         pool,
       );
 
-      // No applicable relation anywhere → UNSUPPORTED (existing behavior,
-      // unchanged by this feature).
-      assert.equal(result.state, "UNSUPPORTED");
-      assert.equal(result.stateReason, "no_support_after_completed_checks");
+      // REGRESSION (audit bug 3). This test runs with the quota denied, so the
+      // entity residue was never actually judged — the checks did not complete.
+      // It used to assert UNSUPPORTED, which claimed a completed check had been
+      // run and found nothing; the rejections are real, but the reason no
+      // relation exists is that nothing could be established, not that the
+      // evidence failed to support. A separate test below keeps UNSUPPORTED
+      // genuinely reachable when the judge DOES answer.
+      assert.equal(result.state, "INDETERMINATE");
+      assert.equal(result.stateReason, "checks_did_not_complete");
+      assert.equal(result.lifecycle, "not_checkable");
       assert.deepEqual(result.matches, []);
 
       assert.equal(result.rejectedCandidates.length, 2, "one rejected candidate per inapplicable row");
@@ -615,7 +669,10 @@ test(
         pool,
       );
 
-      assert.equal(result.state, "UNSUPPORTED");
+      // Same quota-denied situation as the test above: the checks could not
+      // complete, so INDETERMINATE rather than UNSUPPORTED. What this test is
+      // actually guarding is unchanged — which rows reach rejectedCandidates.
+      assert.equal(result.state, "INDETERMINATE");
       assert.deepEqual(result.matches, []);
       assert.equal(result.rejectedCandidates.length, 1, "only the resolved-but-inapplicable row belongs in rejectedCandidates");
       assert.equal(result.rejectedCandidates[0].evidenceId, inapplicableId);

@@ -13,7 +13,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractClaims } from "./extractClaims.ts";
+import { extractClaims, type ExtractedClaim } from "./extractClaims.ts";
 
 const HAS_KEY = Boolean(process.env.DEEPSEEK_API_KEY);
 
@@ -23,7 +23,9 @@ test(
   "live (a): the flagship example extracts to one claim with entity Acme, 17%, and a period",
   { skip: !HAS_KEY },
   async () => {
-    const claims = await extractClaims("Acme's revenue grew 17% in FY25.", LIVE_OPTS);
+    const result = await extractClaims("Acme's revenue grew 17% in FY25.", LIVE_OPTS);
+    assert.equal(result.ok, true, `live extraction failed: ${JSON.stringify(result)}`);
+    const claims = (result as { ok: true; claims: ExtractedClaim[] }).claims;
     const acme = claims.find((c) => /acme/i.test(c.claimFields.entity ?? ""));
     assert.ok(acme, `expected a claim naming Acme; extracted ${JSON.stringify(claims.map((c) => c.claimFields))}`);
     const valueUnit = acme.claimFields.valueUnit;
@@ -38,7 +40,10 @@ test(
   "live (b): a message with no checkable claims returns an empty array",
   { skip: !HAS_KEY },
   async () => {
-    const claims = await extractClaims("Hi there! Hope you're doing well. Take care!", LIVE_OPTS);
-    assert.deepEqual(claims, [], "greetings and well-wishes are not checkable claims");
+    const result = await extractClaims("Hi there! Hope you're doing well. Take care!", LIVE_OPTS);
+    // Must be a SUCCESSFUL extraction of zero claims, not a failure that
+    // happens to look empty — the distinction this endpoint now makes.
+    assert.equal(result.ok, true, `live extraction failed: ${JSON.stringify(result)}`);
+    assert.deepEqual((result as { ok: true; claims: ExtractedClaim[] }).claims, [], "greetings and well-wishes are not checkable claims");
   },
 );

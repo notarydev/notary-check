@@ -64,6 +64,29 @@ async function stripeCustomerIdOf(pool: pg.Pool, orgId: string): Promise<string 
   return (row.rows[0]?.stripe_customer_id as string | null) ?? null;
 }
 
+async function postCancel(
+  server: TestServer,
+  opts: { bearer?: string; organizationId?: string },
+): Promise<Response> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (opts.bearer !== undefined) headers.authorization = `Bearer ${opts.bearer}`;
+  const body: Record<string, unknown> = {};
+  if (opts.organizationId !== undefined) body.organization_id = opts.organizationId;
+  return fetch(`${server.baseUrl}/v1/billing/cancel`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
+async function orgBillingState(
+  pool: pg.Pool,
+  orgId: string,
+): Promise<{ plan: string; entitlementStatus: string }> {
+  const row = await pool.query("SELECT plan, entitlement_status FROM organization WHERE id = $1", [orgId]);
+  return { plan: row.rows[0].plan, entitlementStatus: row.rows[0].entitlement_status };
+}
+
 test(
   "POST /v1/billing/checkout: creates a Stripe customer, persists its id, and returns a checkout URL",
   { ...dbSkip },
@@ -217,6 +240,94 @@ test(
       const res = await postCheckout(server, { bearer: plaintextKey, tier: "pro" });
       assert.equal(res.status, 400);
       assert.equal(server.stripe.customerCreateCalls, 0);
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/cancel: cancels the Stripe subscription and downgrades plan + entitlement synchronously",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+      await server.pool.query(
+        "UPDATE organization SET plan = 'pro', stripe_subscription_id = 'sub_active_1', entitlement_status = 'active' WHERE id = $1",
+        [orgId],
+      );
+
+      const res = await postCancel(server, { bearer: plaintextKey, organizationId: orgId });
+      assert.equal(res.status, 200);
+      const json = (await res.json()) as { canceled: boolean };
+      assert.equal(json.canceled, true);
+
+      assert.equal(server.stripe.subscriptionCancelCalls, 1);
+      assert.equal(server.stripe.subscriptionsCanceled[0], "sub_active_1");
+
+      const state = await orgBillingState(server.pool, orgId);
+      assert.equal(state.plan, "starter", "canceling downgrades the org to the free tier");
+      assert.equal(state.entitlementStatus, "canceled");
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/cancel: an org with no Stripe subscription is a 400, no Stripe call",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+
+      const res = await postCancel(server, { bearer: plaintextKey, organizationId: orgId });
+      assert.equal(res.status, 400);
+      assert.equal(server.stripe.subscriptionCancelCalls, 0);
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/cancel: missing auth is rejected with 401, no Stripe call",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+
+      const res = await postCancel(server, { organizationId: orgId });
+      assert.equal(res.status, 401);
+      assert.equal(server.stripe.subscriptionCancelCalls, 0);
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/cancel: a body organization_id that is not the authenticated org is rejected (403), no Stripe call",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgA = await createOrganization(server.pool);
+      const orgB = await createOrganization(server.pool);
+      const { plaintextKey } = await issueApiKey(orgA, server.pool);
+      await server.pool.query(
+        "UPDATE organization SET stripe_subscription_id = 'sub_b_1' WHERE id = $1",
+        [orgB],
+      );
+
+      const res = await postCancel(server, { bearer: plaintextKey, organizationId: orgB });
+      assert.equal(res.status, 403);
+      assert.equal(server.stripe.subscriptionCancelCalls, 0, "no Stripe call on a cross-org attempt");
     } finally {
       await server.close();
     }

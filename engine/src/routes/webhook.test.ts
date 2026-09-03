@@ -81,9 +81,67 @@ async function postWebhook(
   });
 }
 
-async function orgState(pool: pg.Pool, orgId: string): Promise<{ plan: string; subscriptionId: string | null }> {
-  const row = await pool.query("SELECT plan, stripe_subscription_id FROM organization WHERE id = $1", [orgId]);
-  return { plan: row.rows[0].plan, subscriptionId: row.rows[0].stripe_subscription_id };
+async function orgState(
+  pool: pg.Pool,
+  orgId: string,
+): Promise<{ plan: string; subscriptionId: string | null; entitlementStatus: string }> {
+  const row = await pool.query(
+    "SELECT plan, stripe_subscription_id, entitlement_status FROM organization WHERE id = $1",
+    [orgId],
+  );
+  return {
+    plan: row.rows[0].plan,
+    subscriptionId: row.rows[0].stripe_subscription_id,
+    entitlementStatus: row.rows[0].entitlement_status,
+  };
+}
+
+function invoicePaymentFailedEvent(customerId: string): string {
+  return JSON.stringify({
+    id: "evt_test_invoice_payment_failed",
+    object: "event",
+    type: "invoice.payment_failed",
+    data: {
+      object: {
+        id: "in_test_1",
+        object: "invoice",
+        customer: customerId,
+      },
+    },
+  });
+}
+
+function chargeRefundedEvent(customerId: string): string {
+  return JSON.stringify({
+    id: "evt_test_charge_refunded",
+    object: "event",
+    type: "charge.refunded",
+    data: {
+      object: {
+        id: "ch_test_1",
+        object: "charge",
+        customer: customerId,
+        amount_refunded: 4_900,
+      },
+    },
+  });
+}
+
+function subscriptionUpdatedEvent(customerId: string, subscriptionId: string, tier: string, status: string): string {
+  return JSON.stringify({
+    id: "evt_test_sub_updated",
+    object: "event",
+    type: "customer.subscription.updated",
+    data: {
+      object: {
+        id: subscriptionId,
+        object: "subscription",
+        customer: customerId,
+        status,
+        metadata: { tier },
+      },
+    },
+  });
 }
 
 function completedSessionEvent(customerId: string, subscriptionId: string, tier: string): string {
@@ -126,6 +184,7 @@ test(
       const state = await orgState(server.pool, orgId);
       assert.equal(state.plan, "pro", "plan upgraded from the checkout.session.completed metadata");
       assert.equal(state.subscriptionId, "sub_test_1");
+      assert.equal(state.entitlementStatus, "active", "successful payment activates entitlement");
     } finally {
       delete process.env.STRIPE_WEBHOOK_SECRET;
       await server.close();
@@ -224,6 +283,131 @@ test(
       const state = await orgState(server.pool, orgId);
       assert.equal(state.plan, "starter", "a canceled subscription downgrades to the free tier");
       assert.equal(state.subscriptionId, "sub_old");
+      assert.equal(state.entitlementStatus, "canceled", "a deleted subscription cancels entitlement");
+    } finally {
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/webhook: invoice.payment_failed sets entitlement to past_due without touching plan",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+      const orgId = await createOrganization(server.pool);
+      const customerId = uniqueCustomerId();
+      await server.pool.query(
+        "UPDATE organization SET stripe_customer_id = $1, plan = 'pro', entitlement_status = 'active' WHERE id = $2",
+        [customerId, orgId],
+      );
+
+      const payload = invoicePaymentFailedEvent(customerId);
+      const res = await postWebhook(server, { payload });
+      assert.equal(res.status, 200);
+      const state = await orgState(server.pool, orgId);
+      assert.equal(state.plan, "pro", "plan is left alone on a payment failure");
+      assert.equal(state.entitlementStatus, "past_due");
+    } finally {
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/webhook: customer.subscription.updated with status=past_due sets entitlement to past_due",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+      const orgId = await createOrganization(server.pool);
+      const customerId = uniqueCustomerId();
+      await server.pool.query(
+        "UPDATE organization SET stripe_customer_id = $1, plan = 'starter', entitlement_status = 'active' WHERE id = $2",
+        [customerId, orgId],
+      );
+
+      const payload = subscriptionUpdatedEvent(customerId, "sub_pd_1", "pro", "past_due");
+      const res = await postWebhook(server, { payload });
+      assert.equal(res.status, 200);
+      const state = await orgState(server.pool, orgId);
+      assert.equal(state.plan, "pro", "plan still follows subscription metadata");
+      assert.equal(state.entitlementStatus, "past_due");
+    } finally {
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/webhook: customer.subscription.updated with status=active re-activates entitlement",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+      const orgId = await createOrganization(server.pool);
+      const customerId = uniqueCustomerId();
+      await server.pool.query(
+        "UPDATE organization SET stripe_customer_id = $1, plan = 'pro', entitlement_status = 'past_due' WHERE id = $2",
+        [customerId, orgId],
+      );
+
+      const payload = subscriptionUpdatedEvent(customerId, "sub_recovered_1", "pro", "active");
+      const res = await postWebhook(server, { payload });
+      assert.equal(res.status, 200);
+      const state = await orgState(server.pool, orgId);
+      assert.equal(state.entitlementStatus, "active", "a recovered subscription re-activates entitlement");
+    } finally {
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/webhook: charge.refunded is accepted and does not change plan or entitlement",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+      const orgId = await createOrganization(server.pool);
+      const customerId = uniqueCustomerId();
+      await server.pool.query(
+        "UPDATE organization SET stripe_customer_id = $1, plan = 'pro', entitlement_status = 'active' WHERE id = $2",
+        [customerId, orgId],
+      );
+
+      const payload = chargeRefundedEvent(customerId);
+      const res = await postWebhook(server, { payload });
+      assert.equal(res.status, 200);
+      const state = await orgState(server.pool, orgId);
+      assert.equal(state.plan, "pro", "a refund alone does not change plan");
+      assert.equal(state.entitlementStatus, "active", "a refund alone does not change entitlement");
+    } finally {
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+      await server.close();
+    }
+  },
+);
+
+test(
+  "POST /v1/billing/webhook: an unlinked customer (no matching organization) is still a 200, no throw",
+  { ...dbSkip },
+  async () => {
+    const server = await startServer();
+    try {
+      process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+      const payload = invoicePaymentFailedEvent("cus_does_not_exist_anywhere");
+      const res = await postWebhook(server, { payload });
+      assert.equal(res.status, 200, "an event that matches no organization is acknowledged, not retried");
     } finally {
       delete process.env.STRIPE_WEBHOOK_SECRET;
       await server.close();

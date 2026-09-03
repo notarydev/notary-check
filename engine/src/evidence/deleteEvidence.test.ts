@@ -44,7 +44,17 @@ test(
         assert.equal(row.rows[0].review_id, reviewId);
         assert.equal(row.rows[0].origin, "answer_citation");
         assert.equal(row.rows[0].submitted_url, "https://example.com/report.pdf");
-        assert.equal(row.rows[0].retrieval_status, "retrieved");
+        // REGRESSION (audit bug 4). This assertion used to require
+        // retrieval_status to stay 'retrieved' after revocation — which is the
+        // bug written down as an expectation: every read path keys off
+        // retrieval_status, so a revoked row that still reads 'retrieved' is a
+        // revoked row that every consumer treats as live content. Revocation is
+        // now a first-class retrieval_status.
+        assert.equal(row.rows[0].retrieval_status, "revoked");
+        // And the readable payload itself is gone, not just the two columns the
+        // original implementation happened to know about.
+        assert.equal(row.rows[0].resolved_text, null);
+        assert.equal(row.rows[0].canonical_text_hash, null);
       }
     } finally {
       await pool.end();

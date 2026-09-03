@@ -12,8 +12,21 @@ import { usageRouter } from "./routes/usage.js";
 import { organizationRouter } from "./routes/organization.js";
 import { apiKeysRouter } from "./routes/apiKeys.js";
 import { waitlistRouter } from "./routes/waitlist.js";
+import { rateLimit } from "./middleware/rateLimit.js";
 
 const app = express();
+
+// Global per-IP rate limit, applied before any route-specific handling. This
+// is operational-minimum abuse resistance for the paid private alpha
+// (5-10 real customers): the goal is to stop a runaway client or scripted
+// abuse, not to throttle normal usage. 300 requests/minute/IP is generous
+// enough that no legitimate integration at this customer count should ever
+// hit it (even a customer polling a few endpoints on a tight loop), while
+// still bounding worst-case load from a single misbehaving source. Routes
+// that need a tighter, more specific limit (e.g. the public, unauthenticated
+// POST /v1/waitlist) layer their own rateLimit() on top of this — see
+// routes/waitlist.ts.
+app.use(rateLimit({ windowMs: 60_000, max: 300 }));
 
 // Webhook signature verification needs the RAW request bytes: Stripe signs the
 // exact byte payload, so constructEvent must see the unmodified body. Mount
