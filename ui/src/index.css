@@ -2,84 +2,105 @@
    no green badge, no dashboard. Locked product rule, not a Phase 0
    simplification (§ Phase 0 build guide, § 0.8).
 
-   Pill/icon redesign locked 2026-09-03 — see docs/guide/proposals/
-   system-definition-synthesis.md Part 11 "UI interaction model". Track 1 is
-   an icon (size/weight only, no color-coded severity — Notary has none).
-   Track 2/Challenge stays visible text at rest, in pill form. Both use the
-   system font stack below, matched to the host's own chrome deliberately —
-   no separate display/serif/mono family, so this never reads as a
-   third-party product bolted onto Claude's UI. */
+   Quiet/disclaimer redesign locked 2026-09-03 — modeled on Claude's own
+   "Claude is AI and can make mistakes" footer treatment: no box, no
+   border, no background box, small muted text at rest. See docs/guide/
+   proposals/system-definition-synthesis.md Part 11 "UI interaction
+   model" for the interaction mechanics this preserves (icon vs. pill,
+   click-reveal-then-click-commit) — this pass changes the visual
+   chrome only, not the underlying interaction contract.
+
+   Real host theming, not a guess: App.tsx wires useHostStyles(app, ...),
+   which applies the host's actual CSS variables (--color-background-primary,
+   --color-text-secondary, etc.) and light/dark theme to the document root.
+   Every color below reads those variables first, with a light-dark() pair
+   as the fallback for when a host var isn't present — never a single
+   hardcoded hex, which is what made the card render as a stark white box
+   on Claude's dark theme (a reported bug: an iframe's rendering canvas
+   defaults to a white/opaque backdrop with nothing behind it to show
+   through, so "just don't set a background" doesn't blend — it has to be
+   set explicitly to the host's own color). */
 
 html,
 body {
   margin: 0;
-  /* Explicit background + color-scheme: the view has no guaranteed host
-     background (confirmed by testing — on a dark host page, the card's
-     dark text on an inherited transparent/dark background was nearly
-     unreadable). Phase 0 fixes light-only; host theme adaptation via
-     ext-apps' useHostStyleVariables is real work, deferred past Phase 0. */
-  background: #ffffff;
-  color-scheme: light;
+  /* Shrink-wrapped to content, not the width the host iframe offers: the
+     host resizes the iframe to whatever body's own box measures, so an
+     unconstrained block-level body stretches to fill that offered width —
+     painting a big blank rectangle to the right of the actual content (a
+     real, reported layout bug, not a design choice). width: fit-content
+     makes body — and the auto-resize that reads it — match the content's
+     own footprint instead. */
+  width: fit-content;
+  background: var(--color-background-primary, light-dark(#ffffff, #1f1f1e));
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  color: #1a1a1a;
+    var(--font-sans),
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Helvetica,
+    Arial,
+    sans-serif;
+  color: var(--color-text-primary, light-dark(#1a1a1a, #e8e8e6));
 }
 
 .notary-card {
-  border: 1px solid #d8d8d8;
-  border-radius: 8px;
-  padding: 12px 14px;
-  font-size: 14px;
-  line-height: 1.45;
-  max-width: 480px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
+  max-width: 420px;
 }
 
-.notary-card.notary-quiet {
-  border-color: #e6e6e6;
-  color: #666;
-  padding: 8px 12px;
+.notary-quiet {
+  color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
 }
 
-.notary-claim-row {
+/* The at-rest state: one line, icon + short summary + Details + Dismiss —
+   no box, no border, no background, sized and colored like Claude's own
+   disclaimer copy so it reads as part of the host's chrome, not a
+   third-party widget bolted on underneath the answer. */
+.notary-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
-.notary-claim {
-  font-style: italic;
-  color: #333;
-}
-
-/* The Track 1 icon. Deliberately tiny and neutral — one consistent
-   treatment always, never color-coded by severity. A plain outlined
-   circle, not a filled/colored flag, so it reads as "something to look at"
-   rather than "alert." */
-.notary-flag {
+.notary-flag-icon {
   flex-shrink: 0;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
+  color: var(--color-text-tertiary, light-dark(#999996, #8a8a86));
+}
+
+.notary-summary {
+  color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
+}
+
+.notary-link {
+  background: none;
   border: none;
-  background: transparent;
-  color: #888;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--color-text-tertiary, light-dark(#999996, #8a8a86));
+  text-decoration: underline;
   cursor: pointer;
-  border-radius: 50%;
 }
 
-.notary-flag:hover,
-.notary-flag[aria-expanded="true"] {
-  color: #333;
-  background: #f2f2f2;
+.notary-link:hover {
+  color: var(--color-text-primary, light-dark(#333331, #e8e8e6));
 }
 
-.notary-finding-detail {
-  border-top: 1px solid #eee;
-  padding-top: 8px;
-  margin-top: 8px;
+.notary-sep {
+  color: var(--color-border-secondary, light-dark(#ccc, #555));
+}
+
+/* Everything revealed by "Details" lives here, indented under the header
+   line's text (past the icon) so it reads as a continuation of the same
+   quiet note, not a new, separate block. */
+.notary-detail {
+  margin-top: 6px;
+  padding-left: 18px;
 }
 
 .notary-finding {
@@ -91,41 +112,20 @@ body {
 }
 
 .notary-finding-label {
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-text-primary, light-dark(#444, #d0d0cc));
 }
 
 .notary-finding-text {
-  color: #444;
+  color: var(--color-text-secondary, light-dark(#555, #c0c0bc));
 }
 
 .notary-finding-why {
-  color: #777;
+  color: var(--color-text-tertiary, light-dark(#999, #8a8a86));
   font-size: 13px;
-}
-
-.notary-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 10px 0 8px;
-}
-
-/* Dismiss is the only plain button remaining — everything else is a pill
-   (see .notary-pill below) because everything else either talks to Claude
-   or, previously, duplicated what the flag icon's own expand already does. */
-.notary-dismiss {
-  border: 1px solid #ccc;
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 13px;
-  cursor: pointer;
-  color: #555;
 }
 
 .notary-evidence {
-  border-top: 1px solid #eee;
-  padding-top: 8px;
   margin-top: 8px;
 }
 
@@ -135,47 +135,41 @@ body {
 }
 
 .notary-evidence-item a {
-  color: #2a5db0;
+  color: var(--color-text-info, light-dark(#3a6ea5, #7fb0e8));
 }
 
 .notary-evidence-excerpt {
-  color: #555;
+  color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
   font-style: italic;
   margin-top: 2px;
 }
 
-.notary-action-note {
-  color: #a33;
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-
 .notary-scope {
-  color: #888;
-  font-size: 12px;
+  color: var(--color-text-tertiary, light-dark(#999, #8a8a86));
+  margin-top: 2px;
 }
 
 .notary-note {
   margin-top: 8px;
-  font-size: 12px;
-  color: #999;
+  font-size: 12.5px;
+  color: var(--color-text-tertiary, light-dark(#aaa, #7a7a76));
 }
 
 .notary-evidence-relation {
-  font-weight: 600;
-  font-size: 12px;
-  color: #333;
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
 }
 
 .notary-evidence-unresolved {
-  color: #a33;
+  color: var(--color-text-warning, light-dark(#a37b5a, #d4a373));
   font-size: 13px;
   font-style: italic;
 }
 
 .notary-evidence-meta {
-  color: #888;
-  font-size: 11px;
+  color: var(--color-text-tertiary, light-dark(#aaa, #7a7a76));
+  font-size: 12px;
   margin-top: 2px;
 }
 
@@ -184,13 +178,13 @@ body {
 }
 
 .notary-evidence-submitted {
-  border-top: 1px dashed #e6e6e6;
+  border-top: 1px dashed var(--color-border-secondary, light-dark(#eee, #444));
   padding-top: 6px;
   margin-top: 8px;
 }
 
 .notary-evidence-submitted-label {
-  color: #999;
+  color: var(--color-text-tertiary, light-dark(#bbb, #7a7a76));
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -202,54 +196,57 @@ body {
    never first in the card. See docs/build/tier-1-build-and-operating-plan.md's
    "Track 2 / Challenge layer" section. */
 .notary-challenges {
-  border-top: 1px solid #eee;
-  padding-top: 8px;
   margin-top: 10px;
 }
 
 .notary-challenges-header {
-  color: #888;
+  color: var(--color-text-tertiary, light-dark(#999, #8a8a86));
   font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 6px;
+  font-weight: 500;
+  margin-bottom: 5px;
 }
 
+/* Column, not row-wrap: a hover-revealed pill's preview text made the row
+   too wide for the card, so flex-wrap moved a sibling pill onto a new
+   line — a real reported bug (the reflow could shift a sibling under the
+   cursor, un-hovering/re-hovering it in a visible flicker). Stacking
+   vertically means one pill's growth only ever pushes pills below it
+   further down, never sideways into a neighbor. */
 .notary-challenges-pills {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
   align-items: flex-start;
+  gap: 5px;
 }
 
 .notary-challenge-static {
-  font-size: 12.5px;
-  color: #999;
-  padding: 3px 2px;
+  font-size: 13px;
+  color: var(--color-text-tertiary, light-dark(#aaa, #7a7a76));
 }
 
 /* Advance (Track 2 v2) — its own section, visually distinct from Track 2/
    Challenge above it: this is a proposed NEXT MOVE about the user's broader
    task, not a question about the finding on this card. Same subordinate
-   treatment (below the evidence record, muted, no severity styling), its own
-   border-top so the two registers never visually blend into one list. */
+   treatment, its own top margin so the two registers never visually blend
+   into one list. */
 .notary-advance {
-  border-top: 1px solid #eee;
-  padding-top: 8px;
   margin-top: 10px;
 }
 
 .notary-advance-pills {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
   align-items: flex-start;
+  gap: 5px;
 }
 
 /* One pill = one interaction, on every device, without detecting touch vs.
    mouse: first interaction reveals the full text (hover on desktop is a
    free shortcut to the same reveal; click works identically everywhere),
-   second interaction — a real click — commits it. Rounded-full, no border,
-   subtle fill — closer to a chat "suggestion chip" than a bordered button. */
+   second interaction — a real click — commits it. Styled as an underlined
+   text link, not a filled chip — the quiet redesign's whole point is that
+   nothing here reads as a bordered "button" until the user is already
+   looking at expanded detail. */
 .notary-pill {
   position: relative;
   display: inline-block;
@@ -257,18 +254,17 @@ body {
 
 .notary-pill-button {
   border: none;
-  background: #f0f0f0;
-  color: #444;
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 12.5px;
-  line-height: 1.3;
+  background: none;
+  color: var(--color-text-tertiary, light-dark(#999, #8a8a86));
+  text-decoration: underline;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.4;
   cursor: pointer;
-  transition: background-color 0.12s ease;
 }
 
 .notary-pill-button:hover {
-  background: #e4e4e4;
+  color: var(--color-text-primary, light-dark(#333331, #e8e8e6));
 }
 
 .notary-pill-button:disabled {
@@ -277,27 +273,29 @@ body {
 }
 
 .notary-pill-revealed .notary-pill-button {
-  background: #e0e0e0;
-  color: #1a1a1a;
+  color: var(--color-text-primary, light-dark(#333331, #e8e8e6));
 }
 
 /* Standalone pill (e.g. "open_evidence" Challenge items) — same shape,
    single interaction, since it never talks to the host at all. */
 .notary-pill-standalone {
-  background: #f0f0f0;
+  text-decoration: underline;
 }
 
 .notary-pill-preview {
-  margin-top: 4px;
-  font-size: 12.5px;
-  color: #555;
-  max-width: 320px;
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
+  /* Card content area is narrower now — this used to be wider than the
+     card itself, which is what forced a sibling pill onto a new (flex-
+     wrap) row in the first place. */
+  max-width: 280px;
   line-height: 1.4;
 }
 
 .notary-pill-preview-hint {
   margin-top: 2px;
-  font-size: 11px;
-  color: #999;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary, light-dark(#bbb, #7a7a76));
   font-style: italic;
 }

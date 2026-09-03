@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useApp } from "@modelcontextprotocol/ext-apps/react";
+import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react";
 
 // Mirrors engine/src/evidence/locators.ts's Locator union as it arrives over
 // the wire from server/src/engineClient.ts's CardLocator (see that file's
@@ -253,6 +253,15 @@ export default function App() {
     },
   });
 
+  // Real host theming, not a guess: applies the host's actual CSS variables
+  // (--color-background-primary, --color-text-secondary, etc.) and light/dark
+  // theme to the document root, reactively, whenever the host context changes.
+  // Reported bug this fixes: a hardcoded white card background read as a
+  // jarring, unstyled rectangle on Claude's dark theme. index.css now reads
+  // these variables (with light-mode-safe fallbacks) instead of hardcoding
+  // colors that only worked against a light host.
+  useHostStyles(app, app?.getHostContext());
+
   if (typeof window !== "undefined") {
     // Local dev only: read a `?mock=` query param so the card can be tested
     // standalone without a live Claude session (§ 0.9's isolated browser test).
@@ -319,13 +328,13 @@ export default function App() {
   }
 
   if (data.status === "no_issue") {
-    return <div className="notary-card notary-quiet">No issue found.</div>;
+    return <div className="notary-card notary-quiet">Notary: no issue found.</div>;
   }
 
   if (data.status === "could_not_check") {
     return (
       <div className="notary-card notary-quiet">
-        Could not verify this against the supplied evidence.
+        Notary: could not verify this against the supplied evidence.
       </div>
     );
   }
@@ -351,30 +360,35 @@ export default function App() {
 
   return (
     <div className="notary-card">
-      <div className="notary-claim-row">
-        {data.claim && <div className="notary-claim">{data.claim}</div>}
-        {/* Track 1 — a small icon, not a text pill, deliberately: it's
-            pointing at content that already exists (the claim above), so it
-            announces minimally. Hover shows the reason; a single click
-            expands the finding AND its evidence together, in one step — no
-            separate "Open evidence" button (superseded, see Part 11). Size/
-            weight only, modeled on an inline editor problem marker — no
-            color-coded severity, Notary has none. */}
+      {/* At rest: one quiet line — icon, a short summary, and two links —
+          no box, no border, no background. Modeled directly on Claude's
+          own "Claude is AI and can make mistakes" footer treatment rather
+          than reading as a separate widget bolted under the answer. The
+          icon + summary together do what the old separate claim-row/flag/
+          Dismiss-button trio did, just inline. */}
+      <div className="notary-header">
+        <span className="notary-flag-icon" aria-hidden="true">
+          <svg viewBox="0 0 10 10" width="10" height="10">
+            <circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          </svg>
+        </span>
+        <span className="notary-summary">Notary: {findingSummary}</span>
         <button
           type="button"
-          className="notary-flag"
-          title={findingSummary}
-          aria-label={findingSummary}
+          className="notary-link"
           aria-expanded={findingOpen}
           onClick={() => setFindingOpen((v) => !v)}
         >
-          <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-            <circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" strokeWidth="1.3" />
-          </svg>
+          {findingOpen ? "Hide details" : "Details"}
+        </button>
+        <span className="notary-sep">·</span>
+        <button type="button" className="notary-link" onClick={() => setDismissed(true)}>
+          Dismiss
         </button>
       </div>
       {findingOpen && (
-        <div className="notary-finding-detail">
+        <div className="notary-detail">
+          {data.claim && <div className="notary-finding-text">{data.claim}</div>}
           {findings.map((f, i) => (
             <div className="notary-finding" key={i}>
               <div className="notary-finding-label">{f.label}</div>
@@ -413,106 +427,90 @@ export default function App() {
               </div>
             )}
           </div>
-        </div>
-      )}
-      {/* Dismiss stays as the one purely local action — no host round trip,
-          no ask-Claude semantics. Everything else that used to be a
-          Track-1-owned button (Qualify, Replace, Recheck) is either folded
-          into the Advance pill mechanism below or dropped: "Recheck" is
-          gone because the normal flow already re-invokes the tool for free
-          when Claude's next answer makes another checkable claim — likely,
-          not code-guaranteed, an accepted trade (§ Part 11). */}
-      <div className="notary-actions">
-        <button
-          type="button"
-          className="notary-dismiss"
-          onClick={() => setDismissed(true)}
-        >
-          Dismiss
-        </button>
-      </div>
-      {actionNote && <div className="notary-action-note">{actionNote}</div>}
-      <div className="notary-scope">{data.scope}</div>
-      {isTwoBlock && (
-        <div className="notary-note">
-          Two-block card — only render this shape when a rejected candidate AND
-          separate applicable contradicting evidence both exist. See § Product
-          contract in this document before reusing this layout elsewhere.
-        </div>
-      )}
-      {/* "What to pressure-test" — Track 2/Challenge, visually subordinate,
-          always below the evidence record above, never a verdict/score/
-          competing claim. Renders nothing when the engine hasn't produced
-          any. Pills, not buttons: click once reveals the full text (or
-          hover, on desktop), click again actually sends it. */}
-      {challenges.length > 0 && (
-        <div className="notary-challenges">
-          <div className="notary-challenges-header">What to pressure-test</div>
-          <div className="notary-challenges-pills">
-            {challenges.map((c, i) => {
-              if (c.action === "open_evidence") {
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    className="notary-pill-button notary-pill-standalone"
-                    onClick={() => setFindingOpen(true)}
-                  >
-                    {c.prompt}
-                  </button>
-                );
-              }
-              if (c.action === "leave_unchanged") {
-                return (
-                  <span key={i} className="notary-challenge-static">
-                    {c.prompt}
-                  </span>
-                );
-              }
-              const label = challengeActionLabel(c);
-              const busyKey = `challenge:${i}`;
-              return (
-                <ActionPill
-                  key={i}
-                  label={label}
-                  fullText={`${label}: ${c.prompt}`}
-                  busy={busy === busyKey}
-                  onCommit={() => sendToHost(busyKey, `${label}: ${c.prompt}`)}
-                />
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {/* Advance (Track 2 v2) — structurally SEPARATE from the "What to
-          pressure-test" register above: a different system, a different
-          authority level (a next-move suggestion about the user's broader
-          task, not a question about this claim's finding). Reuses the exact
-          same pill/sendToHost mechanism already built and tested against the
-          real host above — not a new interaction pattern, just real data
-          flowing through it for the first time. `short_label` is the text
-          at rest (Advance, unlike Track 1, has to say what it's proposing
-          before the user engages with it — see the module comment on
-          ChallengeItem above); `prompt` is the full, already-validated ask,
-          revealed on first interaction (or hover) and sent verbatim on the
-          second. Renders nothing when the engine produced zero suggestions —
-          a correct, expected result, never a broken state. */}
-      {advanceSuggestions.length > 0 && (
-        <div className="notary-advance">
-          <div className="notary-advance-pills">
-            {advanceSuggestions.map((s) => {
-              const busyKey = `advance:${s.id}`;
-              return (
-                <ActionPill
-                  key={s.id}
-                  label={s.short_label}
-                  fullText={s.prompt}
-                  busy={busy === busyKey}
-                  onCommit={() => sendToHost(busyKey, s.prompt)}
-                />
-              );
-            })}
-          </div>
+          {actionNote && <div className="notary-action-note">{actionNote}</div>}
+          <div className="notary-scope">{data.scope}</div>
+          {isTwoBlock && (
+            <div className="notary-note">
+              Two-block card — only render this shape when a rejected candidate AND
+              separate applicable contradicting evidence both exist. See § Product
+              contract in this document before reusing this layout elsewhere.
+            </div>
+          )}
+          {/* "What to pressure-test" — Track 2/Challenge, visually subordinate,
+              always below the evidence record above, never a verdict/score/
+              competing claim. Renders nothing when the engine hasn't produced
+              any. Pills, not buttons: click once reveals the full text (or
+              hover, on desktop), click again actually sends it. */}
+          {challenges.length > 0 && (
+            <div className="notary-challenges">
+              <div className="notary-challenges-header">What to pressure-test</div>
+              <div className="notary-challenges-pills">
+                {challenges.map((c, i) => {
+                  if (c.action === "open_evidence") {
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        className="notary-pill-button notary-pill-standalone"
+                        onClick={() => setFindingOpen(true)}
+                      >
+                        {c.prompt}
+                      </button>
+                    );
+                  }
+                  if (c.action === "leave_unchanged") {
+                    return (
+                      <span key={i} className="notary-challenge-static">
+                        {c.prompt}
+                      </span>
+                    );
+                  }
+                  const label = challengeActionLabel(c);
+                  const busyKey = `challenge:${i}`;
+                  return (
+                    <ActionPill
+                      key={i}
+                      label={label}
+                      fullText={`${label}: ${c.prompt}`}
+                      busy={busy === busyKey}
+                      onCommit={() => sendToHost(busyKey, `${label}: ${c.prompt}`)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {/* Advance (Track 2 v2) — structurally SEPARATE from the "What to
+              pressure-test" register above: a different system, a different
+              authority level (a next-move suggestion about the user's broader
+              task, not a question about this claim's finding). Reuses the exact
+              same pill/sendToHost mechanism already built and tested against the
+              real host above — not a new interaction pattern, just real data
+              flowing through it for the first time. `short_label` is the text
+              at rest (Advance, unlike Track 1, has to say what it's proposing
+              before the user engages with it — see the module comment on
+              ChallengeItem above); `prompt` is the full, already-validated ask,
+              revealed on first interaction (or hover) and sent verbatim on the
+              second. Renders nothing when the engine produced zero suggestions —
+              a correct, expected result, never a broken state. */}
+          {advanceSuggestions.length > 0 && (
+            <div className="notary-advance">
+              <div className="notary-advance-pills">
+                {advanceSuggestions.map((s) => {
+                  const busyKey = `advance:${s.id}`;
+                  return (
+                    <ActionPill
+                      key={s.id}
+                      label={s.short_label}
+                      fullText={s.prompt}
+                      busy={busy === busyKey}
+                      onCommit={() => sendToHost(busyKey, s.prompt)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
