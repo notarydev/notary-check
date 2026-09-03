@@ -332,6 +332,66 @@ Track 2/Challenge stays a **future feature, not canonical product scope today**,
 
 ---
 
+## PART 11 — Proposal, 2026-09-02: "Advance" — a distinct, larger successor to Track 2, not a build target yet
+
+**Status: proposal only, gated behind an offline evaluation that has not run.** Track 2 v1 (Part 6, Part 10; built, tested, shipped dark; spec unchanged at `docs/build/tier-1-build-and-operating-plan.md` § Track 2 / Challenge layer) is unaffected by this section and remains the alpha build target. This section exists because the same-day design conversation that produced it materially changes what "Track 2" could become, and that has to be on the record before it's mistaken for an extension of v1 rather than a different feature.
+
+### Why this is a different feature, not v1.1
+
+Track 2 v1 works per-claim, after Track 1 resolves that claim, producing up to 2 typed questions (`challenge_type`/`action`/`prompt`/`why_it_matters`) subordinate to the evidence record on the same card. Advance works per-invocation, starting concurrently with Track 1 (not after it), producing one of four next-move recommendations (`clarify`/`test`/`compare`/`repair`) about the user's broader task — not about a specific claim — with an editable, renderable Claude action attached. The unit of work changes (claim → invocation), the timing changes (sequential → concurrent), and the output contract changes entirely. It is not reachable by extending v1's schema; it is a separate system that happens to share the "Track 2" name and the same non-authority discipline.
+
+### The information problem — resolved, and it's the crux of whether Advance can work at all
+
+The naive version of Advance gives the model roughly the same context Claude already had and asks it the same question ("what should happen next") — at which point Claude could just do that itself, and Advance adds nothing. The resolution: don't try to give Advance *more* information than Claude. Give it a *different, independently-sourced* input Claude cannot generate for itself.
+
+- **Shared context** (both Claude and Advance may legitimately see): the user's request, explicitly-supplied constraints, prior attempts, Claude's current answer, user-supplied artifacts.
+- **Independent signal** (only Notary can add, and only Track 1 can produce it): a sealed, already-resolved Track 1 finding — an evidence boundary Claude cannot manufacture unless someone (Notary's deterministic pipeline) independently established it.
+
+That split is the actual product story: *Claude does the work. Track 1 tells you what the evidence establishes. Advance helps you decide what to do next.*
+
+### Two cases, evaluated on different grounds
+
+**Case 2 — a sealed Track 1 finding exists.** Clear, defensible differentiation: Advance is turning something Claude structurally cannot self-report (an independently-verified boundary) into a revised next step. High confidence this is real value, contingent only on execution quality.
+
+**Case 1 — no Track 1 finding yet (the common case; most invocations won't have a material boundary to surface).** Advance here works from a *summary* of task state that Claude itself writes into the tool call — MCP tools only see what's included in that call's arguments, not the full conversation, and a third-party connector has no way to inject a standing instruction into how Claude behaves generally across host apps. That's an actual constraint, not a design choice: **the tool-call response is the only channel a connector has**, so a dedicated, validated, reliably-formatted next-move card delivered through the card is the real implementation path, not a redundant one next to "just tell Claude to do it."
+
+Given that constraint, Case 1's justification is *not* "Advance knows something Claude doesn't" — Advance structurally knows *less* (a compressed summary Claude wrote of its own context, not the original). Its justification is **reliability and format-forcing through the one channel available**: "pick exactly one of four moves and phrase it as one actionable ask" reduces the human's post-answer decision load, independent of whether the model producing it is smarter than Claude. This is a legitimate, well-precedented value (structured next-step/action-item UX patterns generally), but it has to earn that claim empirically — it is not automatically true, and there's a real chance it doesn't clear the bar. It stands or falls on the outcome test below, not on architecture elegance.
+
+### AI's role here, and how it maps to the Track 1 boundary already in force
+
+Part 2's rule — AI parses, code judges — was written for Track 1, where AI turns free text into structured fields (claim extraction, evidence-field extraction) and code alone compares and decides. Advance's move-selection is a different shape: picking one of four labeled actions is closer to a judgment than a parse. That's why the design puts a deterministic **policy layer** between the model and the output — code supplies the allowed move set (by task mode and by whether a Case-2 finding exists), the model chooses and phrases within that closed set, and a validator rejects anything with a verdict, confidence, score, new asserted fact, or a move outside the allowed set. The model never gets an open choice; it gets a constrained one, same discipline as `fieldExtraction.ts`'s strict-parsing posture, applied to a judgment-shaped task instead of a parsing-shaped one.
+
+### Delivery mechanism — decided direction, engineering detail left open
+
+**Additional, not revise-in-place.** A Case-2 finding renders as a *second, separate suggestion* alongside the initial Case-1 one, visually marked as refining it — never a silent mutation of text the user may have already read, copied, or started editing. This removes most of the complexity a "revise the same suggestion" design would need (version-guarding against overwriting user edits, race conditions between a user acting and a finding arriving) at the cost of a live open question: what happens when the two suggestions actually disagree. Recommendation, not yet decided: keep both, let the evidence-linked one read as "refines the above," never silently replace or hide the first.
+
+Since Track 1 typically finishes after Advance's initial draft, the second card has to *appear* asynchronously. For alpha-scale traffic, polling (the embedded UI periodically checks "anything new for this invocation") is sufficient and far simpler to build correctly than a push/held-connection design — the few seconds of latency before a Case-2 card appears is not a real problem at 5-10 customers. Push is a legitimate upgrade once volume or latency actually demands it, not a v1 requirement.
+
+One firm design constraint from outside research, not internal preference: **model-initiated task switching / interruption measurably increases cognitive load** (see below) — this is a direct argument for the one-move, non-branching, non-interrupting card shape Advance already committed to, not just a UX nicety.
+
+### Validation required before this becomes a build target
+
+The fixture-level safety tests (schema validation, isolation from state-writing, policy-set enforcement) prove the system behaves safely. They do not prove Advance is useful. Before any invocation-table/polling infrastructure gets built, two things have to happen, in order:
+
+**1. Offline evaluation, doesn't touch the alpha build, can start now.** Construct labeled snapshots — an `InvocationContext`-shaped slice of a real conversation (user request, Claude's answer, prior context) — from sources that are actually usable:
+  - **Coding domain**: real-world, rights-cleared coding-agent interaction datasets — *SWE-chat* (6,000 sessions, 63k+ user prompts, 355k agent tool calls, real open-source developer sessions; reports only 44% of agent-produced code survived into user commits and 44% of turns involved user correction/pushback) and *SWE-Together* (109 reconstructed repository-level tasks from 11,260 sessions, purpose-built for evaluating downstream correctness plus corrective-turn burden) are the strongest available external anchors — license terms need checking before use, not assumed clear from availability.
+  - **Non-coding domains** (research, writing, strategy): the user's own historical transcripts, where the user already holds the rights — cannot be sourced from third-party data without those rights, this is a real constraint, not a formality.
+  - **Explicitly not usable as outcome evidence**: synthetic/model-generated trace corpora (e.g., datasets explicitly marked as generated, not verified production work) — fine for testing parser/schema robustness, not for judging whether Advance helps a real person.
+
+  Each snapshot gets **two independent labels, never collapsed into one**: (a) the user's actual next action in the real transcript, and (b) an independently-judged outcome (task resolved / key uncertainty reduced / artifact improved / no progress). The correction this encodes: **a user's actual next action is a behavioral reference, not ground truth for the optimal move** — people pursue bad paths too. Pairing it with an outcome label is what makes the snapshot usable for evaluation instead of just mimicry-training.
+
+  With true next-actions hidden from raters, score Advance's candidate move against both labels separately, per case (Case 1 alignment/outcome, Case 2 alignment/outcome kept distinct) — this doubles as the prompt/policy iteration loop, grounded in real interaction data instead of synthetic examples.
+
+**2. The causal product experiment, in alpha, after the offline pass.** Normal Claude answer vs. normal Claude answer plus Advance, blinded evaluation of the resulting downstream work — not "sounds helpful," actual task progress. Report Case 1 and Case 2 separately; a weak Case 1 does not disqualify Case 2, and the honest fallback if Case 1 doesn't clear its bar is to ship Advance as Case-2-only (quietly extending Verify's finding into a next step) and drop the standalone Case-1 card rather than keep shipping a feature that doesn't measurably help the common case.
+
+No published study tests the exact intervention (one deterministic next-move card reducing post-answer human workload across mixed knowledge-work tasks) — this remains a genuinely open empirical question, not one settled by any of the sources above. What the sources establish is methodology precedent (real interaction traces + observable outcome + corrective-turn burden as measures) and one concrete design constraint (avoid model-initiated task switching), not a verdict on Advance itself.
+
+**Sources for this section**: Baumann et al., 2026, *SWE-chat: Coding Agent Interactions From Real Users in the Wild* (arXiv) — dataset scale/survival-rate figures. Wu et al., 2026, *SWE-Together: Evaluating Coding Agents in Interactive User Sessions* (arXiv) — evaluation-design precedent (correctness + corrective-turn count). Qian & Wexler, 2024, *Take It, Leave It, or Fix It: Measuring Productivity and Trust in Human-AI Collaboration* (IUI) — expertise/question-type-dependent effects, automation complacency. Lepine et al., 2025, *Precision Proactivity: Measuring Cognitive Load in Real-World AI-Assisted Work* (arXiv) — model-initiated task switching as the strongest driver of cognitive-load decline; direct basis for the single-move, non-interrupting card constraint above. Chen et al., 2021, *Action-Based Conversations Dataset* (NAACL) — precedent for action-state tracking as a modeling abstraction, not UX evidence for Advance specifically. `choucsan/mimo-claude-code-traces-1k` (Hugging Face) — noted explicitly as *not* usable for outcome evaluation (synthetic, unverified production work); usable only for parser/schema robustness testing if needed.
+
+**Not resolved by this section, left open deliberately**: exact schema for the offline-evaluation labeling tool; whether SWE-chat/SWE-Together's licenses actually permit this use (needs checking, not assumed); the conflict-resolution UI treatment when a Case-1 and Case-2 suggestion disagree; push vs. extended-polling as a post-alpha upgrade decision.
+
+---
+
 ## Sources synthesized
 
 - `~/Downloads/Notary — Canonical Product Definition Final 831.md` (verified directly against, not just cited secondhand)
@@ -342,3 +402,4 @@ Track 2/Challenge stays a **future feature, not canonical product scope today**,
 - `notary-check/docs/engine-brief-for-external-review.md`
 - `notary-check/server/src/server.ts` and related live code
 - This session's engineering work (2026-09-01/02), the multi-round review that produced Part 9's corrections, and a final verification pass against the actual canonical/GDR source files (which surfaced and reverted one incorrect correction — Part 9, entry 15)
+- The 2026-09-02 "Advance" design conversation (Part 11) — an extended discussion working through the information-asymmetry problem, the Case 1/Case 2 split, the delivery-mechanism correction ("additional, not revise-in-place"), and an external-research pass (SWE-chat, SWE-Together, and adjacent HCI/cognitive-load studies) used to ground the pre-build evaluation plan

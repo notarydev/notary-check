@@ -677,6 +677,8 @@ No `verdict`, `confidence`, `answer`, or free-form transcript field, ever — sa
 
 **Feature-gated at the organization level** for initial rollout — ship dark first, per the existing "not yet validated" posture on the whole product (no held-out eval gate exists yet, see `docs/build/architecture-and-progress.md`).
 
+**2026-09-02, later the same day: a larger successor design ("Advance") was proposed and discussed at length, but is explicitly NOT a change to this section.** Everything above — output contract, per-claim cap, feature flag, migration `0012` — is built, tested, and remains the alpha build target unchanged. The successor proposal is recorded in full at `docs/guide/proposals/system-definition-synthesis.md` Part 11; it is a *distinct, larger* feature (invocation-level rather than claim-level, starts concurrently with Track 1 rather than after it, revises/extends rather than being generated once) gated behind an offline evaluation study that has not run yet. Do not build toward it without a separate, explicit go-ahead once that evaluation exists.
+
 ### Promise and non-promise
 
 > Notary checks source-backed claims in this answer against a bounded, inspectable evidence set and makes material breaks visible.
