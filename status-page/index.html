@@ -115,7 +115,7 @@
 <main>
   <h1>Notary Check — build tracker</h1>
   <p class="sub">Informal live status board, mirrors <code>PROGRESS.md</code> in the repo. Not published product documentation.</p>
-  <p class="updated" id="updated">Last updated: 2026-09-02 — Rounds 1 &amp; 2 of the alpha build done and independently verified (all 5 audit P0s, Track 2, entitlement, billing, ops groundwork). Separately, a larger Track 2 successor ("Advance") was designed and written up as a proposal — not a build target, gated behind an offline evaluation. See the callout below.</p>
+  <p class="updated" id="updated">Last updated: 2026-09-02 — Pushed to origin/main, then re-verified fresh (engine 291/199/0/92, server 3/3, ui build clean) and put through an external review, checked point-by-point against source. Two real, live bugs found and fixed: the card was showing a raw internal code instead of prose, and Track 2's challenges were generated but never actually reached the card (a missing field in the engine's HTTP response, not just a stale comment). Full detail in PROGRESS.md.</p>
 
   <div class="table-wrap">
   <table>
@@ -133,13 +133,13 @@
         <td class="area">Track 2 — Challenge ("what to pressure-test")</td>
         <td class="pct">100% built</td>
         <td><span class="badge green">done, ships dark</span></td>
-        <td>Built and isolation-verified (never touches state/applicability, no verdict field). Org feature flag defaults off — not yet turned on for any org</td>
+        <td>Built and isolation-verified. Fixed a real gap this pass: challenges were generated and persisted but never actually reached the card — the engine's HTTP response was missing the field entirely. Now wired end to end. Org feature flag still defaults off — not yet turned on for any org</td>
       </tr>
       <tr>
         <td class="area">Source control (local → GitHub main)</td>
-        <td class="pct">100% (pre-alpha work)</td>
-        <td><span class="badge amber">alpha work not yet pushed</span></td>
-        <td>4 commits on origin/main from before the alpha push; Rounds 1-2's work (audit fixes, Track 2, billing, ops) is local/unstaged</td>
+        <td class="pct">100%</td>
+        <td><span class="badge green">pushed</span></td>
+        <td>All of Rounds 1-2 plus this review pass's fixes are on <code>origin/main</code> (7 commits total). Nothing local/unstaged as of this update</td>
       </tr>
       <tr>
         <td class="area">Engine backend for dashboard</td>
@@ -382,6 +382,7 @@
       <li>External repo audit received and partially verified — 3 of its most severe P0 claims confirmed against source.</li>
       <li>Pushed everything from this session to origin/main (4 commits: engine, server, dashboard, docs).</li>
       <li>New, separate: "Advance" (Track 2 v2) designed as a proposal, not a build target — see the callout above and <code>docs/guide/proposals/system-definition-synthesis.md</code> Part 11. Corrects an early flaw (Advance seeing roughly the same context as Claude, adding nothing) via a shared-context/independent-signal split, and grounds the pre-build evaluation plan in real external datasets (SWE-chat, SWE-Together) rather than assumption.</li>
+      <li><strong>External review received and checked point-by-point against source, same day.</strong> Two real, live bugs found and fixed: (1) the card was displaying a raw internal <code>state_reason</code> code instead of prose — a test fixture had fabricated prose in its mock, masking it; fixed with a regression test. (2) Track 2's generated challenges never actually reached the card — the engine's HTTP response was missing the field entirely, not just a stale comment as first suspected; now wired end to end with the correct wire-contract field names. Also fixed: a doc claiming Track 2 "runs concurrently" with Track 1 when it structurally can't (its input is Track 1's resolved finding) — corrected, true concurrency is the separate Advance proposal. One real gap documented but not yet fixed: the cost-quota check is read-then-decide, not atomic, so it's best-effort under concurrency rather than a true hard cap — low risk at alpha's traffic volume, flagged in both the code and the build plan for before scale.</li>
     </ul>
   </section>
 
