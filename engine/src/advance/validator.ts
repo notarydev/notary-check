@@ -138,18 +138,43 @@ export function findAuthorityViolation(text: string): string | undefined {
 
 /**
  * LAYER 6 — action-language. Heuristic, same honesty as layer 4: this can
- * only catch a STRUCTURALLY declarative sentence (starts with a stated
- * subject-verb conclusion rather than an imperative/request), not every
- * rephrased conclusion. A prompt that starts with one of a small set of
- * request-shaped openers passes; anything else is flagged as suspect, not
- * automatically rejected on its own (paired with layer 4's stronger
- * signals in validateAdvanceOutput below).
+ * only catch an UNAMBIGUOUSLY declarative sentence with no request marker
+ * anywhere in it, not every rephrased conclusion.
+ *
+ * CORRECTED 2026-09-03 after the first live evaluation pass: the original
+ * version anchored the request-verb check to the very START of the string
+ * (`^(please\s+)?(ask|check|...)`). Against 43 real fixture responses, this
+ * rejected the majority of otherwise-valid two-item outputs, because a real
+ * well-formed request very often opens with a clause before the verb —
+ * "Also, check whether...", "Given the ambiguity, ask which...", "For the
+ * comparison, evaluate..." — none of which are declarative conclusions, all
+ * of which the anchored version wrongly rejected (and because rejection is
+ * whole-response, this was destroying a SECOND, otherwise-clean item too).
+ * Confirmed directly, without spending any model call: 5 of 7 realistic
+ * well-formed request sentences failed the old check purely because the
+ * verb wasn't the literal first word.
+ *
+ * The fixed version looks for a request marker ANYWHERE in the text — a
+ * question mark, a request phrase ("please", "could/can/would you"), or a
+ * request verb as a whole word anywhere — rather than requiring it to open
+ * the sentence. This is deliberately more permissive; it will still fail
+ * to catch a declarative conclusion that happens to contain one of these
+ * words incidentally (e.g. "I already checked this is correct" — though
+ * that phrasing gets caught by layer 4's completed_action pattern instead).
+ * The two locked test cases this must still get right: "The correct
+ * architecture is X" (no marker anywhere -> false, correctly rejected) and
+ * "Compare X and Y on Z" (has a request verb -> true, correctly accepted).
  */
-const REQUEST_SHAPED_OPENERS = /^(please\s+)?(ask|check|clarify|compare|confirm|distinguish|double[- ]check|evaluate|find|identify|run|test|try|verify|does|is|are|what|which|how|why|could|can|would)\b/i;
+const REQUEST_PHRASE = /\b(please|could you|can you|would you|should you)\b/i;
+const REQUEST_VERB = /\b(ask|check|clarify|compare|confirm|distinguish|double[- ]?check|evaluate|find|identify|run|test|try|verify|explain|walk (me )?through)\b/i;
 
 /** LAYER 6, exported for direct testing. */
 export function looksLikeRequest(prompt: string): boolean {
-  return REQUEST_SHAPED_OPENERS.test(prompt.trim());
+  const trimmed = prompt.trim();
+  if (trimmed.includes("?")) return true;
+  if (REQUEST_PHRASE.test(trimmed)) return true;
+  if (REQUEST_VERB.test(trimmed)) return true;
+  return false;
 }
 
 /**
