@@ -32,7 +32,16 @@ body {
      makes body — and the auto-resize that reads it — match the content's
      own footprint instead. */
   width: fit-content;
-  background: var(--color-background-primary, light-dark(#ffffff, #1f1f1e));
+  /* Measured directly against the live host (2026-09-03): its real dark-mode
+     page background is rgb(21,21,21) = #151515 — checked via
+     getComputedStyle on the host page itself, since the host's CSS custom
+     properties don't appear to actually reach this sandboxed iframe in
+     practice (an earlier attempt using var(--color-background-primary, ...)
+     rendered as this rule's OWN light-dark() fallback value, not any real
+     host-supplied color — meaning the var was empty/unset here). Hardcoding
+     the real measured value is more reliable than a var() chain that may
+     silently fall through. */
+  background: light-dark(#ffffff, #151515);
   font-family:
     var(--font-sans),
     -apple-system,
