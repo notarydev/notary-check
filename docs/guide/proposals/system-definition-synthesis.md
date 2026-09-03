@@ -494,6 +494,23 @@ If the user touched A but not B, and a material Track 1 update arrives, A gets a
 ```
 Report the observed 0/1/2 distribution across whatever fixture set is used, not just pass/fail on structural and authority checks — a model that always emits 2 has quietly failed "only when it makes sense" even while passing every other check, and that failure mode is invisible unless it's specifically measured.
 
+### UI interaction model — locked, 2026-09-03: pills, not cards, confirmed against the real host
+
+**The pill is the interaction, not a mini-card.** Superseding the earlier expandable-card mockup for how a finding/suggestion is *presented* (the underlying data/validation design in this Part is unchanged) — collapsed state is a small pill, not a bordered panel:
+
+- **Track 1 pill** ("finding") — hover reveals what was found; click **expands inline** (reuses the same pattern already live in `ui/src/App.tsx`'s `evidenceOpen` state — a plain conditional render, no modal/portal). Inside the expanded view live Track 1's own deterministic actions: Open evidence, Qualify, Dismiss, Recheck.
+- **Track 2/Advance pill** ("next move") — hover reveals the full suggested action; click calls `app.sendMessage()` directly with that text. **No expanded state, no separate "Ask Claude" button, no second Notary-internal editor** — the pill click *is* the action.
+
+**The load-bearing technical question this design depended on — RESOLVED, confirmed by direct first-party observation, not inferred from documentation**: does `app.sendMessage()` immediately post into the conversation, or does it place text in the user's own input box, editable, awaiting a manual send?
+
+**Confirmed on Claude Desktop, 2026-09-03, by directly clicking the live "Qualify" button (which already calls `sendMessage()` today) and watching the real result**: the text lands in the message input box, unsent, editable — the user must hit enter themselves. This matches an open, unconfirmed community proposal (`modelcontextprotocol/ext-apps` issue #501, "Direct AI processing channel (sendMessage immediate mode)") which had described this as current Claude Desktop behavior while proposing an opt-in immediate-send mode be added — that issue is not a guarantee on its own, but the direct observation now is.
+
+**Still not confirmed, and should not be assumed**: whether claude.ai (web) or any other MCP host behaves identically. The platform's own docs explicitly warn real hosts vary and a reference host is not a behavior guarantee. Treat `sendMessage()`'s outcome as observable at runtime, never assumed — log/flag if a host rejects or behaves unexpectedly, never silently pretend the action landed.
+
+**Consequence for the build**: the "eager generation, lazy display" mechanism from § Suggestion cardinality above is simplified for delivery — there is no Notary-side "reveal the prompt" UI step for Advance at all. Hover shows a preview (can be a short excerpt/summary of the full `prompt`, or the `prompt` itself if short enough); click sends the full, already-validated `prompt` text straight to `sendMessage()`. The full-prompt-is-an-execution-artifact-not-something-to-inspect-inside-Notary framing replaces the earlier "click reveals a card with Ask Claude/Edit buttons" framing.
+
+**Open item, found during this same live test, NOT yet diagnosed — needs the raw tool output, not just the summarized card text**: the flagship two-block contradiction test case (Acme 17%/12%) returned a single finding ("1 thing to check") against the live connector, not the two stacked findings the locked card contract describes. Not yet known whether this is the live deployment running an older build, or a real, current bug. Tracked as a required follow-up before treating the live connector's Track 1 output as fully trustworthy for further UI testing.
+
 ---
 
 ## Sources synthesized
