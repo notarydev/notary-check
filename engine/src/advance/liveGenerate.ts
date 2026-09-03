@@ -20,6 +20,7 @@
 // number of real calls be made and assessed by hand before any of that is
 // built.
 
+import type pg from "pg";
 import {
   createJudgeClient,
   DEFAULT_JUDGE_MODEL,
@@ -27,6 +28,9 @@ import {
   type JudgeCallRecord,
   type JudgeClient,
 } from "../judge/judgeClient.ts";
+import { isJudgeDisabled } from "../judge/killSwitch.ts";
+import { logEvent } from "../observability/log.ts";
+import { checkQuota } from "../quotas/quotaCheck.ts";
 import { buildAdvancePrompt, ADVANCE_PROMPT_VERSION } from "./prompt.ts";
 import { validateAdvanceOutput, type AdvanceValidationResult } from "./validator.ts";
 import type { AdvanceMove, AdvanceSuggestion, InvocationContext, Track2EvidenceConstraint } from "./types.ts";
@@ -37,6 +41,18 @@ export interface GenerateAdvanceMoveOptions {
   model?: string;
   maxTokens?: number;
   timeoutMs?: number;
+  /**
+   * Org for the quota gate and observability. When provided together with
+   * `db`, `checkQuota` is consulted before any client is constructed — the
+   * same gate ../judge/challengeGeneration.ts and ../review/reviewFlow.ts
+   * already apply to every other DeepSeek call site. Absent either one, the
+   * quota gate is skipped (never silently enforced against a caller that
+   * cannot supply it) — see the module comment on why this must not be the
+   * case for any real-traffic call site: reviewFlow.ts's Advance wiring
+   * always supplies both.
+   */
+  organizationId?: string;
+  db?: pg.Pool;
 }
 
 export interface GenerateAdvanceMoveResult {
@@ -67,12 +83,58 @@ export async function generateAdvanceSuggestions(
     return { suggestions: [], error: "no_legal_move_for_this_state" };
   }
 
+  // POLICY-BOUNDARY SHORT-CIRCUIT: no user_request, no call. types.ts marks
+  // `user_request` required because "Advance has nothing to recommend a next
+  // move ABOUT without knowing what was being asked" — a caller that has no
+  // real user_request (the MCP tool's `user_request` field is optional; the
+  // server only has it "when available") must not fabricate one just to
+  // satisfy the type. Same shape as the allowedMoves short-circuit above:
+  // zero cost, zero network, a real (non-guessed) result rather than a
+  // special case the caller has to remember to apply itself.
+  if (context.user_request.trim().length === 0) {
+    return { suggestions: [], error: "no_user_request" };
+  }
+
   const { system, user, question } = buildAdvancePrompt({ context, allowedMoves, constraint });
   const recordBase: JudgeCallRecord = {
     model: options.model ?? DEFAULT_JUDGE_MODEL,
     promptVersion: ADVANCE_PROMPT_VERSION,
     question,
   };
+
+  // The judge kill switch governs every DeepSeek call in this system —
+  // Advance is one, and this was a known gap (it was not checked here at
+  // all) before this change. When active, no client is constructed and no
+  // network call is made, exactly like ../judge/challengeGeneration.ts.
+  if (isJudgeDisabled()) {
+    logEvent({
+      event: "advance_generation",
+      path: "judge-involved",
+      error_cause: "judge_kill_switch_active",
+      organization_id: options.organizationId,
+    });
+    return { record: { ...recordBase, error: "judge_kill_switch_active" }, error: "judge_kill_switch_active" };
+  }
+
+  // The same quota gate every other DeepSeek call site in this codebase uses
+  // (../judge/challengeGeneration.ts, ../review/reviewFlow.ts's field-judge
+  // path) — checked, like the kill switch above, BEFORE any client is
+  // constructed. This was the other known gap: Advance's live call had no
+  // quota consultation at all. organizationId/db are both required to run
+  // the check (a caller with neither cannot be gated, but reviewFlow.ts's
+  // real wiring always supplies both, so this is not a real-traffic gap).
+  if (options.organizationId !== undefined && options.db !== undefined) {
+    const quota = await checkQuota(options.organizationId, options.db);
+    if (!quota.allowed) {
+      logEvent({
+        event: "advance_generation",
+        path: "judge-involved",
+        error_cause: `quota_${quota.reason}`,
+        organization_id: options.organizationId,
+      });
+      return { record: { ...recordBase, error: `quota_${quota.reason}` }, error: `quota_${quota.reason}` };
+    }
+  }
 
   let client: JudgeClient;
   try {

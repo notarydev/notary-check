@@ -38,6 +38,13 @@ const createClaimSchema = z.object({
   decontextualized_form: z.string().optional(),
   claim_fields: claimFieldsSchema,
   evidence_ids: z.array(z.string().uuid()).default([]),
+  // ADVANCE — the user's own original request/question for this turn,
+  // verbatim, when the caller (server/src/engineClient.ts) actually has it.
+  // Optional and passed straight through to review/reviewFlow.ts's
+  // runReview(): absent or empty means Advance is skipped for this claim
+  // entirely (never a guess — see liveGenerate.ts's no_user_request
+  // short-circuit), not a validation error.
+  user_request: z.string().optional(),
 });
 
 const DEFAULT_LIST_LIMIT = 20;
@@ -431,7 +438,7 @@ export function reviewsRouter(database: pg.Pool): Router {
       return res.status(404).json({ error: "review not found for this organization" });
     }
 
-    const { text, ordinal, materiality, decontextualized_form, claim_fields, evidence_ids } = parsed.data;
+    const { text, ordinal, materiality, decontextualized_form, claim_fields, evidence_ids, user_request } = parsed.data;
     const result = await runReview(
       {
         organizationId: orgId,
@@ -442,6 +449,7 @@ export function reviewsRouter(database: pg.Pool): Router {
         decontextualizedForm: decontextualized_form,
         claimFields: claim_fields,
         evidenceIds: evidence_ids,
+        userRequest: user_request,
       },
       database,
     );
@@ -482,6 +490,19 @@ export function reviewsRouter(database: pg.Pool): Router {
         prompt: c.prompt,
         why_it_matters: c.whyItMatters,
         action: c.action,
+      })),
+      // ADVANCE — structurally SEPARATE from `challenges` above: a different
+      // system, a different authority level (a next-move suggestion about the
+      // user's broader task, not a question about this claim's finding), and
+      // the UI renders the two differently (§ Part 11's icon-vs-pill design,
+      // wired in ui/src/App.tsx). Never merged into one array. Empty
+      // whenever no user_request was supplied, no legal move existed, the
+      // kill switch was active, quota was exhausted, or the call failed.
+      advance_suggestions: result.advanceSuggestions.map((s) => ({
+        id: s.id,
+        short_label: s.short_label,
+        move: s.move,
+        prompt: s.prompt,
       })),
     });
   });

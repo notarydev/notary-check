@@ -42,6 +42,17 @@ const reviewInputSchema = {
     )
     .optional()
     .describe("Sources Claude can identify as actually available — never invented."),
+  // Advance (Track 2) needs the user's own original ask to suggest a relevant
+  // next move — it never sees the rest of the conversation, only what's
+  // passed into this one tool call. Optional: when absent, Notary skips the
+  // next-move suggestion entirely rather than guessing at what the user
+  // wanted.
+  user_request: z
+    .string()
+    .optional()
+    .describe(
+      "The user's own original request or question for this turn, verbatim when you have it — never paraphrased, summarized, or invented. Pass this whenever the user's actual wording is available to you; omit it entirely if it isn't. Used only to suggest an optional next move (e.g. clarify, test, compare, repair) — never shown to the user as-is.",
+    ),
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,7 +74,11 @@ function buildServer() {
       _meta: { ui: { resourceUri: RESOURCE_URI } },
     },
     async (
-      args: { answer_text: string; source_refs?: Array<{ url?: string; title?: string; quoted_excerpt?: string; source_role: "answer_citation" | "user_added" | "workspace_collection" }> },
+      args: {
+        answer_text: string;
+        source_refs?: Array<{ url?: string; title?: string; quoted_excerpt?: string; source_role: "answer_citation" | "user_added" | "workspace_collection" }>;
+        user_request?: string;
+      },
       extra: { authInfo?: { extra?: { userId?: string; email?: string } } },
     ) => {
       const clerkUserId = extra?.authInfo?.extra?.userId;
@@ -72,7 +87,7 @@ function buildServer() {
         throw new Error("Unauthenticated tool call: no Clerk user id on authInfo.");
       }
       const apiKey = await resolveApiKeyForUser(clerkUserId, email);
-      const cardData = await reviewAnswer(args?.answer_text ?? "", args?.source_refs ?? [], apiKey);
+      const cardData = await reviewAnswer(args?.answer_text ?? "", args?.source_refs ?? [], apiKey, args?.user_request);
       return {
         content: [
           {

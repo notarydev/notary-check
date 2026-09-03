@@ -81,7 +81,11 @@ import { DEFAULT_JUDGE_MODEL } from "../judge/judgeClient.ts";
 import { PROMPT_VERSION } from "../judge/promptTemplates.ts";
 import { logEvent } from "../observability/log.ts";
 import { checkQuota } from "../quotas/quotaCheck.ts";
-import { insertUsageEvent, usageEventFromChallengeCall, usageEventFromJudgeCall } from "../quotas/usage.ts";
+import { insertUsageEvent, usageEventFromAdvanceCall, usageEventFromChallengeCall, usageEventFromJudgeCall } from "../quotas/usage.ts";
+import { getAllowedMoves } from "../advance/policy.ts";
+import { generateAdvanceSuggestions } from "../advance/liveGenerate.ts";
+import { persistAdvanceInvocation } from "../advance/persist.ts";
+import type { AdvanceSuggestion, InvocationContext, Track2EvidenceConstraint } from "../advance/types.ts";
 import type { ApplicabilityField, ClaimFields, EvidenceFields } from "../verification/applicability.ts";
 import { assessApplicability } from "../verification/applicability.ts";
 import type { EvidenceRelation } from "../verification/stateMachine.ts";
@@ -99,6 +103,16 @@ export interface RunReviewInput {
   claimFields: ClaimFields;
   /** Evidence rows already bound to this review. */
   evidenceIds: string[];
+  /**
+   * ADVANCE — the user's own original request/question for this turn,
+   * verbatim, when the caller actually has it (server/src/server.ts's MCP
+   * tool field is optional: "pass this whenever you have it"). Absent or
+   * empty means Advance is skipped entirely for this claim — never a guess,
+   * see liveGenerate.ts's no_user_request short-circuit. Deliberately NOT
+   * part of ClaimFields or claimText: this is about the USER's turn, not
+   * about the claim being verified.
+   */
+  userRequest?: string;
 }
 
 export interface RunReviewMatch {
@@ -184,6 +198,20 @@ export interface RunReviewResult {
    * record above is the authoritative output and Track 2 is subordinate to it.
    */
   challenges: ChallengeItem[];
+  /**
+   * ADVANCE — 0-2 next-move suggestions (§ docs/guide/proposals/
+   * system-definition-synthesis.md Part 11), run CONCURRENTLY with Track 2/
+   * Challenge, both strictly AFTER Track 1's claim + evidence_match rows are
+   * already committed (step 8, above). Structurally separate from
+   * `challenges`: different system, different authority level (Advance
+   * proposes a next HUMAN move about the broader task; Challenge questions
+   * THIS claim's already-resolved finding), never merged into one array.
+   * Empty whenever no user_request was supplied, no legal move exists for
+   * this claim's state, the kill switch is active, quota is exhausted, or
+   * the call failed — an empty list degrades nothing, same subordination
+   * Track 1/Track 2 already hold.
+   */
+  advanceSuggestions: AdvanceSuggestion[];
 }
 
 /**
@@ -194,6 +222,8 @@ export interface RunReviewResult {
 export interface RunReviewOptions {
   /** Injected Track 2 judge client; defaults to a real DeepSeek client. */
   challengeClient?: JudgeClient;
+  /** Injected Advance judge client; defaults to a real DeepSeek client. */
+  advanceClient?: JudgeClient;
 }
 
 const STRING_FIELDS: Exclude<ApplicabilityField, "valueUnit">[] = [
@@ -338,7 +368,7 @@ export async function runReview(
   db: pg.Pool,
   options: RunReviewOptions = {},
 ): Promise<RunReviewResult> {
-  const { organizationId, reviewId, claimText, ordinal, materiality, decontextualizedForm, claimFields, evidenceIds } = input;
+  const { organizationId, reviewId, claimText, ordinal, materiality, decontextualizedForm, claimFields, evidenceIds, userRequest } = input;
 
   // Step 1 — load evidence. Verify each id actually belongs to this review
   // (never trust caller-supplied ids blindly); resolve pending rows lazily.
@@ -804,44 +834,65 @@ export async function runReview(
     client.release();
   }
 
-  // ── STEP 9 — TRACK 2 / CHALLENGE ─────────────────────────────────────────
+  // ── STEP 9 — TRACK 2 / CHALLENGE, and ADVANCE ────────────────────────────
   //
-  // Runs AFTER step 8, and the ordering is a correctness property, not a
-  // convenience. Track 2's entire input is the RESOLVED finding — the state
-  // assignState() just produced, the applicability comparison, and the
-  // passages that survived re-dereference. Running it earlier would mean
+  // Both run AFTER step 8, and the ordering is a correctness property, not a
+  // convenience. Track 2/Challenge's entire input is the RESOLVED finding —
+  // the state assignState() just produced, the applicability comparison, and
+  // the passages that survived re-dereference. Running it earlier would mean
   // generating questions about a finding that did not exist yet. The plan
   // permits "concurrently with (or immediately after)"; immediately after is
   // the honest reading of "reads the SAME claim/evidence boundary Track 1
   // already resolved", and it also means Track 2 can never race the claim row
   // it must reference.
   //
-  // It is structurally incapable of changing anything above: every value in
-  // the returned result was computed and committed before this line, and
-  // runTrack2Challenge takes them BY VALUE. It writes to challenge_item and to
-  // usage_event, and to nothing else.
-  const challenges = await runTrack2Challenge(
-    {
-      organizationId,
-      reviewId,
-      claimId,
-      materiality: materiality ?? false,
-      claimText,
-      decontextualizedForm,
-      state: assigned.state,
-      stateReason: assigned.reason,
-      noSource: !hadAddressableSource,
-      matchedFields: outcomes.length > 0 ? outcomes[0].matchedFields : [],
-      mismatchDetails: rejectedCandidates.flatMap((c) => c.details),
-      excerpts: outcomes.map((o) => ({
-        relation: o.relation,
-        locatorDisplay: o.locatorDisplay,
-        quote: o.locator.kind === "text_offsets" ? o.locator.quote : "",
-      })),
-    },
-    db,
-    options.challengeClient,
-  );
+  // Advance is run CONCURRENTLY WITH Track 2/Challenge (Promise.all, not
+  // sequential awaits) rather than gated behind it — the two are independent
+  // outputs of the same already-committed Track 1 result, and neither can
+  // block or alter it: Track 1's claim + evidence_match rows are already
+  // committed above, and both runTrack2Challenge and runAdvanceForClaim take
+  // their inputs BY VALUE and never touch claim or evidence_match again. A
+  // failure or slowness in either one cannot delay or change what the other
+  // produces, or what was already returned as this claim's Track 1 finding.
+  const [challenges, advanceSuggestions] = await Promise.all([
+    runTrack2Challenge(
+      {
+        organizationId,
+        reviewId,
+        claimId,
+        materiality: materiality ?? false,
+        claimText,
+        decontextualizedForm,
+        state: assigned.state,
+        stateReason: assigned.reason,
+        noSource: !hadAddressableSource,
+        matchedFields: outcomes.length > 0 ? outcomes[0].matchedFields : [],
+        mismatchDetails: rejectedCandidates.flatMap((c) => c.details),
+        excerpts: outcomes.map((o) => ({
+          relation: o.relation,
+          locatorDisplay: o.locatorDisplay,
+          quote: o.locator.kind === "text_offsets" ? o.locator.quote : "",
+        })),
+      },
+      db,
+      options.challengeClient,
+    ),
+    runAdvanceForClaim(
+      {
+        organizationId,
+        reviewId,
+        claimId,
+        claimText,
+        materiality: materiality ?? false,
+        lifecycle,
+        state: assigned.state,
+        stateReason: assigned.reason,
+        userRequest,
+      },
+      db,
+      options.advanceClient,
+    ),
+  ]);
 
   return {
     claimId,
@@ -860,6 +911,7 @@ export async function runReview(
     checksCompleted,
     evidenceStatuses,
     challenges,
+    advanceSuggestions,
   };
 }
 
@@ -1039,6 +1091,148 @@ async function runTrack2Challenge(
     // never propagated into a committed Track 1 result.
     logEvent({
       event: "challenge_failed",
+      error_cause: (err as Error)?.message ?? "unknown",
+      organization_id: input.organizationId,
+      review_id: input.reviewId,
+    });
+    return [];
+  }
+}
+
+/** Everything Advance is allowed to see about this claim, by value. */
+interface AdvanceInput {
+  organizationId: string;
+  reviewId: string;
+  claimId: string;
+  claimText: string;
+  materiality: boolean;
+  lifecycle: ClaimLifecycleState;
+  state: string;
+  stateReason: string;
+  /** The user's own verbatim request for this turn, when the caller has it. */
+  userRequest?: string;
+}
+
+/**
+ * The ADVANCE stage: build the bounded InvocationContext, compute the allowed
+ * move set, generate (quota/kill-switch gated inside liveGenerate.ts),
+ * persist, return. NEVER THROWS — same subordination discipline as
+ * runTrack2Challenge: Advance is a suggestion layer, and any failure inside it
+ * degrades to zero suggestions over an intact, already-committed Track 1
+ * finding, never a failed verification.
+ *
+ * GATE ORDER, cheapest-first, same shape as Track 2/Challenge's own gate:
+ *   1. userRequest — absent/empty means Advance has nothing to recommend a
+ *      next move ABOUT (types.ts's InvocationContext doc comment); skip
+ *      before building anything. Free: already in memory.
+ *   2. allowedMoves — policy.ts's getAllowedMoves is pure and always
+ *      non-empty for this codebase's TaskMode set, but liveGenerate.ts
+ *      short-circuits on an empty set defensively regardless, so this is not
+ *      a gate this function needs to duplicate.
+ *   3. liveGenerate.ts's own kill-switch and quota gates, consulted inside
+ *      generateAdvanceSuggestions() itself (organizationId + db passed
+ *      through) — the same DeepSeek call site every other judge-involved path
+ *      in this codebase gates the same way.
+ *
+ * Not held under the same advisory lock / per-invocation budget Track 2/
+ * Challenge uses: Advance's own cardinality cap (0-2 suggestions) is entirely
+ * WITHIN one call (validator.ts's MAX_SUGGESTIONS), never a cross-claim
+ * invocation budget — there is no sibling-row count to serialize against.
+ */
+async function runAdvanceForClaim(
+  input: AdvanceInput,
+  db: pg.Pool,
+  client?: JudgeClient,
+): Promise<AdvanceSuggestion[]> {
+  try {
+    const userRequest = input.userRequest?.trim() ?? "";
+    if (userRequest.length === 0) {
+      // Recorded as a 'skipped' row (not silence) so "Advance never ran for
+      // this claim because there was no user_request" is distinguishable
+      // later from "Advance ran and found nothing" or "Advance's call
+      // failed" — see persist.ts's status derivation and
+      // migration 0013's advance_invocation.status doc comment.
+      await persistAdvanceInvocation(db, {
+        organizationId: input.organizationId,
+        reviewId: input.reviewId,
+        claimId: input.claimId,
+        invocationContextId: input.claimId,
+        hasEvidenceConstraint: false,
+        allowedMoves: [],
+        // Neither `suggestions` nor `record` set — persist.ts's own status
+        // derivation reads this as 'skipped' (no call was attempted at all),
+        // distinct from the 'ok' zero-suggestions case liveGenerate.ts's
+        // in-call short-circuits produce (which DO set `suggestions: []`).
+        result: { error: "no_user_request" },
+      });
+      return [];
+    }
+
+    // Case 2 (§ Part 11): a sealed Track 1 boundary exists whenever this
+    // claim is material, its lifecycle actually completed (never surface an
+    // incomplete check as a "finding" Advance can react to), and the
+    // resolved state is not SUPPORTED — i.e. exactly the cases in which
+    // server/src/engineClient.ts's own findingFor() would render a finding
+    // to the user. boundary_text is built from the same two fields the card
+    // already treats as the stable, displayable record of what Track 1
+    // established (state + state_reason) — never a paraphrase of anything
+    // Track 1 did not itself assert.
+    const hasEvidenceConstraint = input.materiality && input.lifecycle === "completed" && input.state !== "SUPPORTED";
+    const constraint: Track2EvidenceConstraint | undefined = hasEvidenceConstraint
+      ? {
+          invocation_id: input.claimId,
+          material: true,
+          boundary_text: `Notary's Track 1 check resolved the claim "${input.claimText}" to ${input.state} (${input.stateReason}).`,
+        }
+      : undefined;
+
+    // task_mode is undefined: the current MCP tool input has no field for it
+    // (§ this build's known interpretation gap, flagged in the handoff report
+    // — the server/src/server.ts schema only grew user_request, not
+    // task_mode). getAllowedMoves(undefined, ...) is documented to resolve to
+    // the full four-move set, which is the honest default for an unknown
+    // task shape rather than a narrowing guess.
+    const allowedMoves = getAllowedMoves(undefined, hasEvidenceConstraint);
+
+    const context: InvocationContext = {
+      invocation_id: input.claimId,
+      user_request: userRequest,
+      created_at: new Date().toISOString(),
+    };
+
+    const generated = await generateAdvanceSuggestions(context, allowedMoves, constraint, {
+      client,
+      organizationId: input.organizationId,
+      db,
+    });
+
+    // Same metering discipline as every other judge-involved call site: a
+    // call that reached the network has a token count on its record, and its
+    // cost is real whether or not its output survived validation.
+    if (generated.record?.inputTokens !== undefined) {
+      await insertUsageEvent(
+        db,
+        usageEventFromAdvanceCall(generated.record, { organizationId: input.organizationId, reviewId: input.reviewId }),
+      );
+    }
+
+    const persisted = await persistAdvanceInvocation(db, {
+      organizationId: input.organizationId,
+      reviewId: input.reviewId,
+      claimId: input.claimId,
+      invocationContextId: input.claimId,
+      hasEvidenceConstraint,
+      allowedMoves,
+      result: generated,
+    });
+
+    return [...persisted.suggestions];
+  } catch (err) {
+    // Subordinate by construction, same as Track 2/Challenge: an Advance
+    // failure is logged and swallowed, never propagated into a committed
+    // Track 1 result.
+    logEvent({
+      event: "advance_failed",
       error_cause: (err as Error)?.message ?? "unknown",
       organization_id: input.organizationId,
       review_id: input.reviewId,

@@ -44,16 +44,30 @@ type CardRejectedCandidate = {
 // layer" section. Never a verdict/confidence/answer field.
 //
 // NOT the same thing as "Advance" (docs/guide/proposals/system-definition-synthesis.md
-// Part 11) — Advance's own suggestion contract (0-2 items, sendMessage on
-// click) is not wired into reviewFlow.ts/this card's data at all yet. The
-// pill-click-to-send interaction pattern below is applied here to what's
-// actually real today (Challenge items), so it's honest about what exists —
-// not a claim that Advance itself is live.
+// Part 11) — Advance is a separate, newer system (see the AdvanceSuggestion
+// type and the `notary-advance` render block below, its own section,
+// structurally distinct from this one). Both now consume the same
+// pill-click-to-send interaction pattern; ChallengeItem stays frozen
+// (its `track2_enabled` org flag is off) while Advance is the system that
+// actually gets real, live-generated suggestions wired through it.
 type ChallengeItem = {
   challenge_type: "ambiguity" | "missing_assumption" | "alternative_interpretation" | "evidence_request" | "adversarial_test";
   prompt: string;
   why_it_matters: string;
   action: "clarify_claim" | "add_source" | "open_evidence" | "ask_host" | "draft_test" | "leave_unchanged";
+};
+
+// Advance (Track 2 v2) — mirrors engine/src/advance/types.ts's
+// AdvanceSuggestion exactly (also re-declared, wire-shape only, in
+// server/src/mocks/scenarios.ts's AdvanceSuggestion). This IS the "Advance"
+// this file's own comment above named as "not wired into reviewFlow.ts/this
+// card's data at all yet" — it is now real. No verdict, confidence, score, or
+// answer field, same discipline as ChallengeItem.
+type AdvanceSuggestion = {
+  id: string;
+  short_label: string;
+  move: "clarify" | "test" | "compare" | "repair";
+  prompt: string;
 };
 
 type ReviewCardData = {
@@ -71,6 +85,10 @@ type ReviewCardData = {
   // absent or empty, the "What to pressure-test" register simply doesn't
   // render — this is a coordination-by-contract dependency, not a hard one.
   challenges?: ChallengeItem[];
+  // Advance's 0-2 next-move suggestions. Structurally SEPARATE from
+  // `challenges` above — a different system, a different authority level —
+  // and rendered in its own section below, never merged into one list.
+  advance_suggestions?: AdvanceSuggestion[];
 };
 
 type SourceRef = {
@@ -320,6 +338,10 @@ export default function App() {
   // At most 4 total, per the plan doc's cap — already enforced server-side
   // (server/src/engineClient.ts), sliced again here defensively.
   const challenges = (data.challenges ?? []).slice(0, 4);
+  // Advance — at most 2 per Part 11's cardinality contract, already enforced
+  // server-side (server/src/engineClient.ts's MAX_ADVANCE_SUGGESTIONS),
+  // sliced again here defensively, same discipline as `challenges` above.
+  const advanceSuggestions = (data.advance_suggestions ?? []).slice(0, 2);
 
   // The finding icon's hover/title text: the single finding's own reason
   // when there's one, or a plain count when there are several — never a
@@ -396,8 +418,7 @@ export default function App() {
       {/* Dismiss stays as the one purely local action — no host round trip,
           no ask-Claude semantics. Everything else that used to be a
           Track-1-owned button (Qualify, Replace, Recheck) is either folded
-          into the pill mechanism below (once Advance is wired — not yet,
-          see the module comment on ChallengeItem) or dropped: "Recheck" is
+          into the Advance pill mechanism below or dropped: "Recheck" is
           gone because the normal flow already re-invokes the tool for free
           when Claude's next answer makes another checkable claim — likely,
           not code-guaranteed, an accepted trade (§ Part 11). */}
@@ -457,6 +478,37 @@ export default function App() {
                   fullText={`${label}: ${c.prompt}`}
                   busy={busy === busyKey}
                   onCommit={() => sendToHost(busyKey, `${label}: ${c.prompt}`)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {/* Advance (Track 2 v2) — structurally SEPARATE from the "What to
+          pressure-test" register above: a different system, a different
+          authority level (a next-move suggestion about the user's broader
+          task, not a question about this claim's finding). Reuses the exact
+          same pill/sendToHost mechanism already built and tested against the
+          real host above — not a new interaction pattern, just real data
+          flowing through it for the first time. `short_label` is the text
+          at rest (Advance, unlike Track 1, has to say what it's proposing
+          before the user engages with it — see the module comment on
+          ChallengeItem above); `prompt` is the full, already-validated ask,
+          revealed on first interaction (or hover) and sent verbatim on the
+          second. Renders nothing when the engine produced zero suggestions —
+          a correct, expected result, never a broken state. */}
+      {advanceSuggestions.length > 0 && (
+        <div className="notary-advance">
+          <div className="notary-advance-pills">
+            {advanceSuggestions.map((s) => {
+              const busyKey = `advance:${s.id}`;
+              return (
+                <ActionPill
+                  key={s.id}
+                  label={s.short_label}
+                  fullText={s.prompt}
+                  busy={busy === busyKey}
+                  onCommit={() => sendToHost(busyKey, s.prompt)}
                 />
               );
             })}

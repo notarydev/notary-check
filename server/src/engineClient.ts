@@ -16,6 +16,7 @@ import type {
   CardRejectedCandidate,
   CardEvidenceOrigin,
   ChallengeItem,
+  AdvanceSuggestion,
 } from "./mocks/scenarios.js";
 
 // Read lazily, not as module-level constants: ES module imports are hoisted
@@ -104,6 +105,16 @@ interface ClaimResult {
   // track2_enabled flag off (or a review with no material claims) legitimately
   // sends no challenges at all, which must render as "none" rather than error.
   challenges?: unknown;
+  // Advance (Track 2 v2) — PRESENT in the engine's response
+  // (engine/src/routes/reviews.ts maps its internal AdvanceSuggestion[] to
+  // this wire shape). Structurally separate from `challenges` above: a
+  // different system, a different authority level. Typed `unknown` and
+  // parsed strictly (parseAdvanceSuggestions below), same discipline as
+  // every other model-sourced wire field this client trusts nothing about
+  // just because it's present — absent user_request, an exhausted quota, an
+  // active kill switch, or a validation rejection all legitimately produce
+  // no suggestions at all, which must render as "none", never an error.
+  advance_suggestions?: unknown;
 }
 
 // Locked output contract, quoted from the plan doc — see ChallengeItem in
@@ -141,6 +152,42 @@ function parseChallengeItems(raw: unknown): ChallengeItem[] {
       action: action as ChallengeItem["action"],
     });
     if (out.length === 2) break;
+  }
+  return out;
+}
+
+// Advance's closed four-move vocabulary (engine/src/advance/types.ts's
+// AdvanceMove) and exact key set (engine/src/advance/types.ts's
+// AdvanceSuggestion: id, short_label, move, prompt — nothing else). Same
+// strict-parsing discipline as parseChallengeItems above: a sneaked-in field
+// (confidence/verdict/anything else) rejects that item outright rather than
+// being silently accepted, mirroring what engine/src/advance/validator.ts
+// already enforces server-side — this is the SECOND, independent guard at the
+// wire boundary, not a substitute for it.
+const ADVANCE_MOVES = new Set(["clarify", "test", "compare", "repair"]);
+const ADVANCE_KEYS = ["id", "short_label", "move", "prompt"];
+
+// At most MAX_ADVANCE_SUGGESTIONS per review (Part 11: "0, 1, or 2
+// suggestions" is per-invocation — the engine's own call is per-claim today,
+// see review/reviewFlow.ts's runAdvanceForClaim, so this cap is what keeps a
+// multi-claim answer from surfacing more than the per-invocation cardinality
+// the design actually specifies).
+const MAX_ADVANCE_SUGGESTIONS = 2;
+
+function parseAdvanceSuggestions(raw: unknown): AdvanceSuggestion[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AdvanceSuggestion[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const keys = Object.keys(item);
+    if (keys.length !== ADVANCE_KEYS.length || !ADVANCE_KEYS.every((k) => keys.includes(k))) continue;
+    const { id, short_label, move, prompt } = item as Record<string, unknown>;
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (typeof short_label !== "string" || short_label.length === 0) continue;
+    if (typeof move !== "string" || !ADVANCE_MOVES.has(move)) continue;
+    if (typeof prompt !== "string" || prompt.length === 0) continue;
+    out.push({ id, short_label, move: move as AdvanceSuggestion["move"], prompt });
+    if (out.length === MAX_ADVANCE_SUGGESTIONS) break;
   }
   return out;
 }
@@ -228,6 +275,7 @@ async function submitClaim(
   claim: ExtractedClaim,
   evidenceIds: string[],
   apiKey: string,
+  userRequest?: string,
 ): Promise<SubmitOutcome> {
   try {
     const res = await engineFetch(
@@ -240,6 +288,12 @@ async function submitClaim(
           materiality: claim.materiality,
           claim_fields: claim.claimFields,
           evidence_ids: evidenceIds,
+          // Advance needs the user's own original ask — passed straight
+          // through, verbatim, never invented here. Omitted from the body
+          // entirely when absent (undefined is dropped by JSON.stringify),
+          // which the engine's own schema already treats as "optional, skip
+          // Advance for this claim" rather than a validation error.
+          user_request: userRequest,
         }),
       },
       apiKey,
@@ -368,6 +422,7 @@ export async function reviewAnswer(
   answerText: string,
   sourceRefs: SourceRef[],
   apiKey: string = defaultEngineApiKey(),
+  userRequest?: string,
 ): Promise<ReviewCardData> {
   const extraction = await extractClaims(answerText, apiKey);
   if (!extraction.ok) {
@@ -415,9 +470,10 @@ export async function reviewAnswer(
     const issueFindings: Finding[] = [];
     const uncheckedFindings: Finding[] = [];
     const challenges: ChallengeItem[] = [];
+    const advanceSuggestions: AdvanceSuggestion[] = [];
 
     for (const claim of materialClaims) {
-      const outcome = await submitClaim(reviewId, claim, evidenceIds, apiKey);
+      const outcome = await submitClaim(reviewId, claim, evidenceIds, apiKey, userRequest);
       // Bug fix: a failed/undefined submission used to `continue` here with no
       // finding recorded at all — silently dropping the claim from both
       // issueFindings and uncheckedFindings, so a mixed review (one claim
@@ -448,10 +504,23 @@ export async function reviewAnswer(
       if (challenges.length < 4) {
         challenges.push(...parseChallengeItems(outcome.result.challenges).slice(0, 4 - challenges.length));
       }
+      // Advance — capped at MAX_ADVANCE_SUGGESTIONS (2) for the whole review,
+      // same first-come discipline as challenges' own cap above: the engine
+      // calls Advance per claim submission today (review/reviewFlow.ts's
+      // runAdvanceForClaim), but Part 11's cardinality contract is per
+      // INVOCATION (0-2 total), so this is the client-side enforcement of
+      // that invariant until/unless the engine grows a single per-review
+      // Advance call.
+      if (advanceSuggestions.length < MAX_ADVANCE_SUGGESTIONS) {
+        advanceSuggestions.push(
+          ...parseAdvanceSuggestions(outcome.result.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS - advanceSuggestions.length),
+        );
+      }
     }
 
     const scope = `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;
     const challengesField = challenges.length > 0 ? challenges : undefined;
+    const advanceSuggestionsField = advanceSuggestions.length > 0 ? advanceSuggestions : undefined;
 
     if (issueFindings.length > 0) {
       return {
@@ -460,6 +529,7 @@ export async function reviewAnswer(
         findings: issueFindings,
         actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
         challenges: challengesField,
+        advance_suggestions: advanceSuggestionsField,
       };
     }
     // Bug fix: this used to require `uncheckedFindings.length === materialClaims.length`
@@ -473,7 +543,7 @@ export async function reviewAnswer(
     if (uncheckedFindings.length > 0) {
       return { status: "could_not_check", scope: uncheckedFindings[0].text, actions: [] };
     }
-    return { status: "no_issue", scope, actions: [] };
+    return { status: "no_issue", scope, actions: [], advance_suggestions: advanceSuggestionsField };
   } catch (err) {
     const correlationId = randomUUID();
     console.error(`[reviewAnswer] review failed, correlation_id=${correlationId}:`, err);

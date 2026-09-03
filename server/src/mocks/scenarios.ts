@@ -61,6 +61,19 @@ export type ChallengeItem = {
   action: "clarify_claim" | "add_source" | "open_evidence" | "ask_host" | "draft_test" | "leave_unchanged";
 };
 
+// Advance (Track 2 v2) — the CURRENT "Track 2" per docs/guide/proposals/
+// system-definition-synthesis.md Part 11, a separate system from ChallengeItem
+// above (which is Track 2 v1, frozen, still shipped dark). Mirrors
+// engine/src/advance/types.ts's AdvanceSuggestion exactly: id, short_label,
+// move (one of the closed four-move vocabulary), prompt. No verdict,
+// confidence, score, or answer field — same discipline as ChallengeItem.
+export type AdvanceSuggestion = {
+  id: string;
+  short_label: string;
+  move: "clarify" | "test" | "compare" | "repair";
+  prompt: string;
+};
+
 export type ReviewCardData = {
   status: "no_issue" | "issue_found" | "could_not_check";
   scope: string;
@@ -81,6 +94,11 @@ export type ReviewCardData = {
   // Optional, defensive: absent whenever the engine hasn't landed Track 2 yet,
   // or produced zero items. Never rendered above the evidence record.
   challenges?: ChallengeItem[];
+  // Advance's 0-2 next-move suggestions. Structurally SEPARATE from
+  // `challenges` — different system, different authority level, rendered
+  // differently by the UI (§ Part 11's icon-vs-pill design). Never merged
+  // into the same array.
+  advance_suggestions?: AdvanceSuggestion[];
 };
 
 // Scenario A — correct answer, nothing to flag.

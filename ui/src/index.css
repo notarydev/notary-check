@@ -227,6 +227,24 @@ body {
   padding: 3px 2px;
 }
 
+/* Advance (Track 2 v2) — its own section, visually distinct from Track 2/
+   Challenge above it: this is a proposed NEXT MOVE about the user's broader
+   task, not a question about the finding on this card. Same subordinate
+   treatment (below the evidence record, muted, no severity styling), its own
+   border-top so the two registers never visually blend into one list. */
+.notary-advance {
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+  margin-top: 10px;
+}
+
+.notary-advance-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-start;
+}
+
 /* One pill = one interaction, on every device, without detecting touch vs.
    mouse: first interaction reveals the full text (hover on desktop is a
    free shortcut to the same reveal; click works identically everywhere),

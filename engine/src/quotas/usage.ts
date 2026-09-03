@@ -135,6 +135,31 @@ export function usageEventFromChallengeCall(record: JudgeCallRecord, meta: Judge
   };
 }
 
+/**
+ * Maps an ADVANCE-GENERATION call's record to a UsageEvent row. Same
+ * arithmetic, own event_type — same rationale as challenge_generation's own
+ * split: Advance is an additional DeepSeek call per invocation on top of the
+ * field-judging (and, where enabled, Challenge) calls, and folding it into
+ * "judge_call" would hide exactly the cost question the quota gate exists to
+ * answer. This is what makes an Advance call visible to checkQuota's sums —
+ * see engine/src/advance/liveGenerate.ts's quota gate, which is only
+ * meaningful if every call that passes it is also recorded here.
+ */
+export function usageEventFromAdvanceCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+  const inputTokens = record.inputTokens ?? 0;
+  const outputTokens = record.outputTokens ?? 0;
+  return {
+    organizationId: meta.organizationId,
+    userId: meta.userId,
+    reviewId: meta.reviewId,
+    eventType: "advance_generation",
+    inputTokens,
+    outputTokens,
+    fetchBytes: 0,
+    estimatedCostCents: estimateDeepSeekCostCents(inputTokens, outputTokens),
+  };
+}
+
 /** Inserts a usage_event row. Returns the created row's id. */
 export async function insertUsageEvent(db: pg.Pool, event: UsageEventShape): Promise<string> {
   const result = await db.query(

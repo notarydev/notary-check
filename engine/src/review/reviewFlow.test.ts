@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type pg from "pg";
+import type { JudgeCallInput, JudgeClient, JudgeCallResult } from "../judge/judgeClient.ts";
 import type { ClaimFields } from "../verification/applicability.ts";
 import { runReview } from "./reviewFlow.ts";
 import { createOrganization, createReview, freshPool, HAS_DB } from "../test/db.ts";
@@ -683,6 +684,234 @@ test(
     } finally {
       if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
       else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      await pool.end();
+    }
+  },
+);
+
+// ── ADVANCE — concurrent-not-blocking, and the no-user_request skip ────────
+//
+// Advance runs alongside Track 2/Challenge (Promise.all), strictly AFTER
+// Track 1's claim + evidence_match rows are already committed. These tests
+// prove the two correctness properties the handoff explicitly calls for:
+// (1) Track 1's own result is identical whether or not a user_request (and
+// therefore Advance) was supplied, and identical even when Advance's own
+// call is slow or fails; (2) no user_request means Advance is skipped
+// entirely — no client invocation, a 'skipped' advance_invocation row, never
+// a guess.
+
+/** A judge client that counts calls, delays briefly, and returns one legal
+ * clarify suggestion — used to prove Advance can run without altering or
+ * delaying the Track 1 result already computed above it. */
+function delayedAdvanceClient(delayMs: number): { client: JudgeClient; calls: () => number } {
+  let calls = 0;
+  const client: JudgeClient = {
+    async call(_input: JudgeCallInput): Promise<JudgeCallResult> {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return {
+        status: "ok",
+        record: {
+          model: "deepseek-v4-flash",
+          promptVersion: "v",
+          question: "q",
+          answer: JSON.stringify({
+            suggestions: [{ id: "s1", short_label: "Confirm the FY period", move: "clarify", prompt: "Ask which fiscal period this figure covers." }],
+          }),
+          inputTokens: 50,
+          outputTokens: 20,
+        },
+      };
+    },
+  };
+  return { client, calls: () => calls };
+}
+
+/** A judge client whose call always throws — proves an Advance transport
+ * failure cannot propagate into or alter a committed Track 1 result. */
+function throwingAdvanceClient(): JudgeClient {
+  return {
+    async call(_input: JudgeCallInput): Promise<JudgeCallResult> {
+      throw new Error("simulated advance transport failure");
+    },
+  };
+}
+
+test(
+  "Advance running alongside Track 2/Challenge does not delay or alter Track 1's own committed result",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
+
+      const { client: advanceClient, calls } = delayedAdvanceClient(50);
+      const started = performance.now();
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          materiality: true,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [evidenceId],
+          userRequest: "Can you double-check Acme's FY25 revenue growth figure for me?",
+        },
+        pool,
+        { advanceClient },
+      );
+      const elapsedMs = performance.now() - started;
+
+      // Track 1's own finding — identical to the plain SUPPORTED test above,
+      // unaffected by Advance running concurrently alongside it.
+      assert.equal(result.state, "SUPPORTED");
+      assert.equal(result.stateReason, "supporting_applicable_relation");
+      assert.equal(result.matches.length, 1);
+      assert.equal(result.lifecycle, "completed");
+      assert.equal(result.checksCompleted, true);
+
+      // Advance actually ran (concurrently, not skipped) and returned its one
+      // suggestion, proving this isn't just "Advance never got invoked".
+      assert.equal(calls(), 1);
+      assert.equal(result.advanceSuggestions.length, 1);
+      assert.equal(result.advanceSuggestions[0].move, "clarify");
+
+      // The claim row was committed and is queryable with its real state —
+      // Advance's own concurrent run cannot have delayed that commit past
+      // when this function returns, nor changed what was committed.
+      const claim = (await pool.query("SELECT state FROM claim WHERE id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
+      assert.equal(claim.state, "SUPPORTED");
+
+      // Loose latency sanity check: Track 2/Challenge and Advance run via
+      // Promise.all, not sequential awaits, so total added latency should be
+      // roughly ONE 50ms delay's worth, not stacked — this is a smoke check,
+      // not a precise timing assertion (CI/network jitter), so the bound is
+      // generous.
+      assert.ok(elapsedMs < 2_000, `expected concurrent execution to stay well under 2s, took ${elapsedMs}ms`);
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "an Advance transport failure never propagates into or alters a committed Track 1 result",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
+
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          materiality: true,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [evidenceId],
+          userRequest: "Can you double-check Acme's FY25 revenue growth figure for me?",
+        },
+        pool,
+        { advanceClient: throwingAdvanceClient() },
+      );
+
+      // Track 1 unaffected by the thrown error inside Advance's own call.
+      assert.equal(result.state, "SUPPORTED");
+      assert.equal(result.matches.length, 1);
+      assert.equal(result.lifecycle, "completed");
+      // Advance degrades to zero suggestions rather than the failure
+      // propagating out of runReview() entirely (never THROWS — same
+      // subordination discipline as Track 2/Challenge).
+      assert.deepEqual(result.advanceSuggestions, []);
+
+      const invocationRow = (
+        await pool.query("SELECT status, error FROM advance_invocation WHERE claim_id = $1", [result.claimId])
+      ).rows[0] as Record<string, unknown>;
+      assert.equal(invocationRow.status, "error");
+      assert.equal(invocationRow.error, "simulated advance transport failure");
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "no user_request supplied: Advance is skipped entirely — no client call, zero suggestions, a 'skipped' advance_invocation row",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
+
+      const { client: advanceClient, calls } = delayedAdvanceClient(0);
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          materiality: true,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [evidenceId],
+          // userRequest intentionally omitted.
+        },
+        pool,
+        { advanceClient },
+      );
+
+      assert.equal(result.state, "SUPPORTED", "Track 1 is unaffected by the absence of a user_request");
+      assert.deepEqual(result.advanceSuggestions, []);
+      assert.equal(calls(), 0, "the judge client must never be invoked with no user_request");
+
+      const invocationRow = (
+        await pool.query("SELECT status, error FROM advance_invocation WHERE claim_id = $1", [result.claimId])
+      ).rows[0] as Record<string, unknown>;
+      assert.equal(invocationRow.status, "skipped");
+      assert.equal(invocationRow.error, "no_user_request");
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "an empty-string user_request is treated identically to an absent one — skipped, never a guess",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
+
+      const { client: advanceClient, calls } = delayedAdvanceClient(0);
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          materiality: true,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [evidenceId],
+          userRequest: "   ",
+        },
+        pool,
+        { advanceClient },
+      );
+
+      assert.deepEqual(result.advanceSuggestions, []);
+      assert.equal(calls(), 0);
+    } finally {
       await pool.end();
     }
   },
