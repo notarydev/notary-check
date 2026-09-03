@@ -1,6 +1,6 @@
 > Status: snapshot
 > Owner: Hardyk
-> Last verified: 2026-09-02 (live-endpoint verification pass — see "Live verification" section below)
+> Last verified: 2026-09-03 (live production deploy — audit fixes + Clerk auth + Advance wiring; see "2026-09-03 deploy" section below)
 > Supersedes: —
 
 # Notary Check — Architecture and infrastructure progress
@@ -18,7 +18,7 @@ Four real subprojects under `notary-check/`:
 | Dir | What it is | Status |
 |---|---|---|
 | `engine/` | Node/TS/Express API on Postgres, no ORM (raw SQL migrations). The actual verification pipeline — claim extraction, evidence ingestion, applicability, judge, state machine, billing, quotas. | Most-built component, live and confirmed working end-to-end by direct testing (see "Live verification" below) — including DeepSeek and Tier A.5 normalization actually firing, not just configured. |
-| `server/` | Thin MCP server (Express + MCP SDK + `ext-apps`), calls `engine/` over HTTP. | **Live at `mcp.getnotary.ai`, confirmed reachable and functional by direct MCP protocol calls — but running an OLDER build with no Clerk OAuth gating at all** (see below). The Clerk OAuth work in this checkout has not been deployed there yet. |
+| `server/` | Thin MCP server (Express + MCP SDK + `ext-apps`), calls `engine/` over HTTP. | **Live at `mcp.getnotary.ai`, running the current build as of 2026-09-03** — Clerk OAuth is now gating both MCP POST routes (confirmed live: unauthenticated `POST /mcp` returns `401` with a real `WWW-Authenticate` challenge pointing at `clerk.getnotary.ai`). |
 | `ui/` | React/Vite app, builds to one inlined HTML file served as the MCP App resource. | Live, minimal — just the card renderer. |
 | `dashboard/` | Next.js 16 App Router app — landing page + `/account` billing page, Clerk auth. | This checkout's `dashboard/` has never been confirmed live anywhere. **A live, polished marketing site exists at `getnotary.ai`** (real copy, real title, Cloudflare-fronted) that does not match this checkout's code at all (this checkout's `layout.tsx` still had the unedited `create-next-app` title before this session's edits) — status of that site relative to this repo is unresolved, flagged as stale/needs-update by the product owner, not yet investigated further. |
 
@@ -30,11 +30,11 @@ The engine is live on **AWS Lightsail Container Service**, region `us-east-2` �
 
 There's a real contradiction sitting in the repo: `engine/wrangler.jsonc`, `engine/worker/container.ts`, and a `@cloudflare/containers` dependency scaffold a **Cloudflare** Container deployment path instead. Nothing indicates this path was ever actually used — no `wrangler deploy` in any script, no CI, no Cloudflare account reference beyond the scaffold itself, and the live `ENGINE_URL` is a Lightsail domain, not a Workers domain. Read this as: Cloudflare was evaluated or partially built out, then Lightsail is what actually shipped. Worth deleting the Cloudflare scaffold or explicitly marking it dead, so a future reader doesn't assume it's the deploy target.
 
-**Corrected 2026-09-02**: the `server/` MCP layer's deployment target IS now established — it's live and reachable at `https://mcp.getnotary.ai/`, DNS-confirmed pointing at a Lightsail container endpoint, and directly verified by driving the real MCP protocol against it (`initialize`, `tools/list`, and multiple real `tools/call` invocations of `review_source_backed_answer` — see "Live verification" below). What's actually deployed there is an **older build with no Clerk auth at all** — `POST /` accepts requests with no bearer token, no 401 challenge, no `.well-known/oauth-protected-resource/mcp` route (404s). This checkout's Clerk OAuth wiring (`mcpAuthClerk`, the org-resolution work) has not been deployed to this endpoint. Do not assume the two are in sync — verify against the live endpoint again after any deploy.
+**Corrected 2026-09-02, superseded 2026-09-03**: the `server/` MCP layer's deployment target IS established — it's live and reachable at `https://mcp.getnotary.ai/`, DNS-confirmed pointing at a Lightsail container endpoint. **As of 2026-09-03, the live deployment is the current build**, redeployed as image `:notary-check-mcp.server.10` (Lightsail deployment version 7). Clerk OAuth is now live: `.well-known/oauth-protected-resource/mcp` resolves and points at `clerk.getnotary.ai`; an unauthenticated `POST /mcp` returns `401` with a real `WWW-Authenticate` challenge. `INTERNAL_SERVICE_SECRET` and live Clerk keys (`CLERK_SECRET_KEY`/`CLERK_PUBLISHABLE_KEY`) are now set on this container service's env — previously absent. Do not assume this stays in sync automatically — verify against the live endpoint again after any future deploy.
 
 ### Database — plain Postgres, not Neon
 
-No ORM — raw SQL migrations (`engine/migrations/0001`–`0011`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; what the live Lightsail deployment's `DATABASE_URL` actually points at (Lightsail's own managed Postgres, a co-located container, RDS, or something else) isn't recorded anywhere in this repo and is worth confirming and documenting explicitly, since it's currently unknowable from source alone.
+No ORM — raw SQL migrations (`engine/migrations/0001`–`0013`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package. All 13 migrations are applied to the live production database as of 2026-09-03 (migrations `0007`–`0013` were run live that day, after a verified `pg_dump` backup was taken first; `0001`–`0006` were already applied). Migration `0013_advance.sql` adds `advance_invocation`/`advance_suggestion`/`advance_event` for the Advance (Track 2 v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; what the live Lightsail deployment's `DATABASE_URL` actually points at (Lightsail's own managed Postgres, a co-located container, RDS, or something else) isn't recorded anywhere in this repo and is worth confirming and documenting explicitly, since it's currently unknowable from source alone.
 
 **Schema, as it stands** (all raw SQL, no schema file to point to instead):
 - `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007). Still has **no `created_at` column** — `GET /v1/organization` (below) returns `created_at: null` rather than inventing one.
@@ -99,6 +99,17 @@ Both live AWS Lightsail container services, region `us-east-2`, both currently `
 | `clerk.getnotary.ai` | Live `dig`, 2026-09-02 (CNAME resolves to Clerk's own frontend-api / Cloudflare) | **Confirmed live** — previously only described in `HANDOFF.md` prose, now independently verified. |
 | `notarycheck.ai` | `dashboard/src/app/account/page.tsx` (`sales@notarycheck.ai` mailto) | Does not resolve (`dig` returned nothing, 2026-09-02) — this mailto address's domain is not live. |
 
+## 2026-09-03 deploy — audit fixes, Clerk auth, and Advance now live
+
+Both live Lightsail container services were redeployed with the current checkout's code:
+
+- **`notary-check-api`** (engine): new image `:notary-check-api.engine.11`, deployment version 5. Ships all 5 audit-P0 fixes, the entitlement gate, live-mode-ready billing lifecycle, ops groundwork (rate limiting, backup/restore, kill-switch runbook) — all previously committed but not yet deployed — plus the new Advance wiring (below). `INTERNAL_SERVICE_SECRET` added to its env (previously unset, meaning `/v1/internal/resolve-organization` was failing closed).
+- **`notary-check-mcp`** (server): new image `:notary-check-mcp.server.10`, deployment version 7. Clerk auth (`clerkMiddleware`, `mcpAuthClerk`) is now live-gating both MCP routes — confirmed via a real unauthenticated `POST /mcp` returning `401` with a working `WWW-Authenticate` challenge. `INTERNAL_SERVICE_SECRET` and live Clerk keys added to its env (previously absent).
+- **Production database**: a `pg_dump` backup was taken and verified restorable (`pg_restore --list` confirmed real table data) immediately before running migrations. Migrations `0007`–`0013` were then applied via `engine/src/migrate.ts` against the live DB — each runs in its own transaction, all applied cleanly.
+- **Advance (Track 2 v2) wired into the product for the first time**: previously an isolated, unwired module (`engine/src/advance/`). Now: new persistence tables (migration `0013`), the MCP tool schema accepts an optional `user_request` field (Advance is skipped, not guessed, when absent), Advance runs concurrently with Track 1 and Track 2/Challenge inside `reviewFlow.ts` — strictly after Track 1's result is committed, never gating or altering it — and is now kill-switch- and quota-gated (previously a known gap). The review response carries `advance_suggestions` separately from `challenges`; the UI renders it through the existing pill mechanism.
+- **Verified post-deploy**: `GET /.well-known/oauth-protected-resource/mcp` resolves real Clerk metadata; unauthenticated `POST /mcp` gets a real `401`; an authenticated `POST /v1/reviews` against the live engine successfully created a real review row, confirming DB connectivity and the entitlement check both work post-migration.
+- **Not yet re-verified live**: a real end-to-end MCP `tools/call` producing an `advance_suggestions` payload through the deployed connector (verified locally with real Postgres + DeepSeek during the build, not yet re-run against the redeployed live endpoint).
+
 ## Live verification, 2026-09-02 — direct testing against `mcp.getnotary.ai`, not repo inspection
 
 Everything in this repo's earlier snapshots about `server/`'s live status was inferred from source/`.env` files, never from actually calling the deployed service. This section corrects that — four isolated `tools/call` requests, run directly against `https://mcp.getnotary.ai/`, each changing exactly one variable from the last:
@@ -117,8 +128,8 @@ Everything in this repo's earlier snapshots about `server/`'s live status was in
 ## Honest status summary
 
 **Actually live, verified**:
-- Engine on AWS Lightsail (live domain + working API key format).
-- `server/` MCP endpoint at `mcp.getnotary.ai` — live, real protocol responses, real judge + Tier A.5 normalization confirmed firing (see "Live verification" above). **Running an older build with no Clerk auth** — the OAuth wiring in this checkout is not what's deployed there.
+- Engine on AWS Lightsail (live domain + working API key format), running the current build as of 2026-09-03 (all audit-P0 fixes, entitlement, billing lifecycle, Advance) with all 13 migrations applied to production.
+- `server/` MCP endpoint at `mcp.getnotary.ai` — live, real protocol responses, real judge + Tier A.5 normalization confirmed firing (see "Live verification" below). **As of 2026-09-03, running the current build with Clerk OAuth actually gating both MCP routes** — confirmed via a real `401`/`WWW-Authenticate` response to an unauthenticated call.
 - `clerk.getnotary.ai` custom domain — confirmed via live `dig`, no longer just prose.
 - `getnotary.ai` — a live marketing site, but a separate/unreconciled asset from this checkout's `dashboard/`; flagged by the product owner as stale, needs a refresh.
 - Engine test suite genuinely passing at 208/212 (0 failures) against a real local Postgres.

@@ -9,7 +9,7 @@
 > to `~/Downloads/notary-check-tracker.html`) — rebuilt 2026-09-03 to lead
 > with "what's left and who owns it" instead of a chronological narrative.
 
-**Last updated**: 2026-09-03 — Two rounds of external review, both independently checked against source rather than trusted, real bugs found and fixed in each, all pushed to `origin/main`. See the two review callouts below for detail. Rounds 1 and 2 of the alpha build (all 5 audit P0s, Track 2, entitlement, billing, ops groundwork) remain complete as of 2026-09-02.
+**Last updated**: 2026-09-03 — **Deployed to production.** Advance (Track 2 v2) was wired into the product for the first time (persistence tables, connector `user_request` field, concurrent-with-Track-1 generation, quota/kill-switch gating, real UI data), then both live Lightsail services were redeployed with the current build: audit-P0 fixes, entitlement, billing lifecycle, ops groundwork, Clerk auth, and Advance are now all live at `mcp.getnotary.ai` / `api.getnotary.ai`. A verified `pg_dump` backup was taken before running migrations `0007`–`0013` against the live production database. See `docs/build/architecture-and-progress.md`'s "2026-09-03 deploy" section for full detail. Two rounds of external review (independently checked against source, real bugs found and fixed) preceded this and remain complete — see the review callouts below.
 
 **Re-verified fresh after the push** (real local Postgres via the `notary-check-pg` container, not mocked): engine 291 tests / 199 pass / 0 fail / 92 skipped, server 3/3, `ui` build clean, all three typecheck clean. The skip count differs from the figure quoted earlier in this file (was 4, now 92) only because this shell has no live `DEEPSEEK_API_KEY` configured — those skipped tests are the live-model-gated ones, not a regression. Also found and fixed in this pass: a stale `dist/` build directory (gitignored, local-only) was causing a false failure when tests were run via bare `node --test` instead of `npm test`; deleted, re-ran clean.
 
@@ -56,8 +56,8 @@ Owner tags used below: **you** (decision/action only you can make), **build** (p
 Claude OAuth → authenticated connector → engine entitlement check → review card
   → persisted exact evidence → Track 2 → action/recheck → dashboard/history
 ```
-- `you` go-ahead to deploy the current authenticated build.
-- `both` a real Claude client completes the full chain — currently the live connector is still the older unauthenticated build; dashboard/Clerk path never demonstrated live.
+- ✅ **done 2026-09-03**: deployed the current authenticated build to both live Lightsail services (Clerk auth now live-gating the MCP connector).
+- `both` a real Claude client completes the full chain — the connector itself is now the current authenticated build; a full live Claude-session run through OAuth → review → Advance suggestion → dashboard hasn't been re-demonstrated post-deploy yet.
 - `build` **new**: an engine entitlement check — verifies paid/active org status, not just API-key validity.
 - `build`: release revision/migration/config versioning, health/readiness, separate staging env, one rollback drill.
 
@@ -111,11 +111,13 @@ Ran a real, budget-tracked (50-call) live evaluation: 7 hand-crafted adversarial
 
 Adversarial-case read, with the caveat that 2 of 7 (the boundary-narrower-than-context and outside-the-four-moves cases) got caught by the *old, buggy* layer 6 and are therefore inconclusive, not confirmed-good: the other 5 gave clean, trustworthy signals — the model didn't sneak a disallowed move into a single-legal-move state, didn't fact-check Claude's answer itself, didn't pad to 2 suggestions when one was clearly sufficient, and correctly returned 0 when there was genuinely nothing useful to add.
 
-**Not yet done**: no persistence tables, no connector/UI wiring, and no re-confirmation run of the real suggestion-count distribution with the layer-6 fix in place — the 50-call budget authorized for this session is fully spent; that's a fresh, smaller ask for next time. engine 329/237/0/92, typecheck clean, nothing wired into any product path yet.
+**2026-09-03 update — wired into the product and deployed.** Persistence tables (migration `0013`: `advance_invocation`/`advance_suggestion`/`advance_event`), the MCP connector now accepts an optional `user_request` field (skipped, not guessed, when absent), and `reviewFlow.ts` runs Advance concurrently with Track 1/Track 2-Challenge, strictly after Track 1's result is committed. Closed the previously-flagged quota/kill-switch gap. Response carries `advance_suggestions` separately from `challenges`; UI wired to real data through the existing pill mechanism. Verified end-to-end with real Postgres + real DeepSeek (a real contradiction produced a real, guardrail-compliant suggestion; a kill-switch-on run produced zero). Now live in production alongside Track 1 — see `docs/build/architecture-and-progress.md`'s "2026-09-03 deploy" section.
+
+**Not yet done**: Advance currently runs per-claim (mirroring how `runTrack2Challenge` already works), not per-review-invocation as Part 11 originally envisioned — a true per-invocation implementation needs a new engine endpoint; the review-level 0-2 cap is enforced client-side in `server/src/engineClient.ts` in the meantime. No re-confirmation run of the real suggestion-count distribution against live production traffic yet.
 
 ## Paused, waiting on you
 - Held-out eval annotation, pre-pilot gate thresholds, user test plan — all `you`-owned, block everything else in alpha's Learning gate.
 - Named incident/billing-support owner, Terms/Privacy content.
 - Website + pricing/alpha-offer design (you're scoping UI/UX; I build once you hand it over).
-- Deploy-to-Lightsail go-ahead.
-- Round 3 (release versioning/health endpoints/staging env/rollback drill) — not yet started, natural next step once you're ready.
+- Round 3 (release versioning/health endpoints/staging env/rollback drill) — not yet started, natural next step now that both tracks are live.
+- A fresh real Claude-session run through the redeployed connector, now that OAuth + Advance are both actually live — the offline/local verification is done, a live conversational pass is the natural next check.
