@@ -39,9 +39,16 @@ type CardRejectedCandidate = {
   origin: CardEvidenceOrigin;
 };
 
-// Locked Track 2 contract — see docs/build/tier-1-build-and-operating-plan.md's
-// "Track 2 / Challenge layer" section. Never a verdict/confidence/answer
-// field.
+// Locked Track 2 (Challenge, v1 — the shipped-dark, per-claim register) contract.
+// See docs/build/tier-1-build-and-operating-plan.md's "Track 2 / Challenge
+// layer" section. Never a verdict/confidence/answer field.
+//
+// NOT the same thing as "Advance" (docs/guide/proposals/system-definition-synthesis.md
+// Part 11) — Advance's own suggestion contract (0-2 items, sendMessage on
+// click) is not wired into reviewFlow.ts/this card's data at all yet. The
+// pill-click-to-send interaction pattern below is applied here to what's
+// actually real today (Challenge items), so it's honest about what exists —
+// not a claim that Advance itself is live.
 type ChallengeItem = {
   challenge_type: "ambiguity" | "missing_assumption" | "alternative_interpretation" | "evidence_request" | "adversarial_test";
   prompt: string;
@@ -143,11 +150,62 @@ function RejectedCandidateView({ candidate }: { candidate: CardRejectedCandidate
   );
 }
 
+// A pill that requires two interactions to actually send anything, on EVERY
+// device, without needing to detect touch vs. mouse (§ docs/guide/proposals/
+// system-definition-synthesis.md Part 11 "UI interaction model, continued" —
+// hover has no touch equivalent, so the reliable universal pattern is:
+// first interaction reveals the full text, second interaction commits it.
+// Desktop additionally gets hover as a free shortcut to the same preview —
+// never a replacement for the click-twice path, since hover doesn't exist on
+// touch at all.
+function ActionPill({
+  label,
+  fullText,
+  busy,
+  onCommit,
+}: {
+  label: string;
+  fullText: string;
+  busy: boolean;
+  onCommit: () => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <div
+      className={`notary-pill${revealed ? " notary-pill-revealed" : ""}`}
+      onMouseEnter={() => setRevealed(true)}
+      onMouseLeave={() => setRevealed(false)}
+    >
+      <button
+        type="button"
+        className="notary-pill-button"
+        disabled={busy}
+        onClick={() => {
+          if (!revealed) {
+            setRevealed(true);
+            return;
+          }
+          onCommit();
+        }}
+      >
+        {busy ? "…" : label}
+      </button>
+      {revealed && (
+        <div className="notary-pill-preview">
+          {fullText}
+          <div className="notary-pill-preview-hint">Click again to send to Claude</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState<ReviewCardData | null>(null);
   const [toolInput, setToolInput] = useState<ToolInput | null>(null);
   const [dismissed, setDismissed] = useState(false);
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [findingOpen, setFindingOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
 
@@ -156,9 +214,9 @@ export default function App() {
   // postMessage; app.ontoolresult fires with the tool's CallToolResult once
   // review_source_backed_answer completes, and `structuredContent` there is
   // exactly what server.ts returned. ontoolinput fires with the same call's
-  // original arguments — captured here so "Recheck" can re-invoke the tool
-  // with the same answer_text/source_refs (the card is never given those in
-  // its own result payload, only in the separate tool-input notification).
+  // original arguments — kept only for the "as submitted" provenance display
+  // below (the explicit "Recheck" action was dropped — see the note above
+  // the actions row for why).
   const { app } = useApp({
     appInfo: { name: "notary-check", version: "0.1.0" },
     capabilities: {},
@@ -170,7 +228,7 @@ export default function App() {
         if (result.structuredContent) {
           setData(result.structuredContent as unknown as ReviewCardData);
           setDismissed(false);
-          setEvidenceOpen(false);
+          setFindingOpen(false);
           setActionNote(null);
         }
       };
@@ -197,49 +255,21 @@ export default function App() {
 
   if (!data || dismissed) return null;
 
-  async function handleAction(action: string) {
-    if (!data) return;
-    // "Dismiss" and "Open evidence" are pure local UI state and never need
-    // the host connection — resolve them before the `app` check below, so
-    // they still work even in the ?mock= standalone test harness (no real
-    // host to connect to there) and aren't blocked by host latency.
-    if (action === "Dismiss") {
-      setDismissed(true);
-      return;
-    }
-    if (action === "Open evidence" || action === "Open both sources") {
-      setEvidenceOpen((v) => !v);
-      return;
-    }
+  async function sendToHost(label: string, text: string) {
     if (!app) return;
-    setBusy(action);
+    setBusy(label);
     setActionNote(null);
     try {
-      if (action === "Recheck") {
-        const result = await app.callServerTool({
-          name: "review_source_backed_answer",
-          arguments: {
-            answer_text: toolInput?.answer_text ?? "",
-            source_refs: toolInput?.source_refs ?? [],
-          },
-        });
-        if (!result.isError && result.structuredContent) {
-          setData(result.structuredContent as unknown as ReviewCardData);
-          setEvidenceOpen(false);
-        } else {
-          setActionNote("Recheck failed — try again.");
-        }
-        return;
-      }
-      // "Qualify", "Replace with 12%", and any other free-text action: hand
-      // the request to the model as a real message rather than guessing at a
-      // structured action this card has no authority to perform itself —
-      // the card records and surfaces; the user (via Claude) decides.
-      const claimText = data.claim ?? data.findings?.[0]?.label ?? "this claim";
       const result = await app.sendMessage({
         role: "user",
-        content: [{ type: "text", text: `${action}: "${claimText}"` }],
+        content: [{ type: "text", text }],
       });
+      // sendMessage's real behavior (confirmed live, Claude Desktop,
+      // 2026-09-03 — see Part 11): it places the text in the user's own
+      // input box, editable, unsent — it does NOT post automatically. So
+      // "isError" is the only failure signal available to us; a successful
+      // call does not mean the user has sent anything yet, only that the
+      // host accepted staging it. Never claim more than that here.
       if (result.isError) setActionNote("The host didn't accept that action.");
     } catch {
       setActionNote("Something went wrong — try again.");
@@ -248,41 +278,25 @@ export default function App() {
     }
   }
 
-  // Track 2 action routing, per the plan doc: clarify_claim -> qualify_claim
-  // (closest existing match), add_source -> add_source, open_evidence ->
-  // open_evidence, recheck_claim after any of those. ask_host and draft_test
-  // don't map to an existing app-only tool yet (plan doc: "not built
-  // speculatively ahead of need") — those fall back to the same
-  // sendMessage-to-host pattern the rest of this card already uses for
-  // actions with no dedicated tool.
-  async function handleChallengeAction(item: ChallengeItem) {
-    if (item.action === "open_evidence") {
-      setEvidenceOpen((v) => !v);
-      return;
-    }
-    if (item.action === "leave_unchanged") return;
-    if (!app) return;
-    const busyKey = `challenge:${item.prompt}`;
-    setBusy(busyKey);
-    setActionNote(null);
-    try {
-      const label =
-        item.action === "clarify_claim"
-          ? "Qualify"
-          : item.action === "add_source"
-            ? "Add source"
-            : item.action === "ask_host"
-              ? "Ask host"
-              : "Draft test";
-      const result = await app.sendMessage({
-        role: "user",
-        content: [{ type: "text", text: `${label}: ${item.prompt}` }],
-      });
-      if (result.isError) setActionNote("The host didn't accept that action.");
-    } catch {
-      setActionNote("Something went wrong — try again.");
-    } finally {
-      setBusy(null);
+  // Track 2/Challenge action routing, per the plan doc: clarify_claim ->
+  // qualify_claim (closest existing match), add_source -> add_source,
+  // open_evidence -> open_evidence (folded into the same finding-expand
+  // toggle as Track 1's own evidence, not a separate reveal), recheck_claim
+  // after any of those. ask_host and draft_test don't map to an existing
+  // app-only tool yet (plan doc: "not built speculatively ahead of need") —
+  // those fall back to the same sendMessage-to-host pattern.
+  function challengeActionLabel(item: ChallengeItem): string {
+    switch (item.action) {
+      case "clarify_claim":
+        return "Clarify claim";
+      case "add_source":
+        return "Add source";
+      case "ask_host":
+        return "Ask host";
+      case "draft_test":
+        return "Draft test";
+      default:
+        return "Notary";
     }
   }
 
@@ -298,62 +312,103 @@ export default function App() {
     );
   }
 
-  const isTwoBlock = (data.findings?.length ?? 0) > 1;
+  const findings = data.findings ?? [];
+  const isTwoBlock = findings.length > 1;
   const submittedSources = toolInput?.source_refs ?? [];
+  const allMatches = findings.flatMap((f) => f.evidence?.matches ?? []);
+  const allRejected = findings.flatMap((f) => f.evidence?.rejectedCandidates ?? []);
   // At most 4 total, per the plan doc's cap — already enforced server-side
   // (server/src/engineClient.ts), sliced again here defensively.
   const challenges = (data.challenges ?? []).slice(0, 4);
 
+  // The finding icon's hover/title text: the single finding's own reason
+  // when there's one, or a plain count when there are several — never a
+  // severity word, never a color.
+  const findingSummary =
+    findings.length === 1 ? findings[0].label : `${findings.length} things to check`;
+
   return (
     <div className="notary-card">
-      <div className="notary-header">1 thing to check</div>
-      {data.claim && <div className="notary-claim">{data.claim}</div>}
-      {data.findings?.map((f, i) => (
-        <div className="notary-finding" key={i}>
-          <div className="notary-finding-label">{f.label}</div>
-          <div className="notary-finding-text">{f.text}</div>
-          <div className="notary-finding-why">Why: {f.why}</div>
-        </div>
-      ))}
-      {evidenceOpen && (
-        <div className="notary-evidence">
-          {/* The engine's actual resolved evidence — the retained text at the
-              locator, applicability outcome, and honest origin. This is what
-              was actually checked, not the raw submission. */}
-          {data.findings?.flatMap((f) => f.evidence?.matches ?? []).map((m, i) => (
-            <EvidenceMatchView match={m} key={`match-${i}`} />
-          ))}
-          {data.findings?.flatMap((f) => f.evidence?.rejectedCandidates ?? []).map((c, i) => (
-            <RejectedCandidateView candidate={c} key={`rejected-${i}`} />
-          ))}
-          {data.findings?.every((f) => (f.evidence?.matches.length ?? 0) === 0 && (f.evidence?.rejectedCandidates.length ?? 0) === 0) && (
-            <div className="notary-evidence-unresolved">No resolved evidence is on record for this finding.</div>
-          )}
-          {/* Original submitted source references — provenance context only,
-              never presented as the verified passage above. */}
-          {submittedSources.length > 0 && (
-            <div className="notary-evidence-submitted">
-              <div className="notary-evidence-submitted-label">As submitted</div>
-              {submittedSources.map((s, i) => (
-                <div className="notary-evidence-item" key={i}>
-                  {s.url && (
-                    <a href={s.url} target="_blank" rel="noreferrer">
-                      {s.title ?? s.url}
-                    </a>
-                  )}
-                  {s.quoted_excerpt && <div className="notary-evidence-excerpt">&ldquo;{s.quoted_excerpt}&rdquo;</div>}
-                </div>
-              ))}
+      <div className="notary-claim-row">
+        {data.claim && <div className="notary-claim">{data.claim}</div>}
+        {/* Track 1 — a small icon, not a text pill, deliberately: it's
+            pointing at content that already exists (the claim above), so it
+            announces minimally. Hover shows the reason; a single click
+            expands the finding AND its evidence together, in one step — no
+            separate "Open evidence" button (superseded, see Part 11). Size/
+            weight only, modeled on an inline editor problem marker — no
+            color-coded severity, Notary has none. */}
+        <button
+          type="button"
+          className="notary-flag"
+          title={findingSummary}
+          aria-label={findingSummary}
+          aria-expanded={findingOpen}
+          onClick={() => setFindingOpen((v) => !v)}
+        >
+          <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+            <circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          </svg>
+        </button>
+      </div>
+      {findingOpen && (
+        <div className="notary-finding-detail">
+          {findings.map((f, i) => (
+            <div className="notary-finding" key={i}>
+              <div className="notary-finding-label">{f.label}</div>
+              <div className="notary-finding-text">{f.text}</div>
+              <div className="notary-finding-why">Why: {f.why}</div>
             </div>
-          )}
+          ))}
+          <div className="notary-evidence">
+            {/* The engine's actual resolved evidence — the retained text at
+                the locator, applicability outcome, and honest origin. This
+                is what was actually checked, not the raw submission. */}
+            {allMatches.map((m, i) => (
+              <EvidenceMatchView match={m} key={`match-${i}`} />
+            ))}
+            {allRejected.map((c, i) => (
+              <RejectedCandidateView candidate={c} key={`rejected-${i}`} />
+            ))}
+            {allMatches.length === 0 && allRejected.length === 0 && (
+              <div className="notary-evidence-unresolved">No resolved evidence is on record for this finding.</div>
+            )}
+            {/* Original submitted source references — provenance context
+                only, never presented as the verified passage above. */}
+            {submittedSources.length > 0 && (
+              <div className="notary-evidence-submitted">
+                <div className="notary-evidence-submitted-label">As submitted</div>
+                {submittedSources.map((s, i) => (
+                  <div className="notary-evidence-item" key={i}>
+                    {s.url && (
+                      <a href={s.url} target="_blank" rel="noreferrer">
+                        {s.title ?? s.url}
+                      </a>
+                    )}
+                    {s.quoted_excerpt && <div className="notary-evidence-excerpt">&ldquo;{s.quoted_excerpt}&rdquo;</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
+      {/* Dismiss stays as the one purely local action — no host round trip,
+          no ask-Claude semantics. Everything else that used to be a
+          Track-1-owned button (Qualify, Replace, Recheck) is either folded
+          into the pill mechanism below (once Advance is wired — not yet,
+          see the module comment on ChallengeItem) or dropped: "Recheck" is
+          gone because the normal flow already re-invokes the tool for free
+          when Claude's next answer makes another checkable claim — likely,
+          not code-guaranteed, an accepted trade (§ Part 11). */}
       <div className="notary-actions">
-        {data.actions.map((a) => (
-          <button key={a} onClick={() => handleAction(a)} disabled={busy !== null}>
-            {busy === a ? "…" : a}
-          </button>
-        ))}
+        <button
+          type="button"
+          className="notary-dismiss"
+          onClick={() => setDismissed(true)}
+        >
+          Dismiss
+        </button>
       </div>
       {actionNote && <div className="notary-action-note">{actionNote}</div>}
       <div className="notary-scope">{data.scope}</div>
@@ -364,38 +419,48 @@ export default function App() {
           contract in this document before reusing this layout elsewhere.
         </div>
       )}
-      {/* "What to pressure-test" — Track 2, visually subordinate, always below
-          the evidence record above, never a verdict/score/competing claim.
-          Renders nothing when the engine hasn't produced any (or hasn't
-          landed the field at all yet). */}
+      {/* "What to pressure-test" — Track 2/Challenge, visually subordinate,
+          always below the evidence record above, never a verdict/score/
+          competing claim. Renders nothing when the engine hasn't produced
+          any. Pills, not buttons: click once reveals the full text (or
+          hover, on desktop), click again actually sends it. */}
       {challenges.length > 0 && (
         <div className="notary-challenges">
           <div className="notary-challenges-header">What to pressure-test</div>
-          {challenges.map((c, i) => (
-            <div className="notary-challenge-item" key={i}>
-              <div className="notary-challenge-prompt">{c.prompt}</div>
-              <div className="notary-challenge-why">{c.why_it_matters}</div>
-              {c.action !== "leave_unchanged" && (
-                <button
-                  className="notary-challenge-action"
-                  onClick={() => handleChallengeAction(c)}
-                  disabled={busy !== null}
-                >
-                  {busy === `challenge:${c.prompt}`
-                    ? "…"
-                    : c.action === "clarify_claim"
-                      ? "Clarify claim"
-                      : c.action === "add_source"
-                        ? "Add source"
-                        : c.action === "open_evidence"
-                          ? "Open evidence"
-                          : c.action === "ask_host"
-                            ? "Ask host"
-                            : "Draft test"}
-                </button>
-              )}
-            </div>
-          ))}
+          <div className="notary-challenges-pills">
+            {challenges.map((c, i) => {
+              if (c.action === "open_evidence") {
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className="notary-pill-button notary-pill-standalone"
+                    onClick={() => setFindingOpen(true)}
+                  >
+                    {c.prompt}
+                  </button>
+                );
+              }
+              if (c.action === "leave_unchanged") {
+                return (
+                  <span key={i} className="notary-challenge-static">
+                    {c.prompt}
+                  </span>
+                );
+              }
+              const label = challengeActionLabel(c);
+              const busyKey = `challenge:${i}`;
+              return (
+                <ActionPill
+                  key={i}
+                  label={label}
+                  fullText={`${label}: ${c.prompt}`}
+                  busy={busy === busyKey}
+                  onCommit={() => sendToHost(busyKey, `${label}: ${c.prompt}`)}
+                />
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
