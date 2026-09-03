@@ -801,6 +801,16 @@ Prompting is a dial worth turning for an enterprise deployment that controls its
 
 **Independent confirmation of the existing conclusion, worth noting because of where it came from**: the same live test that disconfirmed standing consent produced its own ranked recommendation, unprompted and with no access to this document — "name it every time" (matches row 1 above, 100% observed reliability) and "have your own system call the tool deterministically rather than relying on a model deciding to" (independently re-deriving WATCH, row 4, with no knowledge that's already this doc's own conclusion). A separate Claude session, reasoning from scratch about its own tool-use behavior, arrived at the identical architecture already locked here. Treat that as real corroboration, not just a coincidence to note in passing.
 
+**A related scare, investigated and resolved the same day — worth recording precisely, because the resolution matters as much as the finding.** The same test session ran ~10 obviously-wrong numeric claims (order-of-magnitude errors — a 100°F/73°F mismatch, a 2 km vs. 2,300 km reef length, a $40M vs. $1.4T market cap) through the live connector and got an ~80-90% catch rate, with two cases flip-flopping between "no issue found" and "1 thing to check" on what looked like identical resubmission. That reads, on its face, like the deterministic core itself being unreliable — a serious claim, given the entire architecture's promise rests on "a record earns a state only through an evidence-bound procedure," never a model's variance.
+
+It didn't hold up under a real, controlled test — checked two independent ways, same day:
+1. **Direct reproduction against the current engine code, real DeepSeek calls, fixed input**: `extractClaims()` run 5× and `runReview()` run 5× on the identical Great Barrier Reef claim/evidence pair — zero variance, correctly flagged as `UNSUPPORTED` all 5 times.
+2. **A closer-to-controlled live re-run**, holding `quoted_excerpt`/`title`/`url` exactly fixed across 3 repeats each of two claims (the earlier attempts hadn't tracked this) — 6/6 flagged, zero misses.
+
+**Root cause, per both tests converging**: the apparent "no issue found" misses were not engine non-determinism. The earlier live tests varied the actual tool-call arguments between "identical" attempts without realizing it — Claude itself composes the evidence excerpt sent to Notary's tool fresh each time, and that composition isn't byte-identical between generations even when the visible chat text looks the same. Once the tool-call arguments were actually held fixed, the result was as stable as the isolated engine test showed. **The deterministic core and the judge-involved residual path are both stable under genuinely fixed input** — this incident is a real-world confirmation of the finding, not a new one.
+
+**The practical lesson, not just a relief**: this is exactly why Part 11's offline-evaluation design insists on *frozen* fixture cases rather than regenerated ones for any future accuracy testing — "the same claim in English, asked twice" is not the same as "the same input." Anyone testing detection accuracy going forward needs to hold the actual tool-call payload fixed, not just the surface wording, or they will reproduce this exact false alarm.
+
 ## Architecture
 
 ```text
