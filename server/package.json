@@ -6,7 +6,8 @@
   "main": "src/server.ts",
   "scripts": {
     "start": "tsx src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "keywords": [],
   "author": "",

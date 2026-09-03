@@ -120,3 +120,86 @@ body {
   font-size: 12px;
   color: #999;
 }
+
+.notary-evidence-relation {
+  font-weight: 600;
+  font-size: 12px;
+  color: #333;
+}
+
+.notary-evidence-unresolved {
+  color: #a33;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.notary-evidence-meta {
+  color: #888;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.notary-evidence-rejected {
+  opacity: 0.85;
+}
+
+.notary-evidence-submitted {
+  border-top: 1px dashed #e6e6e6;
+  padding-top: 6px;
+  margin-top: 8px;
+}
+
+.notary-evidence-submitted-label {
+  color: #999;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+
+/* Track 2 / Challenge layer — deliberately visually subordinate to the
+   evidence record above it: smaller type, muted color, no severity styling,
+   never first in the card. See docs/build/tier-1-build-and-operating-plan.md's
+   "Track 2 / Challenge layer" section. */
+.notary-challenges {
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+  margin-top: 10px;
+}
+
+.notary-challenges-header {
+  color: #888;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.notary-challenge-item {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.notary-challenge-prompt {
+  color: #444;
+}
+
+.notary-challenge-why {
+  color: #999;
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+.notary-challenge-action {
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.notary-challenge-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

@@ -9,7 +9,14 @@
 // module does not invent its own compression rule, it implements that one.
 
 import { randomUUID } from "node:crypto";
-import type { ReviewCardData } from "./mocks/scenarios.js";
+import type {
+  ReviewCardData,
+  CardLocator,
+  CardEvidenceMatch,
+  CardRejectedCandidate,
+  CardEvidenceOrigin,
+  ChallengeItem,
+} from "./mocks/scenarios.js";
 
 // Read lazily, not as module-level constants: ES module imports are hoisted
 // and evaluated before any other top-level code in the importing module runs
@@ -51,9 +58,97 @@ interface ExtractedClaim {
   claimFields: ClaimFields;
 }
 
-interface ClaimResult {
-  claim: { id: string; state: string; state_reason: string | null; no_source: boolean };
+// Per-claim LIFECYCLE state, mirrored from engine/src/review/lifecycle.ts:
+// where the claim got to in the pipeline, kept strictly separate from its
+// verification `state` (what the evidence showed). Only "completed" licenses
+// reading `state` as a finding about the world.
+type ClaimLifecycleState = "not_extracted" | "extracted" | "submitted" | "completed" | "not_checkable" | "failed";
+
+// Wire shape of POST /v1/reviews/:reviewId/claims's response body, as
+// actually returned by engine/src/routes/reviews.ts today:
+//   { claim: { id, review_id, state, state_reason, no_source, lifecycle_state,
+//              lifecycle_detail, checks_completed },
+//     matches, rejectedCandidates, evidence_statuses }
+// `matches` mirrors exactly what was just inserted into evidence_match in the
+// same transaction (engine/src/review/reviewFlow.ts) — this is the persisted
+// data, not a separate computation.
+interface EngineMatch {
+  evidenceId: string;
+  relation: "supports" | "contradicts";
+  method: "quoted_or_computed" | "entailed";
+  locator: CardLocator;
 }
+interface EngineRejectedCandidate {
+  evidenceId: string;
+  locator: string | null;
+  mismatchedFields: string[];
+  details: Array<{ field: string; detail: string }>;
+}
+interface ClaimResult {
+  claim: {
+    id: string;
+    state: string;
+    state_reason: string | null;
+    no_source: boolean;
+    lifecycle_state: ClaimLifecycleState;
+    lifecycle_detail: string | null;
+  };
+  matches: EngineMatch[];
+  rejectedCandidates: EngineRejectedCandidate[];
+  // Track 2 / Challenge layer (docs/build/tier-1-build-and-operating-plan.md's
+  // "Track 2 / Challenge layer" section). NOT YET PRESENT in the engine's
+  // actual response as of this writing — confirmed by grepping engine/src for
+  // "challenge"/"track2" (zero hits). Typed here `unknown` and parsed
+  // defensively (parseChallengeItems below) specifically so that landing this
+  // field later doesn't require another round-trip through this file: if it's
+  // absent, findingFor/reviewAnswer below simply produce no challenges.
+  challenges?: unknown;
+}
+
+// Locked output contract, quoted from the plan doc — see ChallengeItem in
+// scenarios.ts. Strict-parsing discipline mirrors
+// engine/src/judge/fieldExtraction.ts's rule for the Track 1 judge: a sneaked-in
+// field (verdict/confidence/answer/anything else) rejects the whole item
+// rather than being silently accepted.
+const CHALLENGE_TYPES = new Set([
+  "ambiguity",
+  "missing_assumption",
+  "alternative_interpretation",
+  "evidence_request",
+  "adversarial_test",
+]);
+const CHALLENGE_ACTIONS = new Set(["clarify_claim", "add_source", "open_evidence", "ask_host", "draft_test", "leave_unchanged"]);
+const CHALLENGE_KEYS = ["challenge_type", "prompt", "why_it_matters", "action"];
+
+// At most 2 challenge items per material claim (plan doc's stated cap).
+function parseChallengeItems(raw: unknown): ChallengeItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ChallengeItem[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const keys = Object.keys(item);
+    if (keys.length !== CHALLENGE_KEYS.length || !CHALLENGE_KEYS.every((k) => keys.includes(k))) continue;
+    const { challenge_type, prompt, why_it_matters, action } = item as Record<string, unknown>;
+    if (typeof challenge_type !== "string" || !CHALLENGE_TYPES.has(challenge_type)) continue;
+    if (typeof prompt !== "string" || prompt.length === 0) continue;
+    if (typeof why_it_matters !== "string" || why_it_matters.length === 0) continue;
+    if (typeof action !== "string" || !CHALLENGE_ACTIONS.has(action)) continue;
+    out.push({
+      challenge_type: challenge_type as ChallengeItem["challenge_type"],
+      prompt,
+      why_it_matters,
+      action: action as ChallengeItem["action"],
+    });
+    if (out.length === 2) break;
+  }
+  return out;
+}
+
+// submitClaim's outcome: either the engine actually responded (ClaimResult),
+// or the submission itself never completed — network error, non-2xx, thrown
+// exception. The latter must never be swallowed as "nothing happened": bug 1
+// was exactly that a `undefined` result here vanished with no finding.
+type SubmitOutcome = { ok: true; result: ClaimResult } | { ok: false };
 
 async function engineFetch(path: string, init: RequestInit, apiKey: string = defaultEngineApiKey()): Promise<Response> {
   return fetch(`${engineUrl()}${path}`, {
@@ -66,7 +161,18 @@ async function engineFetch(path: string, init: RequestInit, apiKey: string = def
   });
 }
 
-async function extractClaims(answerText: string, apiKey: string): Promise<ExtractedClaim[]> {
+type ExtractionResult = { ok: true; claims: ExtractedClaim[] } | { ok: false; reason: string };
+
+// Bug fix: this used to `return []` on any non-2xx response, making an
+// extraction FAILURE (quota denial, provider/parse fault — 429/502 per
+// engine/src/routes/extractClaims.ts) indistinguishable from a genuinely
+// claim-free answer. Both used to collapse to the same empty array one line
+// up the call chain, which is exactly what let reviewAnswer() render
+// "no issue found" when the truth was "Notary never actually looked." The
+// engine now always returns a distinct `extraction_status`/`reason` on
+// failure and omits `claims` entirely (never an empty array) — this function
+// preserves that distinction instead of erasing it.
+async function extractClaims(answerText: string, apiKey: string): Promise<ExtractionResult> {
   const res = await engineFetch(
     "/v1/extract-claims",
     {
@@ -75,9 +181,12 @@ async function extractClaims(answerText: string, apiKey: string): Promise<Extrac
     },
     apiKey,
   );
-  if (!res.ok) return [];
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { reason?: string };
+    return { ok: false, reason: body.reason ?? "unknown" };
+  }
   const body = (await res.json()) as { claims: ExtractedClaim[] };
-  return body.claims;
+  return { ok: true, claims: body.claims };
 }
 
 async function createReview(apiKey: string): Promise<string> {
@@ -118,30 +227,91 @@ async function submitClaim(
   claim: ExtractedClaim,
   evidenceIds: string[],
   apiKey: string,
-): Promise<ClaimResult | undefined> {
-  const res = await engineFetch(
-    `/v1/reviews/${reviewId}/claims`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        text: claim.text,
-        ordinal: claim.ordinal,
-        materiality: claim.materiality,
-        claim_fields: claim.claimFields,
-        evidence_ids: evidenceIds,
-      }),
-    },
-    apiKey,
-  );
-  if (!res.ok) return undefined;
-  return (await res.json()) as ClaimResult;
+): Promise<SubmitOutcome> {
+  try {
+    const res = await engineFetch(
+      `/v1/reviews/${reviewId}/claims`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          text: claim.text,
+          ordinal: claim.ordinal,
+          materiality: claim.materiality,
+          claim_fields: claim.claimFields,
+          evidence_ids: evidenceIds,
+        }),
+      },
+      apiKey,
+    );
+    if (!res.ok) return { ok: false };
+    const result = (await res.json()) as ClaimResult;
+    return { ok: true, result };
+  } catch {
+    // Network error, timeout, malformed JSON — the submission never
+    // completed. Same "not checkable" fate as a non-2xx response, never a
+    // silent drop.
+    return { ok: false };
+  }
+}
+
+interface Finding {
+  label: string;
+  text: string;
+  why: string;
+  evidence?: { matches: CardEvidenceMatch[]; rejectedCandidates: CardRejectedCandidate[] };
+}
+
+function toCardMatches(matches: EngineMatch[], originByEvidenceId: Map<string, CardEvidenceOrigin>): CardEvidenceMatch[] {
+  return matches.map((m) => ({
+    evidenceId: m.evidenceId,
+    relation: m.relation,
+    method: m.method,
+    locator: m.locator,
+    origin: originByEvidenceId.get(m.evidenceId) ?? "user_added",
+    sourceUrl: m.locator.associatedUrl ?? undefined,
+  }));
+}
+
+function toCardRejectedCandidates(
+  rejected: EngineRejectedCandidate[],
+  originByEvidenceId: Map<string, CardEvidenceOrigin>,
+): CardRejectedCandidate[] {
+  return rejected.map((r) => ({
+    evidenceId: r.evidenceId,
+    locator: r.locator,
+    mismatchedFields: r.mismatchedFields,
+    details: r.details,
+    origin: originByEvidenceId.get(r.evidenceId) ?? "user_added",
+  }));
 }
 
 // docs/build/tier-1-build-and-operating-plan.md's engine-state -> finding-type -> card-state table, made code.
-function findingFor(result: ClaimResult["claim"], claimText: string): { finding?: { label: string; text: string; why: string }; needsCheck: boolean } {
+// Bug fix: this now gates on `lifecycle_state`, not just `state`. A claim
+// whose lifecycle isn't "completed" must never have its `state` read as a
+// finding about the world (engine/src/review/lifecycle.ts's
+// stateIsMeaningful) — even though the engine already sets `state` to
+// INDETERMINATE in that case, this makes the client's own trust boundary
+// explicit rather than depending on the engine never regressing that
+// invariant.
+function findingFor(
+  result: ClaimResult["claim"],
+  claimText: string,
+  evidence: { matches: CardEvidenceMatch[]; rejectedCandidates: CardRejectedCandidate[] },
+): { finding?: Finding; needsCheck: boolean } {
+  if (result.lifecycle_state !== "completed") {
+    return {
+      finding: {
+        label: claimText,
+        text: result.state_reason ?? "This claim could not be checked against the supplied evidence.",
+        why: result.no_source ? "no_inspectable_evidence" : "unresolved_applicability",
+        evidence,
+      },
+      needsCheck: true,
+    };
+  }
   if (result.no_source) {
     return {
-      finding: { label: claimText, text: "No inspectable evidence was supplied for this claim.", why: "no_inspectable_evidence" },
+      finding: { label: claimText, text: "No inspectable evidence was supplied for this claim.", why: "no_inspectable_evidence", evidence },
       needsCheck: true,
     };
   }
@@ -150,17 +320,32 @@ function findingFor(result: ClaimResult["claim"], claimText: string): { finding?
       return { needsCheck: false };
     case "CONTRADICTED":
       return {
-        finding: { label: claimText, text: result.state_reason ?? "The supplied evidence contradicts this claim.", why: "direct_contradiction" },
+        finding: {
+          label: claimText,
+          text: result.state_reason ?? "The supplied evidence contradicts this claim.",
+          why: "direct_contradiction",
+          evidence,
+        },
         needsCheck: false,
       };
     case "UNSUPPORTED":
       return {
-        finding: { label: claimText, text: result.state_reason ?? "No supplied evidence supports this claim.", why: "unsupported_claim" },
+        finding: {
+          label: claimText,
+          text: result.state_reason ?? "No supplied evidence supports this claim.",
+          why: "unsupported_claim",
+          evidence,
+        },
         needsCheck: false,
       };
     default: // INDETERMINATE, any reason
       return {
-        finding: { label: claimText, text: result.state_reason ?? "This claim could not be checked against the supplied evidence.", why: "unresolved_applicability" },
+        finding: {
+          label: claimText,
+          text: result.state_reason ?? "This claim could not be checked against the supplied evidence.",
+          why: "unresolved_applicability",
+          evidence,
+        },
         needsCheck: true,
       };
   }
@@ -174,36 +359,96 @@ export async function reviewAnswer(
   sourceRefs: SourceRef[],
   apiKey: string = defaultEngineApiKey(),
 ): Promise<ReviewCardData> {
-  const claims = await extractClaims(answerText, apiKey);
-  const materialClaims = claims.filter((c) => c.materiality);
+  const extraction = await extractClaims(answerText, apiKey);
+  if (!extraction.ok) {
+    // Extraction itself failed (quota denial, provider/parse fault) — this is
+    // NOT "no material claims", it's "Notary could not check this answer at
+    // all". See extractClaims()'s own comment for the bug this closes.
+    return {
+      status: "could_not_check",
+      scope: "Notary could not extract claims from this answer right now.",
+      actions: [],
+    };
+  }
+  const materialClaims = extraction.claims.filter((c) => c.materiality);
 
   if (materialClaims.length === 0) {
     return { status: "no_issue", scope: "No material factual claims found to review.", actions: [] };
   }
 
   const reviewId = await createReview(apiKey);
-  const evidenceIds = (await Promise.all(sourceRefs.map((s) => registerEvidence(reviewId, s, apiKey)))).filter(
-    (id): id is string => id !== undefined,
+  // Registered in parallel with the source it came from, kept side by side
+  // (not just filtered down to bare ids) so the card can later label each
+  // resolved match with the honest origin it was actually submitted under —
+  // `origin` on the engine's evidence row is exactly `source.source_role`
+  // (see registerEvidence above and engine/src/routes/evidence.ts).
+  const registered = await Promise.all(
+    sourceRefs.map(async (s) => ({ source: s, evidenceId: await registerEvidence(reviewId, s, apiKey) })),
+  );
+  const evidenceIds = registered.filter((r): r is { source: SourceRef; evidenceId: string } => r.evidenceId !== undefined).map((r) => r.evidenceId);
+  const originByEvidenceId = new Map<string, CardEvidenceOrigin>(
+    registered
+      .filter((r): r is { source: SourceRef; evidenceId: string } => r.evidenceId !== undefined)
+      .map((r) => [r.evidenceId, r.source.source_role]),
   );
 
-  const issueFindings: Array<{ label: string; text: string; why: string }> = [];
-  const uncheckedFindings: Array<{ label: string; text: string; why: string }> = [];
+  const issueFindings: Finding[] = [];
+  const uncheckedFindings: Finding[] = [];
+  const challenges: ChallengeItem[] = [];
 
   for (const claim of materialClaims) {
-    const result = await submitClaim(reviewId, claim, evidenceIds, apiKey);
-    if (result === undefined) continue;
-    const { finding, needsCheck } = findingFor(result.claim, claim.text);
+    const outcome = await submitClaim(reviewId, claim, evidenceIds, apiKey);
+    // Bug fix: a failed/undefined submission used to `continue` here with no
+    // finding recorded at all — silently dropping the claim from both
+    // issueFindings and uncheckedFindings, so a mixed review (one claim
+    // resolves, another's submission fails) could still fall through to
+    // `no_issue` below. It must always produce an explicit "not checkable"
+    // finding that participates in the completeness logic.
+    if (!outcome.ok) {
+      uncheckedFindings.push({
+        label: claim.text,
+        text: "This claim could not be submitted to the engine for verification.",
+        why: "submission_failed",
+      });
+      continue;
+    }
+    const evidence = {
+      matches: toCardMatches(outcome.result.matches, originByEvidenceId),
+      rejectedCandidates: toCardRejectedCandidates(outcome.result.rejectedCandidates, originByEvidenceId),
+    };
+    const { finding, needsCheck } = findingFor(outcome.result.claim, claim.text, evidence);
     if (finding === undefined) continue;
     if (needsCheck) uncheckedFindings.push(finding);
     else issueFindings.push(finding);
+    // Defensive: absent today (see the comment on ClaimResult.challenges),
+    // renders nothing until the engine actually lands this field. Overall cap
+    // of 4 per invocation, per the plan doc.
+    if (challenges.length < 4) {
+      challenges.push(...parseChallengeItems(outcome.result.challenges).slice(0, 4 - challenges.length));
+    }
   }
 
   const scope = `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;
+  const challengesField = challenges.length > 0 ? challenges : undefined;
 
   if (issueFindings.length > 0) {
-    return { status: "issue_found", scope, findings: issueFindings, actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"] };
+    return {
+      status: "issue_found",
+      scope,
+      findings: issueFindings,
+      actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
+      challenges: challengesField,
+    };
   }
-  if (uncheckedFindings.length > 0 && uncheckedFindings.length === materialClaims.length) {
+  // Bug fix: this used to require `uncheckedFindings.length === materialClaims.length`
+  // — i.e. only report could_not_check when EVERY material claim was
+  // unchecked. That's exactly the mixed-review bug: one claim SUPPORTED, one
+  // claim's submission fails -> issueFindings=[], uncheckedFindings has 1 of 2
+  // -> fell through to `no_issue`, silently discarding the fact that a
+  // material claim was never actually checked. Any unchecked material claim
+  // (with no issue found elsewhere) must produce could_not_check, never
+  // no_issue.
+  if (uncheckedFindings.length > 0) {
     return { status: "could_not_check", scope: uncheckedFindings[0].text, actions: [] };
   }
   return { status: "no_issue", scope, actions: [] };
