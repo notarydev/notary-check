@@ -386,82 +386,101 @@ export async function reviewAnswer(
     return { status: "no_issue", scope: "No material factual claims found to review.", actions: [] };
   }
 
-  const reviewId = await createReview(apiKey);
-  // Registered in parallel with the source it came from, kept side by side
-  // (not just filtered down to bare ids) so the card can later label each
-  // resolved match with the honest origin it was actually submitted under —
-  // `origin` on the engine's evidence row is exactly `source.source_role`
-  // (see registerEvidence above and engine/src/routes/evidence.ts).
-  const registered = await Promise.all(
-    sourceRefs.map(async (s) => ({ source: s, evidenceId: await registerEvidence(reviewId, s, apiKey) })),
-  );
-  const evidenceIds = registered.filter((r): r is { source: SourceRef; evidenceId: string } => r.evidenceId !== undefined).map((r) => r.evidenceId);
-  const originByEvidenceId = new Map<string, CardEvidenceOrigin>(
-    registered
-      .filter((r): r is { source: SourceRef; evidenceId: string } => r.evidenceId !== undefined)
-      .map((r) => [r.evidenceId, r.source.source_role]),
-  );
+  // Everything from here on talks to the engine over the network. extractClaims
+  // above and submitClaim inside the loop below already degrade their own
+  // failures into explicit findings/could_not_check — but createReview() and
+  // registerEvidence() had NO top-level boundary: a non-JSON or unexpected-shape
+  // response (e.g. body.review.id on a 5xx HTML error page) throws, and nothing
+  // upstream of reviewAnswer() catches it — the MCP tool call would reject
+  // outright instead of returning an honest card. A whole-review failure at
+  // this stage is exactly as "could not check" as an extraction failure is; it
+  // must degrade the same way, never surface as an unhandled rejection.
+  try {
+    const reviewId = await createReview(apiKey);
+    // Registered in parallel with the source it came from, kept side by side
+    // (not just filtered down to bare ids) so the card can later label each
+    // resolved match with the honest origin it was actually submitted under —
+    // `origin` on the engine's evidence row is exactly `source.source_role`
+    // (see registerEvidence above and engine/src/routes/evidence.ts).
+    const registered = await Promise.all(
+      sourceRefs.map(async (s) => ({ source: s, evidenceId: await registerEvidence(reviewId, s, apiKey) })),
+    );
+    const evidenceIds = registered.filter((r): r is { source: SourceRef; evidenceId: string } => r.evidenceId !== undefined).map((r) => r.evidenceId);
+    const originByEvidenceId = new Map<string, CardEvidenceOrigin>(
+      registered
+        .filter((r): r is { source: SourceRef; evidenceId: string } => r.evidenceId !== undefined)
+        .map((r) => [r.evidenceId, r.source.source_role]),
+    );
 
-  const issueFindings: Finding[] = [];
-  const uncheckedFindings: Finding[] = [];
-  const challenges: ChallengeItem[] = [];
+    const issueFindings: Finding[] = [];
+    const uncheckedFindings: Finding[] = [];
+    const challenges: ChallengeItem[] = [];
 
-  for (const claim of materialClaims) {
-    const outcome = await submitClaim(reviewId, claim, evidenceIds, apiKey);
-    // Bug fix: a failed/undefined submission used to `continue` here with no
-    // finding recorded at all — silently dropping the claim from both
-    // issueFindings and uncheckedFindings, so a mixed review (one claim
-    // resolves, another's submission fails) could still fall through to
-    // `no_issue` below. It must always produce an explicit "not checkable"
-    // finding that participates in the completeness logic.
-    if (!outcome.ok) {
-      uncheckedFindings.push({
-        label: claim.text,
-        text: "This claim could not be submitted to the engine for verification.",
-        why: "submission_failed",
-      });
-      continue;
+    for (const claim of materialClaims) {
+      const outcome = await submitClaim(reviewId, claim, evidenceIds, apiKey);
+      // Bug fix: a failed/undefined submission used to `continue` here with no
+      // finding recorded at all — silently dropping the claim from both
+      // issueFindings and uncheckedFindings, so a mixed review (one claim
+      // resolves, another's submission fails) could still fall through to
+      // `no_issue` below. It must always produce an explicit "not checkable"
+      // finding that participates in the completeness logic.
+      if (!outcome.ok) {
+        uncheckedFindings.push({
+          label: claim.text,
+          text: "This claim could not be submitted to the engine for verification.",
+          why: "submission_failed",
+        });
+        continue;
+      }
+      const evidence = {
+        matches: toCardMatches(outcome.result.matches, originByEvidenceId),
+        rejectedCandidates: toCardRejectedCandidates(outcome.result.rejectedCandidates, originByEvidenceId),
+      };
+      const { finding, needsCheck } = findingFor(outcome.result.claim, claim.text, evidence);
+      if (finding === undefined) continue;
+      if (needsCheck) uncheckedFindings.push(finding);
+      else issueFindings.push(finding);
+      // Parsed strictly regardless of whether the engine sent any (see the
+      // comment on ClaimResult.challenges) — an org with the flag off, or a
+      // review the engine judged non-material, legitimately sends none, and
+      // that must render as "no challenges", never an error. Overall cap of 4
+      // per invocation, per the plan doc.
+      if (challenges.length < 4) {
+        challenges.push(...parseChallengeItems(outcome.result.challenges).slice(0, 4 - challenges.length));
+      }
     }
-    const evidence = {
-      matches: toCardMatches(outcome.result.matches, originByEvidenceId),
-      rejectedCandidates: toCardRejectedCandidates(outcome.result.rejectedCandidates, originByEvidenceId),
-    };
-    const { finding, needsCheck } = findingFor(outcome.result.claim, claim.text, evidence);
-    if (finding === undefined) continue;
-    if (needsCheck) uncheckedFindings.push(finding);
-    else issueFindings.push(finding);
-    // Parsed strictly regardless of whether the engine sent any (see the
-    // comment on ClaimResult.challenges) — an org with the flag off, or a
-    // review the engine judged non-material, legitimately sends none, and
-    // that must render as "no challenges", never an error. Overall cap of 4
-    // per invocation, per the plan doc.
-    if (challenges.length < 4) {
-      challenges.push(...parseChallengeItems(outcome.result.challenges).slice(0, 4 - challenges.length));
+
+    const scope = `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;
+    const challengesField = challenges.length > 0 ? challenges : undefined;
+
+    if (issueFindings.length > 0) {
+      return {
+        status: "issue_found",
+        scope,
+        findings: issueFindings,
+        actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
+        challenges: challengesField,
+      };
     }
-  }
-
-  const scope = `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;
-  const challengesField = challenges.length > 0 ? challenges : undefined;
-
-  if (issueFindings.length > 0) {
+    // Bug fix: this used to require `uncheckedFindings.length === materialClaims.length`
+    // — i.e. only report could_not_check when EVERY material claim was
+    // unchecked. That's exactly the mixed-review bug: one claim SUPPORTED, one
+    // claim's submission fails -> issueFindings=[], uncheckedFindings has 1 of 2
+    // -> fell through to `no_issue`, silently discarding the fact that a
+    // material claim was never actually checked. Any unchecked material claim
+    // (with no issue found elsewhere) must produce could_not_check, never
+    // no_issue.
+    if (uncheckedFindings.length > 0) {
+      return { status: "could_not_check", scope: uncheckedFindings[0].text, actions: [] };
+    }
+    return { status: "no_issue", scope, actions: [] };
+  } catch (err) {
+    const correlationId = randomUUID();
+    console.error(`[reviewAnswer] review failed, correlation_id=${correlationId}:`, err);
     return {
-      status: "issue_found",
-      scope,
-      findings: issueFindings,
-      actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
-      challenges: challengesField,
+      status: "could_not_check",
+      scope: `Notary could not complete this review right now (ref ${correlationId}).`,
+      actions: [],
     };
   }
-  // Bug fix: this used to require `uncheckedFindings.length === materialClaims.length`
-  // — i.e. only report could_not_check when EVERY material claim was
-  // unchecked. That's exactly the mixed-review bug: one claim SUPPORTED, one
-  // claim's submission fails -> issueFindings=[], uncheckedFindings has 1 of 2
-  // -> fell through to `no_issue`, silently discarding the fact that a
-  // material claim was never actually checked. Any unchecked material claim
-  // (with no issue found elsewhere) must produce could_not_check, never
-  // no_issue.
-  if (uncheckedFindings.length > 0) {
-    return { status: "could_not_check", scope: uncheckedFindings[0].text, actions: [] };
-  }
-  return { status: "no_issue", scope, actions: [] };
 }

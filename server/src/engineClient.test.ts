@@ -202,3 +202,39 @@ test("mixed review: one claim CONTRADICTED, one claim's submission fails -> issu
     globalThis.fetch = originalFetch;
   }
 });
+
+test("review creation fails outright (engine 500, non-JSON body) -> could_not_check, never an unhandled rejection", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.ENGINE_URL = "http://engine.test";
+  process.env.ENGINE_API_KEY = "test-key";
+
+  globalThis.fetch = (async (...args: FetchArgs) => {
+    const [input, init] = args;
+    const path = pathOf(input);
+    const method = init?.method ?? "GET";
+
+    if (path === "/v1/extract-claims" && method === "POST") {
+      return jsonResponse(200, {
+        claims: [{ ordinal: 0, text: "Claim A is true.", materiality: true, claimFields: {} }],
+      });
+    }
+    if (path === "/v1/reviews" && method === "POST") {
+      // Simulates an upstream failure that returns something createReview()'s
+      // `body.review.id` access cannot handle — e.g. a load balancer's HTML
+      // error page on a 502/503, not a JSON error body. Before the fix, this
+      // threw out of reviewAnswer() with no boundary to catch it.
+      return new Response("<html>Bad Gateway</html>", { status: 502, headers: { "content-type": "text/html" } });
+    }
+    throw new Error(`unexpected fetch: ${method} ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const { reviewAnswer } = await import("./engineClient.js");
+    const result = await reviewAnswer("Claim A is true.", [], "test-key");
+
+    assert.equal(result.status, "could_not_check");
+    assert.match(result.scope, /could not complete this review/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

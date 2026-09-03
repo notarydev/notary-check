@@ -17,13 +17,23 @@
 --               payment event to be usable.
 --   past_due  — Stripe reported a failed invoice payment
 --               (invoice.payment_failed) but hasn't canceled the subscription
---               yet; a grace-period state, not yet a hard lockout by itself.
+--               yet. DECIDED (2026-09-03): checkEntitlement() denies past_due
+--               same as any non-active status — a failed payment locks the org
+--               out of review work immediately, not after a grace period.
+--               Stripe's own dunning/retry cycle can still recover the
+--               subscription and flip the org back to active on the next
+--               successful charge; "grace" here only ever meant "Stripe keeps
+--               retrying the card," never "Notary keeps serving the org while
+--               it waits." An earlier draft of this comment described
+--               past_due as "not yet a hard lockout," which never matched
+--               checkEntitlement()'s actual behavior — corrected here rather
+--               than changing the behavior to match the comment.
 --   canceled  — the subscription was deleted or explicitly canceled via
 --               POST /v1/billing/cancel.
---   inactive  — reserved catch-all for an org that should not have access and
---               isn't mid-grace-period (e.g. manual ops action); not currently
---               set by any webhook handler, kept for forward compatibility so
---               checkEntitlement() has one clear "no" state to fall back on.
+--   inactive  — reserved catch-all for an org that should not have access
+--               (e.g. manual ops action); not currently set by any webhook
+--               handler, kept for forward compatibility so checkEntitlement()
+--               has one clear "no" state to fall back on.
 ALTER TABLE organization
   ADD COLUMN entitlement_status text NOT NULL DEFAULT 'active'
     CHECK (entitlement_status IN ('active', 'past_due', 'canceled', 'inactive'));

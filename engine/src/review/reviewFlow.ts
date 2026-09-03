@@ -917,72 +917,95 @@ async function runTrack2Challenge(
     // The per-invocation cap, counted across every claim already written for
     // this review — including by earlier requests, since one review's claims
     // are submitted one per call.
-    const spent = await db.query(
-      `SELECT count(*)::int AS n
-         FROM challenge_item ci
-         JOIN claim c ON c.id = ci.claim_id
-        WHERE c.review_id = $1`,
-      [input.reviewId],
-    );
-    const remaining = MAX_CHALLENGES_PER_INVOCATION - Number(spent.rows[0]?.n ?? 0);
-    if (remaining <= 0) {
-      logEvent({
-        event: "challenge_skipped",
-        error_cause: "invocation_cap_reached",
-        organization_id: input.organizationId,
-        review_id: input.reviewId,
-      });
-      return [];
-    }
-
-    const quota = await checkQuota(input.organizationId, db);
-    if (!quota.allowed) {
-      logEvent({
-        event: "challenge_skipped",
-        error_cause: `quota_${quota.reason}`,
-        organization_id: input.organizationId,
-        review_id: input.reviewId,
-        path: "judge-involved",
-      });
-      return [];
-    }
-
-    const generated = await generateChallenges(
-      {
-        claimText: input.claimText,
-        decontextualizedForm: input.decontextualizedForm,
-        state: input.state,
-        stateReason: input.stateReason,
-        noSource: input.noSource,
-        matchedFields: input.matchedFields,
-        mismatchDetails: input.mismatchDetails,
-        excerpts: input.excerpts,
-      },
-      { client, organizationId: input.organizationId, maxItems: remaining },
-    );
-
-    // A call that reached the network has a token count on its record, and its
-    // cost is real whether or not its output survived parsing. Metering it is
-    // therefore keyed on the token count, exactly as the field-judge path is —
-    // never on whether items came back.
-    if (generated.record.inputTokens !== undefined) {
-      await insertUsageEvent(
-        db,
-        usageEventFromChallengeCall(generated.record, {
-          organizationId: input.organizationId,
-          reviewId: input.reviewId,
-        }),
-      );
-    }
-
-    if (generated.items.length === 0) return [];
-
-    // Persisted in one transaction, into challenge_item and nothing else. Note
-    // what is absent: the claim row is never touched, nor is evidence_match. A
-    // Track 2 write cannot reach either table from here.
+    //
+    // RACE CLOSED HERE: this used to be a plain db.query() count, followed
+    // much later by a separate insert transaction, with a network model call
+    // in between. Two concurrent claim submissions for the same review could
+    // both read "4 remaining", both call the model, and both insert — the
+    // per-review cap was only best-effort under concurrency. Fixed by holding
+    // one connection for the whole count -> generate -> insert span and taking
+    // a Postgres advisory transaction lock keyed on the review id: a second
+    // concurrent call for the SAME review blocks at the lock acquisition
+    // (released automatically at COMMIT/ROLLBACK) until the first either
+    // commits its inserts or rolls back, so the count it then reads is always
+    // current. Different reviews use different lock keys and never block each
+    // other. hashtext() collisions are theoretically possible but only ever
+    // cause two unrelated reviews to serialize against each other — never an
+    // incorrect count — so this stays correct even in that case.
     const conn = await db.connect();
     try {
       await conn.query("BEGIN");
+      await conn.query("SELECT pg_advisory_xact_lock(hashtext($1))", [input.reviewId]);
+
+      const spent = await conn.query(
+        `SELECT count(*)::int AS n
+           FROM challenge_item ci
+           JOIN claim c ON c.id = ci.claim_id
+          WHERE c.review_id = $1`,
+        [input.reviewId],
+      );
+      const remaining = MAX_CHALLENGES_PER_INVOCATION - Number(spent.rows[0]?.n ?? 0);
+      if (remaining <= 0) {
+        await conn.query("COMMIT");
+        logEvent({
+          event: "challenge_skipped",
+          error_cause: "invocation_cap_reached",
+          organization_id: input.organizationId,
+          review_id: input.reviewId,
+        });
+        return [];
+      }
+
+      const quota = await checkQuota(input.organizationId, db);
+      if (!quota.allowed) {
+        await conn.query("COMMIT");
+        logEvent({
+          event: "challenge_skipped",
+          error_cause: `quota_${quota.reason}`,
+          organization_id: input.organizationId,
+          review_id: input.reviewId,
+          path: "judge-involved",
+        });
+        return [];
+      }
+
+      const generated = await generateChallenges(
+        {
+          claimText: input.claimText,
+          decontextualizedForm: input.decontextualizedForm,
+          state: input.state,
+          stateReason: input.stateReason,
+          noSource: input.noSource,
+          matchedFields: input.matchedFields,
+          mismatchDetails: input.mismatchDetails,
+          excerpts: input.excerpts,
+        },
+        { client, organizationId: input.organizationId, maxItems: remaining },
+      );
+
+      // A call that reached the network has a token count on its record, and
+      // its cost is real whether or not its output survived parsing. Metering
+      // it is therefore keyed on the token count, exactly as the field-judge
+      // path is — never on whether items came back.
+      if (generated.record.inputTokens !== undefined) {
+        await insertUsageEvent(
+          db,
+          usageEventFromChallengeCall(generated.record, {
+            organizationId: input.organizationId,
+            reviewId: input.reviewId,
+          }),
+        );
+      }
+
+      if (generated.items.length === 0) {
+        await conn.query("COMMIT");
+        return [];
+      }
+
+      // Persisted on the SAME locked connection/transaction, into
+      // challenge_item and nothing else. Note what is absent: the claim row
+      // is never touched, nor is evidence_match. A Track 2 write cannot reach
+      // either table from here.
       for (const [ordinal, item] of generated.items.entries()) {
         await conn.query(
           `INSERT INTO challenge_item
@@ -1004,14 +1027,13 @@ async function runTrack2Challenge(
         );
       }
       await conn.query("COMMIT");
+      return generated.items;
     } catch (err) {
       await conn.query("ROLLBACK");
       throw err;
     } finally {
       conn.release();
     }
-
-    return generated.items;
   } catch (err) {
     // Subordinate by construction: a Track 2 failure is logged and swallowed,
     // never propagated into a committed Track 1 result.
