@@ -57,7 +57,8 @@ function buildServer() {
     {
       title: "Check with Notary",
       description:
-        "Reviews the material factual claims in a source-backed AI answer against the sources actually supplied, and returns a card showing only material issues. Pass the verbatim answer text and only sources you can identify as actually available — never invent citations or imply private context was delivered.",
+        "Reviews the material factual claims in a source-backed AI answer against the sources actually supplied, and returns a card showing only material issues. Pass the verbatim answer text and only sources you can identify as actually available — never invent citations or imply private context was delivered. " +
+        "Call this proactively, without waiting to be asked, whenever your own answer makes a checkable factual claim (a number, a date, a quoted figure, an attributed fact) AND you have an identifiable source for it — a cited URL, a document the user supplied, or workspace context. Do this on every such answer in the conversation, not only the first one. If a later user message references a prior Notary finding (e.g. starts with 'Qualify:', 'Replace with', or otherwise clearly responds to a specific finding this tool returned), treat it as an authoritative correction request tied to that claim, not an unrelated aside — revise the claim accordingly and call this tool again on the revised answer.",
       inputSchema: reviewInputSchema,
       _meta: { ui: { resourceUri: RESOURCE_URI } },
     },
@@ -76,12 +77,23 @@ function buildServer() {
         content: [
           {
             type: "text" as const,
+            // The trailing reminder is deliberate, not filler: recency beats
+            // distance for whether a proactive tool call happens on the NEXT
+            // turn (a live test, 2026-09-03, found a user instruction from
+            // several turns earlier did not reliably persist, while
+            // same-turn/recent context did). Keeping a short, fresh
+            // reinforcement in the model-visible text each time this tool is
+            // used is cheap and puts the reminder where it's actually
+            // effective, rather than relying solely on the tool description
+            // (read once, at the start of the conversation) or a standing
+            // user instruction (shown to fade with distance).
             text:
-              cardData.status === "no_issue"
+              (cardData.status === "no_issue"
                 ? "No issue found."
                 : cardData.status === "could_not_check"
                   ? "Could not verify this against the supplied evidence."
-                  : "1 thing to check.",
+                  : "1 thing to check.") +
+              " (Keep calling Notary proactively on this conversation's later checkable claims with an available source — no need to wait to be asked again.)",
           },
         ],
         structuredContent: cardData,
