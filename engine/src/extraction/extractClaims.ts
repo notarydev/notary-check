@@ -68,7 +68,7 @@ import type pg from "pg";
 
 /** Version string persisted with every extraction call (§ requirement #6).
  * Bump on any change to the prompt text or the output schema. */
-export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction-v2";
+export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction-v3";
 
 /**
  * Output ceiling for claim extraction, deliberately far above the judge
@@ -342,7 +342,9 @@ const FIELD_DECOMPOSITION =
   '- "value_unit": the numeric figure separated from its unit — value "17" with unit "%" for "17%"; value "1.2" with unit "billion" for "$1.2 billion". A figure with no stated unit has a value and no unit. Omit the whole object when the claim states no figure.\n' +
   '- "comparator_baseline": what the figure is relative to ("prior year", "the industry average"). Omit when no reference is stated.\n' +
   '- "modality": "actual" for a plain assertion, otherwise the marker the claim states ("estimated", "projected", "forecast", "target", "at least", "up to").\n' +
-  '- "scope": the population or segment the claim covers ("company-wide", "North America", "all products"). Omit when no qualifier is stated.\n' +
+  '- "scope": ONLY a restriction that narrows WHAT IS BEING MEASURED — the population or segment the figure covers ("North America", "excluding one-time items", "enterprise customers only", "all products"). Set it only when removing the phrase would make the claim cover MORE than it does.\n' +
+  '  Do NOT set "scope" for language that explains, attributes a cause, emphasises, or frames — "driven by enterprise demand", "overall", "in short", "as a result", "notably", "looking at the full year". Those describe WHY or HOW something is said, not WHAT is measured, and they must leave scope unset.\n' +
+  '  When in doubt, omit it. An unset scope is compared as the general case; a wrongly-set one makes two claims about the same measure look like claims about different things.\n' +
   "A field the claim does not actually assert stays ABSENT from the JSON — never invent one, never infer one from surrounding sentences.";
 
 // (b) The step-by-step reasoning structure. Never a one-line verdict.
