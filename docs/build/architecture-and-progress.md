@@ -46,7 +46,7 @@ Practical consequence worth knowing before the next migration run: this is a sin
 
 No ORM — raw SQL migrations (`engine/migrations/0001`–`0015`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package.
 
-**Applied to production: `0001`–`0013` only.** `0007`–`0013` were run live on 2026-09-03 after a verified `pg_dump`; `0001`–`0006` were already applied. **`0014` and `0015` exist in the repo and are NOT applied to production** — until they are, Advance runs ungated and both spend caps stay inert. See `whats-left.md` F3. Migration `0013_advance.sql` adds `advance_invocation`/`advance_suggestion`/`advance_event` for the Advance (Track 2 v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
+**Applied to production: `0001`–`0015`, all of them.** `0007`–`0013` ran on 2026-09-03; `0014`–`0015` ran later the same day (see the deploy record below). Migration `0013_advance.sql` adds `advance_invocation`/`advance_suggestion`/`advance_event` for the Advance (Track 2 v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
 
 **Schema, as it stands** (all raw SQL, no schema file to point to instead):
 - `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007). Still has **no `created_at` column** — `GET /v1/organization` (below) returns `created_at: null` rather than inventing one.
@@ -139,6 +139,20 @@ Both live Lightsail container services were redeployed with the current checkout
 aws lightsail get-container-services --region us-east-2 \
   --query 'containerServices[?contains(containerServiceName,`notary`)].{name:containerServiceName,image:currentDeployment.containers.*.image,ver:currentDeployment.version}'
 ```
+
+## 2026-09-03, second deploy — Advance flag, sub-cent metering, and a self-inflicted outage
+
+**What shipped:** migrations `0014` (Advance's org feature flag) and `0015` (millicent cost metering, with `estimated_cost_cents` converted to a `GENERATED ALWAYS` column), plus engine image `:notary-check-api.engine.15` — Lightsail deployment **version 6**, `notary-check-api`, RUNNING.
+
+**Backup, genuinely verified before touching anything:** `~/notary-backups/notary-prod-20260903-223614.dump` (71K, `pg_dump -Fc` via `postgres:16-alpine` matching the server's 16.15). Verification was not `pg_restore --list` alone — the dump was restored into a throwaway Postgres and every row count compared against production: organization 2, review 75, claim 85, evidence 70, evidence_match 21, usage_event 228, advance_invocation 25. All matched. Both migrations were then dry-run against that restored copy before production, which is how the `GENERATED ALWAYS` conversion and the `advance_enabled` backfill were confirmed non-destructive.
+
+**Gotcha for anyone scripting a backup:** production's `DATABASE_URL` carries `uselibpqcompat=true`, a node-driver flag. `pg_dump` rejects it outright (`invalid URI query parameter`). Strip it; keep `sslmode=require`.
+
+**A real outage was caused and then closed — recorded because the reasoning error matters more than the fix.** Migrations were applied *before* the matching image was deployed. `0015` makes `estimated_cost_cents` unwritable, and the running image (`engine.11`) still wrote it, so every ledger insert raised a hard Postgres error. That was predicted as a harmless window on the reasoning that "quota gates already read zero, so nothing gets worse." **That reasoning was wrong**: `insertUsageEvent` is `await`ed bare inside `review/reviewFlow.ts`, not wrapped, so a rejected ledger write throws the whole review. For the duration, every judge-invoking review failed — not just its metering. The correct order is deploy-then-migrate, or split the migration so the destructive half lands after the new image. No users were affected (there are none yet).
+
+**Post-deploy verification — an actual round trip, not schema introspection.** `engine/scripts/prod-smoke.ts` issues a throwaway API key, runs the flagship contradiction (claim 17% vs evidence 12%) against the live engine, and revokes the key. Result: `CONTRADICTED` / `contradicting_applicable_relation`, lifecycle `completed`, 1 resolved match, **1 Advance suggestion** (confirming the `advance_enabled` backfill left the existing org enabled), and **+53 millicents across 2 new ledger rows** — the first real cost this system has ever recorded. `engine/scripts/prod-check.ts` separately confirmed the schema: `estimated_cost_cents generated=ALWAYS`, `estimated_cost_millicents bigint`, `advance_enabled` present defaulting false, and all row counts preserved through the column drop/re-add.
+
+**Confirmed by the same run:** the pre-fix ledger was entirely fictional. All 228 historical `usage_event` rows sum to **0 cents** — every production call since launch metered as zero, so neither the per-org limit nor the global provider cap has ever had anything to sum.
 
 ## Live verification, 2026-09-02 — direct testing against `mcp.getnotary.ai`, not repo inspection
 

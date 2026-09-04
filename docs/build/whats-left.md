@@ -54,9 +54,9 @@ Small, and each one closes a gap between a stated rule and the code.
 
 | # | Item |
 |---|---|
-| **F1** | **`no_source` split → `not_checked`.** Written, uncommitted. Separates "nothing to check" from "something failed" so an unsourced answer stops reporting as a Notary malfunction. Needs the fourth card state threaded through `ReviewCardData` and the UI, a regression test, and a commit. See the corrected state-mapping table in the plan. |
+| **F1** | **`no_source` split → `not_checked`.** Committed in `29fc011`, **not yet deployed** — the MCP `server/` image still needs rebuilding and pushing. Separates "nothing to check" from "something failed" so an unsourced answer stops reporting as a Notary malfunction. Needs the fourth card state threaded through `ReviewCardData` and the UI, a regression test, and a commit. See the corrected state-mapping table in the plan. |
 | ~~**F2**~~ | ~~`.server.14` never deployed.~~ **NOT AN ISSUE — verified 2026-09-03 against the Lightsail API:** `notary-check-mcp` is running `:notary-check-mcp.server.14` (deployment version 11). The belief that `.13` was live came from session recollection, not the API. |
-| **F3** | **Migrations `0014` and `0015` not applied to production.** Advance stays ungated and the spend caps stay inert live until they are. Take a verified `pg_dump` first, same discipline as the `0007`–`0013` run. Then redeploy the engine image, since `0015` changes what the code may write. |
+| ~~**F3**~~ | ~~Migrations `0014`/`0015` not applied to production.~~ **DONE 2026-09-03** — verified backup taken and restore-tested, both migrations dry-run against a restored copy, then applied; engine redeployed as `:notary-check-api.engine.15` (deployment version 6). End-to-end smoke test passes against live prod: `CONTRADICTED`, 1 Advance suggestion, +53 millicents accrued. See `architecture-and-progress.md`. |
 
 ## Documentation debt
 
