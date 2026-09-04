@@ -60,6 +60,7 @@ That is not the same claim.
 | **B1** | **The held-out eval set is 20 unadjudicated drafts.** The pre-pilot gate's thresholds are literally blank because there is no labelled data to set them from. Needs human annotators — **no engineering path around this.** |
 | **B2a** | The flagship two-block contradiction returns a single finding against the live connector. Found, never diagnosed. |
 | **B5** | 17 of the 18 locked cases have never been run against the *live* deployment, only locally. |
+| **S5b** | **`inputProvenance` is set but never persisted or surfaced.** The semantics are now correct in memory; no row records them and the card does not distinguish a finding computed over observed material from one computed over Claude's own report. |
 | **S4** | **Findings are not persisted.** There is no `finding` table, so nothing measures which detectors ever fire in production. We cannot answer "is the detector bank earning its place." |
 | **O2** | `act_move_event` is written by nothing — zero interaction telemetry for Move. We don't know if anyone clicks. |
 

@@ -603,7 +603,16 @@ async function runDetection(
   answerText: string,
   claims: ExtractedClaim[],
   claimIds: Map<number, string>,
-  hasResolvedEvidence: boolean,
+  /**
+   * Per-claim grounding, keyed by ordinal — NOT a review-wide flag.
+   *
+   * This argument used to be one boolean (`evidenceIds.length > 0`) for the
+   * whole review, and the engine's source-gap detector short-circuited on it.
+   * One cited claim beside four uncited ones therefore produced no gap for any
+   * of them. The per-claim truth was already sitting in each submission's
+   * `claim.no_source`; it was being thrown away here.
+   */
+  grounded: Map<number, boolean>,
   apiKey: string,
   extras: InvocationExtras,
 ): Promise<DetectResponse> {
@@ -619,7 +628,6 @@ async function runDetection(
         prior_attempts: extras.priorAttempts,
         execution_results: extras.executionResults,
         prior_context: extras.priorContext,
-        has_resolved_evidence: hasResolvedEvidence,
         claims: claims.map((c) => ({
           // Use the engine's own claim id when the claim was submitted, so a
           // finding can be tied back to a real row; fall back to the ordinal
@@ -628,6 +636,10 @@ async function runDetection(
           text: c.text,
           materiality: c.materiality,
             claim_fields: c.claimFields,
+            // Absent from the map means the submission failed or never ran, so
+            // nothing was checked against anything — ungrounded is the correct
+            // and safe reading.
+            has_resolved_evidence: grounded.get(c.ordinal) ?? false,
           })),
         }),
       },
@@ -671,7 +683,7 @@ export async function reviewAnswer(
     // submitted, so no verification work or judge cost is incurred.
     try {
       const reviewId = await createReview(apiKey);
-      const det = await runDetection(reviewId, answerText, extraction.claims, new Map(), false, apiKey, extras);
+      const det = await runDetection(reviewId, answerText, extraction.claims, new Map(), new Map(), apiKey, extras);
       const moves = parseMoves(det.moves).slice(0, MAX_MOVES);
       const zeroClaimGaps = parseGaps(det.gaps);
       const zeroBank = parseBankFindings(det.findings);
@@ -819,19 +831,19 @@ export async function reviewAnswer(
     // cardinality contract is per INVOCATION, and the per-claim path could
     // only ever approximate that with a first-come cap.
     const claimIds = new Map<number, string>();
+    // Per-claim grounding. `no_source` is the engine's own per-claim record of
+    // "nothing addressable to check this against", which is exactly the
+    // question the source-gap detector asks — so it is read straight through
+    // rather than re-derived from the review's evidence count.
+    const grounded = new Map<number, boolean>();
     for (let i = 0; i < materialClaims.length; i++) {
       const o = outcomes[i];
-      if (o.ok) claimIds.set(materialClaims[i].ordinal, o.result.claim.id);
+      if (o.ok) {
+        claimIds.set(materialClaims[i].ordinal, o.result.claim.id);
+        grounded.set(materialClaims[i].ordinal, !o.result.claim.no_source);
+      }
     }
-    const detection = await runDetection(
-      reviewId,
-      answerText,
-      materialClaims,
-      claimIds,
-      evidenceIds.length > 0,
-      apiKey,
-      extras,
-    );
+    const detection = await runDetection(reviewId, answerText, materialClaims, claimIds, grounded, apiKey, extras);
 
     // Bank findings are deliberately NOT pushed into issueFindings.
     //

@@ -14,6 +14,7 @@ function finding(over: Partial<Finding> = {}): Finding {
     detector: "self_contradiction",
     type: "internal_conflict",
     owner: "computed",
+    inputProvenance: "model_reported",
     boundaryText: "The answer states X and also not-X.",
     fieldDeltas: [],
     basis: { kind: "answer_internal" },
@@ -125,6 +126,80 @@ test("Act never receives evidence — only boundary statements", async () => {
   assert.ok(sent.includes("The answer states X and also not-X."), "the boundary statement is passed");
   assert.ok(!sent.includes("rejectedCandidates"), "no rejected-candidate pool may reach Act");
   assert.ok(!sent.includes("resolved_text"), "no evidence corpus may reach Act");
+});
+
+test("the task-state Claude sends actually reaches the model", async () => {
+  // THE BUG. The MCP tool asks Claude for explicit_constraints, prior_attempts
+  // and the answer on every call; engineClient put them on the wire; the route
+  // validated them — and runMovesForInvocation had no parameter for any of
+  // them, so all of it was dropped one call short of the prompt that already
+  // knew how to render it. Act ran on the request and the findings alone.
+  const { client, seen } = recordingClient();
+  await runMovesForInvocation(
+    {
+      organizationId: "org",
+      reviewId: "rev",
+      invocationId: "inv",
+      userRequest: "Pick a database for the audit log",
+      claudeAnswer: "DynamoDB handles 50k writes/sec.",
+      priorAttempts: ["tried Postgres with a b-tree index"],
+      explicitConstraints: ["must stay under $200/month"],
+      priorContext: [{ kind: "decision", text: "we already rejected Kafka" }],
+      findings: [],
+      gaps: [],
+    },
+    { client },
+  );
+  const sent = JSON.stringify(seen[0]);
+  assert.ok(sent.includes("must stay under $200/month"), "a stated constraint must reach the move");
+  assert.ok(sent.includes("tried Postgres with a b-tree index"), "prior attempts distinguish test from repair");
+  assert.ok(sent.includes("DynamoDB handles 50k writes/sec."), "the answer being acted on must be visible");
+  assert.ok(sent.includes("we already rejected Kafka"), "restated context must reach the move");
+});
+
+test("restated context is labelled as unverified, and never outranks a finding", async () => {
+  // Act must be able to tell what Notary ESTABLISHED from what Claude merely
+  // restated. Only the first is grounded, and a move that treated the second
+  // as established is precisely the overreach the boundary exists to prevent.
+  const { client, seen } = recordingClient();
+  await runMovesForInvocation(
+    {
+      organizationId: "org",
+      reviewId: "rev",
+      invocationId: "inv",
+      userRequest: "Check the revenue figure",
+      findings: [finding({ boundaryText: "The answer says 17% and also 12%." })],
+      gaps: [],
+      priorContext: [{ kind: "note", text: "the CFO said 17% was final" }],
+    },
+    { client },
+  );
+  const ctx = JSON.stringify(seen[0]);
+  const establishedAt = ctx.indexOf("The answer says 17% and also 12%.");
+  const restatedAt = ctx.indexOf("the CFO said 17% was final");
+  assert.ok(establishedAt >= 0 && restatedAt >= 0, "both must be present");
+  assert.ok(establishedAt < restatedAt, "what Notary established leads; restatement follows");
+  assert.ok(ctx.includes("not verified by Notary"), "restated material must be marked as unverified");
+});
+
+test("absent task-state stays absent — an empty array is not context", async () => {
+  const { client, seen } = recordingClient();
+  await runMovesForInvocation(
+    {
+      organizationId: "org",
+      reviewId: "rev",
+      invocationId: "inv",
+      userRequest: "Pick a database",
+      priorAttempts: [],
+      explicitConstraints: [],
+      findings: [],
+      gaps: [],
+    },
+    { client },
+  );
+  const sent = JSON.stringify(seen[0]);
+  assert.ok(!sent.includes("PRIOR ATTEMPTS"), "an empty array must not render an empty section");
+  assert.ok(!sent.includes("EXPLICIT CONSTRAINTS"), "an empty array must not render an empty section");
 });
 
 test("candidates rank findings before gaps, and by detector rank within findings", () => {

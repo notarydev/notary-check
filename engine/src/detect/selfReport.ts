@@ -112,6 +112,12 @@ export const selfReportDetector: Detector = {
           detector: "self_report",
           type: "self_report_mismatch",
           owner: "computed",
+          // The comparison is exact; the input is not independently observed.
+          // Claude handed us this tool output in the payload — we are trusting
+          // the transcript of a test run, not the test run. Once WATCH can
+          // intercept execution results this becomes `host_observed` and the
+          // finding gets materially stronger without its logic changing.
+          inputProvenance: "caller_supplied",
           boundaryText: `The answer reports success, but the output shows ${sig.label}.`,
           fieldDeltas: [
             { field: "outcome", claimed: "succeeded", observed: m[0].trim(), relation: "conflict" },

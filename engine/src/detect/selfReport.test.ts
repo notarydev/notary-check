@@ -8,7 +8,7 @@ import { selfReportDetector } from "./selfReport.ts";
 import type { DetectorInput } from "./types.ts";
 
 function input(answerText: string, results?: Array<{ ref: string; text: string }>): DetectorInput {
-  return { answerText, claims: [], hasResolvedEvidence: false, executionResults: results };
+  return { answerText, claims: [], executionResults: results };
 }
 
 test("catches a success claim contradicted by failing tests", () => {

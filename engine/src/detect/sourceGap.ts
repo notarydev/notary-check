@@ -41,11 +41,18 @@ export const sourceGapDetector: Detector = {
   rank: 90,
 
   run(input: DetectorInput): DetectorOutcome {
-    // Evidence was supplied and resolved, so the checking machinery ran. Any
-    // failure after that is source_verify's own result to report, not a
-    // missing input we can ask for.
-    if (input.hasResolvedEvidence) return { status: "not_applicable" };
-
+    // PER CLAIM, not per review.
+    //
+    // This used to test one review-wide boolean, so a single resolved source
+    // anywhere in the review made the detector not-applicable for every claim
+    // in it. The common shape — one cited claim beside four uncited ones —
+    // therefore produced no gap at all, and the answer's four ungrounded
+    // claims went unremarked. A claim whose own source resolved is the one
+    // whose gap is closed; nobody else's is.
+    //
+    // A claim WITH resolved evidence is source_verify's own result to report
+    // (SUPPORTED / CONTRADICTED / UNSUPPORTED), not a missing input we can ask
+    // for. A claim without one is exactly what this detector exists to name.
     const material = input.claims.filter((c) => c.materiality);
     if (material.length === 0) {
       // No material claim, so no source would help. Asking here would be
@@ -54,7 +61,14 @@ export const sourceGapDetector: Detector = {
       return { status: "not_applicable" };
     }
 
-    const gaps: Gap[] = material.slice(0, MAX_SOURCE_GAPS).map((c) => ({
+    const ungrounded = material.filter((c) => !c.hasResolvedEvidence);
+    if (ungrounded.length === 0) {
+      // Every material claim had something to check against. Whatever happened
+      // next is a verification result, not a gap.
+      return { status: "not_applicable" };
+    }
+
+    const gaps: Gap[] = ungrounded.slice(0, MAX_SOURCE_GAPS).map((c) => ({
       detector: "source_verify",
       claimId: c.id,
       missing: "addressable_source",

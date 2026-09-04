@@ -60,9 +60,17 @@ const detectSchema = z.object({
         text: z.string(),
         materiality: z.boolean().default(false),
         claim_fields: claimFieldsSchema.default({}),
+        // Per CLAIM, not per review. Defaulted so a connector deployed before
+        // this field existed still parses — it simply reports every claim as
+        // ungrounded, which is the safe direction: an unnecessary ask costs a
+        // round trip, a suppressed one costs the observation entirely.
+        has_resolved_evidence: z.boolean().default(false),
       }),
     )
     .default([]),
+  // Retained so an older connector's payload still validates. Deliberately
+  // UNUSED: it was the review-wide boolean that suppressed the source gap for
+  // every ungrounded claim whenever any one claim had a source.
   has_resolved_evidence: z.boolean().default(false),
 });
 
@@ -587,10 +595,10 @@ export function reviewsRouter(database: pg.Pool): Router {
         text: c.text,
         fields: c.claim_fields as ClaimFields,
         materiality: c.materiality,
+        hasResolvedEvidence: c.has_resolved_evidence,
       })),
       executionResults: body.execution_results,
       priorContext: body.prior_context,
-      hasResolvedEvidence: body.has_resolved_evidence,
     });
 
     let moveResult: Awaited<ReturnType<typeof runMovesForInvocation>> | undefined;
@@ -607,6 +615,16 @@ export function reviewsRouter(database: pg.Pool): Router {
             userRequest: body.user_request,
             findings: detection.findings,
             gaps: detection.gaps,
+            // These four were parsed and then dropped on the floor. The MCP
+            // tool asks Claude for them on every call, engineClient sends
+            // them, zod validates them — and nothing read them, so Act
+            // ran on the request and the findings alone while act/prompt.ts
+            // already contained the code to render all of them. We were
+            // charging Claude for context and discarding it.
+            claudeAnswer: body.answer_text,
+            priorAttempts: body.prior_attempts,
+            explicitConstraints: body.explicit_constraints,
+            priorContext: body.prior_context,
           });
         } catch (err) {
           // Act failing must never fail the request — the findings are

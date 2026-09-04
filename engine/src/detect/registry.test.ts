@@ -9,7 +9,7 @@ import type { DetectorInput } from "./types.ts";
 const ACME = { entity: "Acme", period: "FY25", metric: "revenue", operator: "increase" };
 
 function input(over: Partial<DetectorInput> = {}): DetectorInput {
-  return { answerText: "", claims: [], hasResolvedEvidence: false, ...over };
+  return { answerText: "", claims: [], ...over };
 }
 
 test("a clean answer produces no findings and no gaps", () => {
@@ -24,8 +24,8 @@ test("findings from several detectors are collected together and ordered by rank
       answerText: "I've fixed it and all tests pass.",
       executionResults: [{ ref: "t1", text: "# fail 2" }],
       claims: [
-        { id: "a", text: "Revenue grew 17% in FY25.", fields: { ...ACME, valueUnit: { value: "17", unit: "%" } }, materiality: true },
-        { id: "b", text: "Revenue grew 12% in FY25.", fields: { ...ACME, valueUnit: { value: "12", unit: "%" } }, materiality: true },
+        { id: "a", text: "Revenue grew 17% in FY25.", fields: { ...ACME, valueUnit: { value: "17", unit: "%" } }, materiality: true, hasResolvedEvidence: false },
+        { id: "b", text: "Revenue grew 12% in FY25.", fields: { ...ACME, valueUnit: { value: "12", unit: "%" } }, materiality: true, hasResolvedEvidence: false },
       ],
     }),
   );
@@ -42,8 +42,8 @@ test("a gap and a finding can coexist — they are different outputs", () => {
       // success claim with no output -> gap from self_report
       answerText: "I've fixed it and all tests pass.",
       claims: [
-        { id: "a", text: "Revenue grew 17% in FY25.", fields: { ...ACME, valueUnit: { value: "17", unit: "%" } }, materiality: true },
-        { id: "b", text: "Revenue grew 12% in FY25.", fields: { ...ACME, valueUnit: { value: "12", unit: "%" } }, materiality: true },
+        { id: "a", text: "Revenue grew 17% in FY25.", fields: { ...ACME, valueUnit: { value: "17", unit: "%" } }, materiality: true, hasResolvedEvidence: false },
+        { id: "b", text: "Revenue grew 12% in FY25.", fields: { ...ACME, valueUnit: { value: "12", unit: "%" } }, materiality: true, hasResolvedEvidence: false },
       ],
     }),
   );

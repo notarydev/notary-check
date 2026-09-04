@@ -131,6 +131,11 @@ export const selfContradictionDetector: Detector = {
             detector: "self_contradiction",
             type: "internal_conflict",
             owner: "computed",
+            // Both sides of this comparison are the model's own answer. The
+            // conflict is real and exactly computed, and it establishes
+            // nothing about the world — only that the answer disagrees with
+            // itself. That is worth surfacing and must never assign a state.
+            inputProvenance: "model_reported",
             claimId: a.id,
             boundaryText: `The answer states "${a.text}" and also "${b.text}".`,
             fieldDeltas: deltas,

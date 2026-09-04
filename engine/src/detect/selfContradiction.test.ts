@@ -12,8 +12,7 @@ import type { ClaimFields } from "../verification/applicability.ts";
 function input(claims: Array<{ text: string; fields: ClaimFields }>): DetectorInput {
   return {
     answerText: claims.map((c) => c.text).join(" "),
-    claims: claims.map((c, i) => ({ id: `c${i}`, text: c.text, fields: c.fields, materiality: true })),
-    hasResolvedEvidence: false,
+    claims: claims.map((c, i) => ({ id: `c${i}`, text: c.text, fields: c.fields, materiality: true, hasResolvedEvidence: false })),
   };
 }
 

@@ -42,6 +42,31 @@ export interface MoveInvocationInput {
   findings: readonly Finding[];
   /** What could not be checked, and why. Also facts. */
   gaps: readonly Gap[];
+
+  // ---------------------------------------------------------------------
+  // The task-state material Claude already sends us.
+  //
+  // Every field below was reaching the engine and being discarded. The MCP
+  // tool asks Claude for them, engineClient puts them on the wire, the route
+  // validates them — and this function's input type had no slot for any of
+  // them, so Act ran on `user_request` plus rendered findings and nothing
+  // else. InvocationContext has always declared them and act/prompt.ts has
+  // always known how to render them; only the call site was missing.
+  //
+  // None of this widens what Act may SEE in the dangerous direction: it is
+  // all material the user or Claude supplied in the payload. Act still never
+  // touches the evidence corpus or the rejected-candidate pool, which is the
+  // boundary that stops it becoming a second verifier.
+  // ---------------------------------------------------------------------
+
+  /** Claude's own answer this turn. Lets a move refer to what was actually said. */
+  claudeAnswer?: string;
+  /** What the user says they already tried — the "test" vs "repair" discriminator in policy.ts. */
+  priorAttempts?: readonly string[];
+  /** Constraints the move must respect (budget, deadline, must-use-X) rather than restate. */
+  explicitConstraints?: readonly string[];
+  /** Conversation material Claude chose to restate. Rendered alongside the findings, never instead of them. */
+  priorContext?: ReadonlyArray<{ kind: string; text: string }>;
 }
 
 export interface MoveInvocationResult {
@@ -91,6 +116,35 @@ function renderCandidates(ranked: ReturnType<typeof rankActionCandidates>): stri
   return lines.join("\n");
 }
 
+/** An empty array and an absent one mean the same thing to the prompt; keep one of them. */
+function emptyToUndefined(xs?: readonly string[]): readonly string[] | undefined {
+  return xs !== undefined && xs.length > 0 ? xs : undefined;
+}
+
+/**
+ * The single opaque context string, assembled in priority order.
+ *
+ * Established facts lead. Restated conversation follows, marked as such — the
+ * model must be able to tell what Notary determined from what Claude merely
+ * said, because only the first kind is grounded, and a move that treated the
+ * second as established would be exactly the overreach this design exists to
+ * prevent.
+ */
+function renderContext(
+  ranked: ReturnType<typeof rankActionCandidates>,
+  priorContext?: ReadonlyArray<{ kind: string; text: string }>,
+): string | undefined {
+  const parts: string[] = [];
+  const candidates = renderCandidates(ranked);
+  if (candidates !== undefined) parts.push(candidates);
+  if (priorContext !== undefined && priorContext.length > 0) {
+    parts.push(
+      ["Restated by Claude (not verified by Notary):", ...priorContext.map((p) => `- ${p.kind}: ${p.text}`)].join("\n"),
+    );
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
 /**
  * Runs Act once for an invocation.
  *
@@ -125,8 +179,13 @@ export async function runMovesForInvocation(
   const context: InvocationContext = {
     invocation_id: input.invocationId,
     user_request: userRequest,
+    claude_answer: input.claudeAnswer,
     task_mode: intent.taskMode,
-    visible_context: renderCandidates(ranked),
+    // Findings and gaps first — they are what Notary established, and they
+    // must not be pushed below restated conversation.
+    visible_context: renderContext(ranked, input.priorContext),
+    prior_attempts: emptyToUndefined(input.priorAttempts),
+    explicit_constraints: emptyToUndefined(input.explicitConstraints),
     created_at: new Date().toISOString(),
   };
 

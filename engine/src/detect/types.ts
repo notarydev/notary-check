@@ -44,6 +44,51 @@ export type EpistemicOwner =
    */
   | "computed_unverified";
 
+/**
+ * WHERE the material a finding rests on came from — orthogonal to who computed
+ * it, and the distinction is load-bearing for the only question that matters
+ * about this product: does Notary increase confidence?
+ *
+ * `owner` answers "how was this concluded". `inputProvenance` answers "who
+ * vouched for the input". Both can be strong; both can be weak; they vary
+ * independently. Collapsing them overstates independence, because
+ *
+ *     "Notary compared Claude's claim against the test output Claude said it got"
+ *
+ * and
+ *
+ *     "Notary compared Claude's claim against test output Notary observed"
+ *
+ * are the same computation over inputs of completely different worth, and the
+ * first is the one we can actually do today. A deterministic comparison over a
+ * self-reported artifact is not independent evidence, and a finding that
+ * declares itself `computed` without qualification claims that it is.
+ *
+ * This matters NOW rather than later because findings will be persisted, and a
+ * stored row carrying the wrong semantics is far more expensive to correct
+ * than a field added before the first write. It is also the precondition for
+ * WATCH, where `host_observed` becomes reachable for execution results.
+ */
+export type InputProvenance =
+  /**
+   * Notary resolved the material itself and can re-resolve it — a fetched
+   * source with a locator that still dereferences. The only provenance that
+   * supports a positive or contradictory verification state.
+   */
+  | "host_observed"
+  /**
+   * The caller handed us the material in the payload — tool output, prior
+   * context. Not forged in any likely case, but not independently checked
+   * either: we are trusting the transcript of an event, not the event.
+   */
+  | "caller_supplied"
+  /**
+   * The material IS model output — the answer being reviewed. Self-
+   * contradiction lives here: comparing an answer against itself is exact, and
+   * establishes nothing about the world.
+   */
+  | "model_reported";
+
 export type DetectorId =
   | "source_verify"
   | "self_contradiction"
@@ -96,6 +141,12 @@ export interface Finding {
   detector: DetectorId;
   type: FindingType;
   owner: EpistemicOwner;
+  /**
+   * Where the compared material came from. See InputProvenance — this is NOT a
+   * restatement of `owner`, and a finding may be `computed` over
+   * `model_reported` input.
+   */
+  inputProvenance: InputProvenance;
   /** Which claim this concerns, when it concerns one. Arithmetic over the whole answer may not. */
   claimId?: string;
   /** One compact sentence stating what was established. Shown to the user, and to Act. */
@@ -138,12 +189,28 @@ export type DetectorOutcome =
 export interface DetectorInput {
   answerText: string;
   userRequest?: string;
-  claims: Array<{ id: string; text: string; fields: ClaimFields; materiality: boolean }>;
+  claims: Array<{
+    id: string;
+    text: string;
+    fields: ClaimFields;
+    materiality: boolean;
+    /**
+     * Whether THIS claim had a source that resolved — per claim, deliberately
+     * not per review.
+     *
+     * It was a single review-wide boolean (`evidenceIds.length > 0`), and one
+     * resolved source anywhere suppressed the source gap for every ungrounded
+     * claim in the same review. On the common shape — one cited claim beside
+     * four uncited ones — Notary reported no gap at all, which silently
+     * destroys its most valuable observation: "this particular claim isn't
+     * grounded." The engine already tracked per-claim `no_source`; the
+     * precision existed and was being flattened at this boundary.
+     */
+    hasResolvedEvidence: boolean;
+  }>;
   /** Tool output present in the same turn, when the caller supplied it. */
   executionResults?: Array<{ ref: string; text: string }>;
   priorContext?: Array<{ kind: string; text: string }>;
-  /** True when at least one source was bound and resolved for this review. */
-  hasResolvedEvidence: boolean;
 }
 
 export interface Detector {
