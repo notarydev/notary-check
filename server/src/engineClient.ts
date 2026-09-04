@@ -294,6 +294,15 @@ async function submitClaim(
           // which the engine's own schema already treats as "optional, skip
           // Advance for this claim" rather than a validation error.
           user_request: userRequest,
+          // This connector ALWAYS calls /detect after the claim loop, which
+          // runs Advance once per invocation. Without this flag both paths run:
+          // observed live on a five-claim answer, six per-claim Advance calls
+          // fired and were then discarded in favour of the invocation-level
+          // result. Six model calls paid for, output thrown away, and the
+          // "0-2 per invocation" cardinality contract bypassed — ten
+          // near-duplicate suggestions generated before the connector trimmed
+          // to two.
+          skip_claim_advance: true,
         }),
       },
       apiKey,

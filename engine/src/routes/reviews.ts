@@ -67,6 +67,10 @@ const detectSchema = z.object({
 });
 
 const createClaimSchema = z.object({
+  // Set by a caller that runs Advance once per invocation via
+  // POST /v1/reviews/:id/detect. Defaults false so a direct API caller that
+  // never calls detect still gets Advance, unchanged.
+  skip_claim_advance: z.boolean().default(false),
   text: z.string().min(1),
   ordinal: z.number().int(),
   materiality: z.boolean().optional(),
@@ -473,7 +477,8 @@ export function reviewsRouter(database: pg.Pool): Router {
       return res.status(404).json({ error: "review not found for this organization" });
     }
 
-    const { text, ordinal, materiality, decontextualized_form, claim_fields, evidence_ids, user_request } = parsed.data;
+    const { text, ordinal, materiality, decontextualized_form, claim_fields, evidence_ids, user_request, skip_claim_advance } =
+      parsed.data;
     const result = await runReview(
       {
         organizationId: orgId,
@@ -485,6 +490,7 @@ export function reviewsRouter(database: pg.Pool): Router {
         claimFields: claim_fields,
         evidenceIds: evidence_ids,
         userRequest: user_request,
+        skipClaimAdvance: skip_claim_advance,
       },
       database,
     );

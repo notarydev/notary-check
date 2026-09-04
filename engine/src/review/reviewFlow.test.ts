@@ -981,3 +981,102 @@ test(
     }
   },
 );
+
+// Regression guard for a live double-run (2026-09-04). Both Advance paths were
+// wired at once: the connector submitted claims (each firing per-claim Advance)
+// and then called /detect (firing invocation-level Advance), and then discarded
+// the per-claim results. Observed on a real five-claim answer — six model calls
+// paid for, output thrown away, and the "0-2 suggestions per invocation"
+// cardinality contract bypassed by ten near-duplicate suggestions.
+//
+// These assert on the CLIENT CALL COUNT, not on empty suggestions: an empty
+// result is also what a policy short-circuit produces, and the wasted spend is
+// the whole point.
+test(
+  "skipClaimAdvance suppresses the per-claim Advance call entirely — no model call, no row",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      await pool.query("UPDATE organization SET advance_enabled = true WHERE id = $1", [orgId]);
+      const reviewId = await createReview(pool, orgId);
+
+      let advanceCalls = 0;
+      const countingClient = {
+        async call() {
+          advanceCalls++;
+          return {
+            record: { model: "t", promptVersion: "t", question: "q", answer: '{"suggestions":[]}' },
+            parsed: { suggestions: [] },
+          };
+        },
+      } as unknown as Parameters<typeof runReview>[2] extends { advanceClient?: infer C } ? C : never;
+
+      await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          materiality: true,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [],
+          userRequest: "check the revenue figure",
+          skipClaimAdvance: true,
+        },
+        pool,
+        { advanceClient: countingClient },
+      );
+
+      assert.equal(advanceCalls, 0, "per-claim Advance must not be paid for when the caller handles it per invocation");
+      const rows = await pool.query("SELECT count(*)::int AS n FROM advance_invocation WHERE review_id = $1", [reviewId]);
+      assert.equal(rows.rows[0].n, 0, "and no advance_invocation row is written");
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "without the flag, per-claim Advance still runs — a direct API caller is unaffected",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      await pool.query("UPDATE organization SET advance_enabled = true WHERE id = $1", [orgId]);
+      const reviewId = await createReview(pool, orgId);
+
+      let advanceCalls = 0;
+      const countingClient = {
+        async call() {
+          advanceCalls++;
+          return {
+            record: { model: "t", promptVersion: "t", question: "q", answer: '{"suggestions":[]}' },
+            parsed: { suggestions: [] },
+          };
+        },
+      } as unknown as Parameters<typeof runReview>[2] extends { advanceClient?: infer C } ? C : never;
+
+      await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          materiality: true,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [],
+          userRequest: "check the revenue figure",
+        },
+        pool,
+        { advanceClient: countingClient },
+      );
+
+      assert.equal(advanceCalls, 1, "the default preserves behaviour for a caller that never calls /detect");
+    } finally {
+      await pool.end();
+    }
+  },
+);

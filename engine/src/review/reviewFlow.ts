@@ -105,6 +105,25 @@ export interface RunReviewInput {
   /** Evidence rows already bound to this review. */
   evidenceIds: string[];
   /**
+   * Skip the PER-CLAIM Advance call because the caller runs Advance once per
+   * invocation instead (POST /v1/reviews/:id/detect ->
+   * runAdvanceForInvocation).
+   *
+   * WHY THIS EXISTS. Both paths were wired at once and both ran. Observed live
+   * 2026-09-04 on a five-claim answer: six per-claim Advance calls fired, the
+   * invocation-level call fired too, and the connector then discarded the
+   * per-claim results in favour of the invocation-level ones. So the engine
+   * paid for six model calls to produce output that was thrown away, and the
+   * "0-2 suggestions per invocation" cardinality contract was bypassed —
+   * ten suggestions were generated across five invocations, mostly
+   * near-duplicates of each other, before the connector trimmed to two.
+   *
+   * Defaults to FALSE so a caller hitting this route directly (without the
+   * detect call) still gets Advance, exactly as before. The connector sets it
+   * true because it always calls detect.
+   */
+  skipClaimAdvance?: boolean;
+  /**
    * ADVANCE — the user's own original request/question for this turn,
    * verbatim, when the caller actually has it (server/src/server.ts's MCP
    * tool field is optional: "pass this whenever you have it"). Absent or
@@ -937,21 +956,26 @@ export async function runReview(
       db,
       options.challengeClient,
     ),
-    runAdvanceForClaim(
-      {
-        organizationId,
-        reviewId,
-        claimId,
-        claimText,
-        materiality: materiality ?? false,
-        lifecycle,
-        state: assigned.state,
-        stateReason: assigned.reason,
-        userRequest,
-      },
-      db,
-      options.advanceClient,
-    ),
+    // Skipped entirely when the caller runs Advance once per invocation — see
+    // RunReviewInput.skipClaimAdvance. Resolving to [] rather than gating the
+    // Promise.all keeps the tuple shape and the concurrency story unchanged.
+    input.skipClaimAdvance === true
+      ? Promise.resolve([] as AdvanceSuggestion[])
+      : runAdvanceForClaim(
+          {
+            organizationId,
+            reviewId,
+            claimId,
+            claimText,
+            materiality: materiality ?? false,
+            lifecycle,
+            state: assigned.state,
+            stateReason: assigned.reason,
+            userRequest,
+          },
+          db,
+          options.advanceClient,
+        ),
   ]);
 
   return {
