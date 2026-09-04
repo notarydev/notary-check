@@ -60,7 +60,7 @@ const reviewInputSchema = {
     .string()
     .optional()
     .describe(
-      "REQUIRED IN PRACTICE — you always have this; it is the message you are answering. The user's own request for this turn, verbatim: never paraphrased, summarized, or invented. Notary uses it to work out what the user is trying to do, which is half of what it returns. Without it Notary cannot suggest a next move at all.",
+      "The user's own request for this turn, verbatim — never paraphrased, summarized, or invented. You always have this: it is the message you are answering, and Notary cannot see it any other way. It is what Notary uses to work out what the user is trying to do, which is half of what it returns; without it, Notary can check your answer but cannot suggest anything.",
     ),
   // Everything below is Track 2's material. None of it is required, and none
   // of it may be invented — an absent field is a correct answer, a fabricated
@@ -114,19 +114,26 @@ function buildServer() {
     {
       title: "Check with Notary",
       description:
-        // TWO JOBS, NOT ONE. The old description described only claim-vs-source
-        // checking, which is why Claude only ever sent claim-vs-source material
-        // and Track 2 arrived blind. Notary now does two things and needs
-        // material for both.
-        "Notary independently checks your answer and suggests what to do next. It does two things: (1) finds things that are blatantly wrong — a claim the supplied source contradicts, an answer that contradicts itself, a completion claim the command output disproves; and (2) works out what the user is trying to do and suggests at most two next moves. " +
-        "Bring material for both: the verbatim answer, any sources you actually used, AND the user's own request verbatim plus any constraints they stated. You always have the user's request — it is the message you are answering. Never invent a citation, a constraint, or context that was not supplied; an omitted field is correct, a fabricated one is not. " +
-        // The trigger is deliberately no longer gated on having a source. A
-        // source-gated trigger meant Notary was never called on the majority of
-        // turns, including every turn where the second job was the useful one.
-        "Call this proactively, without waiting to be asked, whenever you have written a substantive answer — you do not need a source, and you do not need a factual claim. Do this on every such answer in the conversation, not only the first. " +
-        // The loop. Claude can call repeatedly BEFORE writing to the user, so
-        // the ask is phrased to be acted on now rather than deferred.
-        "If Notary reports that something could not be checked and names what would fix it, act on that immediately where you can — attach the source, supply the command output, then call Notary again before you finish your answer. If a later user message responds to a Notary finding (for example 'Qualify:' or 'Replace with'), treat it as an authoritative correction tied to that claim, revise, and check the revision.",
+        // WHO WE ARE, FIRST. Claude has no way to know what Notary is or what
+        // it can see, and the single most useful thing to tell it is the
+        // constraint: this call is the ONLY channel. Every field the schema
+        // asks for is self-justifying once that is said, so it is said first.
+        //
+        // This belongs in the DESCRIPTION — trusted configuration the host
+        // registers — and nowhere else. An earlier build put behaviour
+        // guidance in the tool RESULT and Claude correctly refused it as an
+        // injected instruction (see the response-text block below).
+        "Notary is an independent checker that runs outside this conversation. It cannot see the conversation, your reasoning, or anything you have not passed in this call — everything it asks for is because there is no other way for it to know. " +
+        // Two jobs, concretely. The old description covered only claim-vs-source
+        // checking, which is why Notary was only ever called on the small
+        // fraction of turns that had a citable claim.
+        "It does two things: (1) finds things that are blatantly wrong — a claim your source contradicts, an answer that contradicts itself, a \"tests pass\" the command output disproves; and (2) works out what the user is trying to do and suggests at most two next moves. " +
+        // Sets the expectation that silence is success. Without this a model
+        // may reasonably infer that calling a checker invites criticism.
+        "It checks mechanically against material you supply. It does not grade your reasoning or second-guess your judgment, and most calls find nothing — that is the normal result, not a failure. " +
+        "Pass the verbatim answer, any sources you actually used, and the user's own request in their words. Never invent a citation, a constraint, or context that was not supplied: an omitted field is correct, a fabricated one is not. " +
+        "Call this proactively, without waiting to be asked, on any substantive answer you write — you do not need a source, and you do not need a factual claim. Do this on every such answer, not only the first. " +
+        "If Notary reports something it could not check and names what would fix it, act on that now where you can — attach the source, supply the command output, then call Notary again before you finish your answer. If a later user message responds to a Notary finding (for example \"Qualify:\" or \"Replace with\"), treat it as an authoritative correction tied to that claim, revise, and check the revision.",
       inputSchema: reviewInputSchema,
       _meta: { ui: { resourceUri: RESOURCE_URI } },
     },
