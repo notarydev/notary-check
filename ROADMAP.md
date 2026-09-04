@@ -24,10 +24,78 @@ layout is in `MODULES.md`. Vocabulary is in `CLAUDE.md`.
 
 Notary Check works. The engine verifies claims against evidence deterministically,
 Act suggests next moves, the card renders, Clerk OAuth is live, and the whole
-thing runs in production on Lightsail. 428 tests pass against a real database.
+thing runs in production on Lightsail. 439 tests, 435 passing against a real
+database.
 
 **And nobody can buy it.** That is the honest summary. The gap is not the
 engine — it is everything around the engine.
+
+---
+
+## In flight right now — read this before starting anything else
+
+Picked up mid-stream on 2026-09-04. None of it is blocked on a decision; it is
+blocked on finishing.
+
+### F1 — Two commits are built and NOT deployed
+
+`origin/main` is ahead of production. Live is `:notary-check-api.engine.37` /
+`:notary-check-mcp.server.38` (deployments 15 and 23), which **does** include
+the Verify/Act rename, migration `0016`, claim-level source gaps, Act's
+restored context, and `inputProvenance`.
+
+It does **not** include:
+
+| Commit | What is not live |
+|---|---|
+| `13a9144` | Move interaction telemetry — the `record_move_event` tool, `POST /v1/move-events`, and the invocation path persisting at all. Until this ships, `act_move_event` stays empty and every move shown to a user is still unrecorded. |
+| `5c07734` | Quota test fix (test-only, no runtime effect). |
+
+No migration is needed. `./scripts/deploy.sh both` is the whole job.
+
+### F2 — The deploy gate fails and has not been reproduced
+
+`./scripts/deploy.sh` runs the engine suite before building, and it failed
+twice on the owner's machine with the script's own "probably the DeepSeek
+flake" message. **That message has already been wrong once** — the first
+failure was a real, deterministic quota-test bug (`5c07734`).
+
+The suite passes twice consecutively here (435/435). The failing test name was
+never captured, so this is unresolved rather than fixed. **Get the name
+first:**
+
+```bash
+cd engine && npm test 2>&1 | grep -E '^not ok|^# (pass|fail)'
+```
+
+If it reproduces identically twice it is real, whatever file it is in.
+`SKIP_TESTS=1 ./scripts/deploy.sh both` bypasses the gate if the code is
+otherwise verified — but only with that reasoning stated, not by reflex.
+
+### F3 — Live testing is underway, results not yet in
+
+Seven scripted prompts were handed to the owner to run through the real
+connector, each probing one thing with a named failure signature. The two that
+matter most:
+
+- **Mixed grounding** (one cited claim beside uncited ones). The claim-level
+  source-gap fix is proven only by unit test; no live case has exercised it,
+  because both claims in the smoke test are ungrounded and the old code would
+  have passed too.
+- **Constraint + prior attempts** — does a move respect a stated budget and
+  avoid re-proposing what was already tried? Act saw neither field until
+  `7584e7e`.
+
+And the one the product actually rests on: **the closed loop** — finding →
+move → Claude corrects → re-check → the original finding is gone. If that works
+twice in a row it is demonstrable; nobody has yet run it end to end.
+
+### F4 — Secrets are sitting in a settings file
+
+`.claude/settings.local.json` contains a **live production database URL with
+its password** and an `sk_live_` Clerk key, embedded in permission rules.
+Rotate the Clerk key and move both out. This is unrelated to every other item
+here and is the only one with a security consequence.
 
 ---
 
