@@ -477,12 +477,30 @@ function findingFor(
 // apiKey defaults to the shared ENGINE_API_KEY env var for local/manual
 // testing without Clerk. The real Clerk-authenticated path (server.ts) always
 // passes the caller's own per-user resolved key explicitly.
+/**
+ * Everything Claude sends beyond the answer and its sources — Track 2's
+ * material plus the execution output Track 1's self-report detector checks
+ * against.
+ *
+ * Every field is optional and none may be invented by us. An absent field is
+ * a correct, expected state; fabricating one would silently corrupt the task
+ * model Track 2 reasons from.
+ */
+export interface InvocationExtras {
+  userRequest?: string;
+  explicitConstraints?: string[];
+  priorAttempts?: string[];
+  executionResults?: Array<{ ref: string; text: string }>;
+  priorContext?: Array<{ kind: string; text: string }>;
+}
+
 export async function reviewAnswer(
   answerText: string,
   sourceRefs: SourceRef[],
   apiKey: string = defaultEngineApiKey(),
-  userRequest?: string,
+  extras: InvocationExtras = {},
 ): Promise<ReviewCardData> {
+  const userRequest = extras.userRequest;
   const extraction = await extractClaims(answerText, apiKey);
   if (!extraction.ok) {
     // Extraction itself failed (quota denial, provider/parse fault) — this is

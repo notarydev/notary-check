@@ -42,16 +42,62 @@ const reviewInputSchema = {
     )
     .optional()
     .describe("Sources Claude can identify as actually available — never invented."),
-  // Advance (Track 2) needs the user's own original ask to suggest a relevant
-  // next move — it never sees the rest of the conversation, only what's
-  // passed into this one tool call. Optional: when absent, Notary skips the
-  // next-move suggestion entirely rather than guessing at what the user
-  // wanted.
+  // TRACK 2's OBJECT. Not an optional extra — without it Track 2 has no task
+  // to reason about and skips entirely, which is why it used to produce
+  // nothing on the ~37% of turns where Track 1 also has nothing.
+  //
+  // Kept optional in the SCHEMA but not in the DESCRIPTION, deliberately.
+  // Making it hard-required means a validation error when Claude omits it,
+  // which may prompt a corrected retry or may make Claude stop calling the
+  // tool at all — and losing the invocation is worse than losing the field.
+  // Measured omission rate before this change: 19% of Advance invocations.
+  // Re-measure after; harden only if the description alone does not close it.
+  //
+  // The previous description ended with "omit it entirely if it isn't"
+  // available — an explicit escape hatch for a field Claude always has, since
+  // it is the message being answered. That sentence is gone.
   user_request: z
     .string()
     .optional()
     .describe(
-      "The user's own original request or question for this turn, verbatim when you have it — never paraphrased, summarized, or invented. Pass this whenever the user's actual wording is available to you; omit it entirely if it isn't. Used only to suggest an optional next move (e.g. clarify, test, compare, repair) — never shown to the user as-is.",
+      "REQUIRED IN PRACTICE — you always have this; it is the message you are answering. The user's own request for this turn, verbatim: never paraphrased, summarized, or invented. Notary uses it to work out what the user is trying to do, which is half of what it returns. Without it Notary cannot suggest a next move at all.",
+    ),
+  // Everything below is Track 2's material. None of it is required, and none
+  // of it may be invented — an absent field is a correct answer, a fabricated
+  // one silently corrupts the task model.
+  //
+  // Deliberately NOT asked for: task_mode. Classifying the task is Notary's
+  // job (engine/src/advance/intent.ts), not Claude's. Asking would put an
+  // unauditable label in an optional field Claude often skips; inferring it
+  // makes the classification ours to explain and improve.
+  explicit_constraints: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Constraints the user stated in their own words — a budget, a deadline, a technology they must use or avoid, a length limit. Verbatim, only what they actually said. Omit if they stated none; never infer one.",
+    ),
+  prior_attempts: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "What the user says they already tried, in their words. Distinguishes 'nothing has been tried yet' from 'something was tried and needs fixing' — which are different next moves. Omit if unknown.",
+    ),
+  execution_results: z
+    .array(z.object({ ref: z.string(), text: z.string() }))
+    .optional()
+    .describe(
+      "Output from commands, tests, or tools you actually ran this turn — verbatim, truncated if long. Notary checks completion claims against it: if your answer says tests pass and the output shows failures, that is caught. Only include real output you received; never reconstruct or summarize it.",
+    ),
+  prior_context: z
+    .array(
+      z.object({
+        kind: z.enum(["decision", "constraint", "requirement", "number", "assumption"]),
+        text: z.string(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Statements established EARLIER in this conversation that this answer depends on, restates, or changes — quoted verbatim, never paraphrased. Used only to notice when an answer drifts from something already settled. Omit entirely rather than reconstructing from memory.",
     ),
 };
 
@@ -68,8 +114,19 @@ function buildServer() {
     {
       title: "Check with Notary",
       description:
-        "Reviews the material factual claims in a source-backed AI answer against the sources actually supplied, and returns a card showing only material issues. Pass the verbatim answer text and only sources you can identify as actually available — never invent citations or imply private context was delivered. " +
-        "Call this proactively, without waiting to be asked, whenever your own answer makes a checkable factual claim (a number, a date, a quoted figure, an attributed fact) AND you have an identifiable source for it — a cited URL, a document the user supplied, or workspace context. Do this on every such answer in the conversation, not only the first one. If a later user message references a prior Notary finding (e.g. starts with 'Qualify:', 'Replace with', or otherwise clearly responds to a specific finding this tool returned), treat it as an authoritative correction request tied to that claim, not an unrelated aside — revise the claim accordingly and call this tool again on the revised answer.",
+        // TWO JOBS, NOT ONE. The old description described only claim-vs-source
+        // checking, which is why Claude only ever sent claim-vs-source material
+        // and Track 2 arrived blind. Notary now does two things and needs
+        // material for both.
+        "Notary independently checks your answer and suggests what to do next. It does two things: (1) finds things that are blatantly wrong — a claim the supplied source contradicts, an answer that contradicts itself, a completion claim the command output disproves; and (2) works out what the user is trying to do and suggests at most two next moves. " +
+        "Bring material for both: the verbatim answer, any sources you actually used, AND the user's own request verbatim plus any constraints they stated. You always have the user's request — it is the message you are answering. Never invent a citation, a constraint, or context that was not supplied; an omitted field is correct, a fabricated one is not. " +
+        // The trigger is deliberately no longer gated on having a source. A
+        // source-gated trigger meant Notary was never called on the majority of
+        // turns, including every turn where the second job was the useful one.
+        "Call this proactively, without waiting to be asked, whenever you have written a substantive answer — you do not need a source, and you do not need a factual claim. Do this on every such answer in the conversation, not only the first. " +
+        // The loop. Claude can call repeatedly BEFORE writing to the user, so
+        // the ask is phrased to be acted on now rather than deferred.
+        "If Notary reports that something could not be checked and names what would fix it, act on that immediately where you can — attach the source, supply the command output, then call Notary again before you finish your answer. If a later user message responds to a Notary finding (for example 'Qualify:' or 'Replace with'), treat it as an authoritative correction tied to that claim, revise, and check the revision.",
       inputSchema: reviewInputSchema,
       _meta: { ui: { resourceUri: RESOURCE_URI } },
     },
@@ -78,6 +135,10 @@ function buildServer() {
         answer_text: string;
         source_refs?: Array<{ url?: string; title?: string; quoted_excerpt?: string; source_role: "answer_citation" | "user_added" | "workspace_collection" }>;
         user_request?: string;
+        explicit_constraints?: string[];
+        prior_attempts?: string[];
+        execution_results?: Array<{ ref: string; text: string }>;
+        prior_context?: Array<{ kind: "decision" | "constraint" | "requirement" | "number" | "assumption"; text: string }>;
       },
       extra: { authInfo?: { extra?: { userId?: string; email?: string } } },
     ) => {
@@ -87,7 +148,13 @@ function buildServer() {
         throw new Error("Unauthenticated tool call: no Clerk user id on authInfo.");
       }
       const apiKey = await resolveApiKeyForUser(clerkUserId, email);
-      const cardData = await reviewAnswer(args?.answer_text ?? "", args?.source_refs ?? [], apiKey, args?.user_request);
+      const cardData = await reviewAnswer(args?.answer_text ?? "", args?.source_refs ?? [], apiKey, {
+        userRequest: args?.user_request,
+        explicitConstraints: args?.explicit_constraints,
+        priorAttempts: args?.prior_attempts,
+        executionResults: args?.execution_results,
+        priorContext: args?.prior_context,
+      });
       return {
         content: [
           {
@@ -114,7 +181,12 @@ function buildServer() {
                   : cardData.status === "could_not_check"
                     ? "Could not verify this against the supplied evidence."
                     : "1 thing to check.") +
-              " (Keep calling Notary proactively on this conversation's later checkable claims with an available source — no need to wait to be asked again.)",
+              // The qualifier "with an available source" used to live here. It
+              // was re-teaching the NARROW, Track 1-only trigger on every
+              // single turn — spending the strongest lever we have (recency
+              // beats distance, measured live 2026-09-03) to make Notary get
+              // called less. Removed.
+              " (Keep calling Notary proactively on this conversation's later answers — a source is not required, and pass the user's request each time.)",
           },
         ],
         structuredContent: cardData,
