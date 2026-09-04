@@ -74,6 +74,16 @@ type ReviewCardData = {
   status: "no_issue" | "issue_found" | "could_not_check" | "not_checked";
   /** What a detector could not check, and what would make it checkable. Facts, at most two. */
   gaps?: Array<{ missing: string; unblocks: string }>;
+  bank_findings?: Array<{
+    detector: string;
+    type: string;
+    owner: string;
+    boundary_text: string;
+    field_deltas: Array<{ field: string; claimed: string; observed: string; relation: string }>;
+    basis_kind: string;
+  }>;
+  intent?: { task_mode: string; defaulted: boolean } | null;
+  scope_detail?: { claims: number; checkable: number; sources: number };
   scope: string;
   claim?: string;
   findings?: Array<{
@@ -208,6 +218,125 @@ function NotaryMark() {
   );
 }
 
+/**
+ * L2 and L3 — what Notary looked at, and how it knows.
+ *
+ * THE LAYERING, and why it is three levels rather than two:
+ *   L1  one line. What we did. Costs no attention.
+ *   L2  what was found and what could not be checked, in prose. Enough to
+ *       decide whether to care, without reading a table.
+ *   L3  the record: which field disagreed, what each side said, which detector
+ *       and on what basis. This is the part no prompt can replicate, and the
+ *       part almost nobody wants on any given turn — so it is its own
+ *       disclosure, not the bottom of L2.
+ *
+ * INTENT LIVES HERE, at L3, and only as an explanation of WHY THESE MOVES.
+ * It is deliberately not a panel of its own: the classifier defaults to
+ * "general" often, and a card announcing "Intent: general" tells the reader
+ * nothing while looking like a malfunction. A defaulted intent is therefore
+ * not rendered at all — an honest absence beats a meaningless label.
+ */
+function DetailBlock({
+  data,
+  recordOpen,
+  setRecordOpen,
+}: {
+  data: ReviewCardData;
+  recordOpen: boolean;
+  setRecordOpen: (v: boolean) => void;
+}) {
+  const bank = data.bank_findings ?? [];
+  const gaps = data.gaps ?? [];
+  const scope = data.scope_detail;
+  const intent = data.intent;
+  const moves = (data.advance_suggestions ?? []).map((s) => s.move);
+  const hasRecord = bank.length > 0 || (intent != null && !intent.defaulted && moves.length > 0);
+
+  return (
+    <div className="notary-detail">
+      {/* Scope, stated as counts rather than as a verdict. "5 claims checked"
+          would be false whenever some had no source, which is why the resting
+          line never carries a number and this does. */}
+      {scope !== undefined && (
+        <div className="notary-scope">
+          {scope.claims} claim{scope.claims === 1 ? "" : "s"} ·{" "}
+          {scope.checkable === 0
+            ? "none had a source to check against"
+            : `${scope.checkable} checked against ${scope.sources} source${scope.sources === 1 ? "" : "s"}`}
+        </div>
+      )}
+
+      {bank.length > 0 && (
+        <ul className="notary-detail-findings">
+          {bank.map((f, i) => (
+            <li key={`${f.detector}-${i}`}>{f.boundary_text}</li>
+          ))}
+        </ul>
+      )}
+
+      {gaps.length > 0 && (
+        <ul className="notary-gaps">
+          {gaps.map((g) => (
+            <li key={g.missing + g.unblocks}>Not checked: {g.unblocks}</li>
+          ))}
+        </ul>
+      )}
+
+      {hasRecord && (
+        <>
+          <button
+            type="button"
+            className="notary-link notary-record-toggle"
+            aria-expanded={recordOpen}
+            onClick={() => setRecordOpen(!recordOpen)}
+          >
+            {recordOpen ? "Hide record" : "Record"}
+          </button>
+          {recordOpen && (
+            <div className="notary-record">
+              {bank.map((f, i) => (
+                <div key={`rec-${i}`} className="notary-record-item">
+                  <div className="notary-record-head">
+                    {f.detector.replace(/_/g, " ")} · {f.owner.replace(/_/g, " ")}
+                  </div>
+                  {f.field_deltas.length > 0 ? (
+                    <table className="notary-record-table">
+                      <tbody>
+                        {f.field_deltas.map((d) => (
+                          <tr key={d.field}>
+                            <td className="notary-record-field">{d.field}</td>
+                            <td>
+                              claim <q>{d.claimed}</q> / found <q>{d.observed}</q>
+                            </td>
+                            <td className="notary-record-rel">{d.relation}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="notary-record-note">no field-level detail for this detector</div>
+                  )}
+                  <div className="notary-record-note">basis: {f.basis_kind.replace(/_/g, " ")}</div>
+                </div>
+              ))}
+              {/* Why these moves. The policy table, finally visible — and only
+                  when the task was actually recognised. */}
+              {intent != null && !intent.defaulted && moves.length > 0 && (
+                <div className="notary-record-item">
+                  <div className="notary-record-head">why these moves</div>
+                  <div className="notary-record-note">
+                    read as a {intent.task_mode} task · offered {moves.join(", ")}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ActionPill({
   label,
   fullText,
@@ -256,6 +385,11 @@ export default function App() {
   const [toolInput, setToolInput] = useState<ToolInput | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [findingOpen, setFindingOpen] = useState(false);
+  // L3 — the record. A SEPARATE disclosure from L2 on purpose: L2 answers
+  // "what did you find", L3 answers "how do you know". Most readers never want
+  // the second, and putting the field-by-field table inside the first
+  // disclosure would make every expansion cost a wall of table.
+  const [recordOpen, setRecordOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
 
@@ -369,20 +503,43 @@ export default function App() {
   const quietGaps = (data.gaps ?? []).slice(0, 2);
   const hasQuietContent = quietAdvance.length > 0 || quietGaps.length > 0;
 
-  /** The one-line resting state, plus anything Track 2 produced. */
+  // Anything worth expanding into? Scope, a bank finding, or a gap.
+  const hasDetail =
+    (data.bank_findings?.length ?? 0) > 0 ||
+    quietGaps.length > 0 ||
+    data.scope_detail !== undefined;
+
+  /**
+   * L1 — one line, plus whatever Track 2 produced, plus a Details affordance
+   * when there is anything underneath.
+   *
+   * The gaps are NOT rendered at L1 any more; they moved into L2. At rest the
+   * card should cost one line of attention, and a bulleted list of what could
+   * not be checked is the opposite of that — it puts an apology above the two
+   * useful questions.
+   */
   const quietCard = (line: string) => (
     <div className="notary-card notary-quiet">
       <div className="notary-header">
         <NotaryMark />
         <span className="notary-summary">{line}</span>
+        {hasDetail && (
+          <>
+            <button
+              type="button"
+              className="notary-link"
+              aria-expanded={findingOpen}
+              onClick={() => setFindingOpen((v) => !v)}
+            >
+              {findingOpen ? "Hide details" : "Details"}
+            </button>
+            <span className="notary-sep">·</span>
+          </>
+        )}
+        <button type="button" className="notary-link" onClick={() => setDismissed(true)}>
+          Dismiss
+        </button>
       </div>
-      {quietGaps.length > 0 && (
-        <ul className="notary-gaps">
-          {quietGaps.map((g) => (
-            <li key={g.missing + g.unblocks}>Not checked: {g.unblocks}</li>
-          ))}
-        </ul>
-      )}
       {quietAdvance.length > 0 && (
         <div className="notary-advance">
           <div className="notary-advance-pills">
@@ -397,6 +554,9 @@ export default function App() {
             ))}
           </div>
         </div>
+      )}
+      {findingOpen && hasDetail && (
+        <DetailBlock data={data} recordOpen={recordOpen} setRecordOpen={setRecordOpen} />
       )}
     </div>
   );
@@ -481,6 +641,9 @@ export default function App() {
           Dismiss
         </button>
       </div>
+      {findingOpen && (
+        <DetailBlock data={data} recordOpen={recordOpen} setRecordOpen={setRecordOpen} />
+      )}
       {findingOpen && (
         <div className="notary-detail">
           {data.claim && <div className="notary-finding-text">{data.claim}</div>}

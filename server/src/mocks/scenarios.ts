@@ -123,6 +123,26 @@ export type ReviewCardData = {
   // figure" — but that is it choosing to act on a reported fact, not us
   // issuing a command inside data.
   gaps?: Array<{ missing: string; unblocks: string }>;
+  // The detector bank's own findings, distinct from `findings` above (which
+  // are Track 1 verification results mapped onto the card's finding shape).
+  // Carries the field-level detail the record view renders.
+  bank_findings?: Array<{
+    detector: string;
+    type: string;
+    owner: string;
+    boundary_text: string;
+    field_deltas: Array<{ field: string; claimed: string; observed: string; relation: string }>;
+    basis_kind: string;
+  }>;
+  // What Notary read the task as, and which moves that made available.
+  // Rendered ONLY in the record view, and only as an explanation of why these
+  // moves were offered — never as a standalone "Intent" panel. It defaults to
+  // "general" often enough that surfacing it on its own would be noise, and a
+  // task label is not a finding.
+  intent?: { task_mode: string; defaulted: boolean } | null;
+  // How much was actually looked at, so the resting line never has to carry a
+  // count that would be a lie when some claims had no source.
+  scope_detail?: { claims: number; checkable: number; sources: number };
 };
 
 // Scenario A — correct answer, nothing to flag.

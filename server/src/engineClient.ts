@@ -545,6 +545,49 @@ function parseGaps(raw: unknown): CardGap[] {
 const MAX_GAPS = 2;
 
 /**
+ * The detector bank's findings, with the field-level detail the record view
+ * renders. Parsed strictly and defensively, same discipline as every other
+ * model-adjacent wire field: an unexpected shape degrades to "no findings"
+ * rather than failing the review.
+ *
+ * Findings are NOT capped. They are computed facts, and facts do not compete
+ * for attention the way suggestions do — the cap belongs on actions, which are
+ * an interrupt budget. The card decides how many to show at rest.
+ */
+function parseBankFindings(raw: unknown): NonNullable<ReviewCardData["bank_findings"]> {
+  if (!Array.isArray(raw)) return [];
+  const out: NonNullable<ReviewCardData["bank_findings"]> = [];
+  for (const f of raw) {
+    if (typeof f !== "object" || f === null) continue;
+    const o = f as Record<string, unknown>;
+    if (typeof o.detector !== "string" || typeof o.boundaryText !== "string") continue;
+    const deltas = Array.isArray(o.fieldDeltas)
+      ? o.fieldDeltas.flatMap((d) => {
+          if (typeof d !== "object" || d === null) return [];
+          const x = d as Record<string, unknown>;
+          if (typeof x.field !== "string" || typeof x.relation !== "string") return [];
+          return [{
+            field: x.field,
+            claimed: String(x.claimed ?? ""),
+            observed: String(x.observed ?? ""),
+            relation: x.relation,
+          }];
+        })
+      : [];
+    const basis = typeof o.basis === "object" && o.basis !== null ? (o.basis as Record<string, unknown>) : {};
+    out.push({
+      detector: o.detector,
+      type: typeof o.type === "string" ? o.type : "finding",
+      owner: typeof o.owner === "string" ? o.owner : "computed",
+      boundary_text: o.boundaryText,
+      field_deltas: deltas,
+      basis_kind: typeof basis.kind === "string" ? basis.kind : "unknown",
+    });
+  }
+  return out;
+}
+
+/**
  * Runs the detector bank and invocation-level Track 2.
  *
  * Called on EVERY review, including one with zero material claims — that is
@@ -631,6 +674,10 @@ export async function reviewAnswer(
       const det = await runDetection(reviewId, answerText, extraction.claims, new Map(), false, apiKey, extras);
       const suggestions = parseAdvanceSuggestions(det.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
       const zeroClaimGaps = parseGaps(det.gaps);
+      const zeroBank = parseBankFindings(det.findings);
+      const zeroIntent = det.intent != null && typeof det.intent.task_mode === "string"
+        ? { task_mode: det.intent.task_mode, defaulted: det.intent.defaulted === true }
+        : null;
       const findingCount = Array.isArray(det.findings) ? det.findings.length : 0;
       if (findingCount > 0) {
         return {
@@ -644,6 +691,9 @@ export async function reviewAnswer(
           actions: ["Dismiss"],
           advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
           gaps: zeroClaimGaps.length > 0 ? zeroClaimGaps : undefined,
+          bank_findings: zeroBank.length > 0 ? zeroBank : undefined,
+          intent: zeroIntent,
+          scope_detail: { claims: extraction.claims.length, checkable: 0, sources: 0 },
         };
       }
       return {
@@ -652,6 +702,9 @@ export async function reviewAnswer(
         actions: [],
         advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
         gaps: zeroClaimGaps.length > 0 ? zeroClaimGaps : undefined,
+        bank_findings: zeroBank.length > 0 ? zeroBank : undefined,
+        intent: zeroIntent,
+        scope_detail: { claims: extraction.claims.length, checkable: 0, sources: 0 },
       };
     } catch {
       return { status: "no_issue", scope: "No material factual claims found to review.", actions: [] };
@@ -793,6 +846,19 @@ export async function reviewAnswer(
     issueFindings.push(...bankFindings);
     // Invocation-level Advance replaces whatever the per-claim calls produced.
     const invocationGaps = parseGaps(detection.gaps);
+    const bankFindingsDetail = parseBankFindings(detection.findings);
+    const invocationIntent = detection.intent != null && typeof detection.intent.task_mode === "string"
+      ? { task_mode: detection.intent.task_mode, defaulted: detection.intent.defaulted === true }
+      : null;
+    // Honest scope: how many claims there were, and how many had ANY source to
+    // check against. The resting line never carries a count for this reason —
+    // "5 claims checked" is a lie when four of them had nothing to check.
+    const checkableCount = outcomes.filter((o) => o.ok && !o.result.claim.no_source).length;
+    const scopeDetail = {
+      claims: materialClaims.length,
+      checkable: checkableCount,
+      sources: evidenceIds.length,
+    };
     const invocationAdvance = parseAdvanceSuggestions(detection.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
     if (invocationAdvance.length > 0) {
       advanceSuggestions.length = 0;
@@ -812,6 +878,9 @@ export async function reviewAnswer(
         challenges: challengesField,
         advance_suggestions: advanceSuggestionsField,
         gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
+        bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
+        intent: invocationIntent,
+        scope_detail: scopeDetail,
       };
     }
     // Bug fix: this used to require `uncheckedFindings.length === materialClaims.length`
@@ -828,6 +897,9 @@ export async function reviewAnswer(
         scope: uncheckedFindings[0].text,
         actions: [],
         gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
+        bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
+        intent: invocationIntent,
+        scope_detail: scopeDetail,
       };
     }
     // Nothing failed and nothing was contradicted. If every material claim
@@ -843,6 +915,9 @@ export async function reviewAnswer(
         actions: [],
         advance_suggestions: advanceSuggestionsField,
         gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
+        bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
+        intent: invocationIntent,
+        scope_detail: scopeDetail,
       };
     }
     return {
@@ -851,6 +926,9 @@ export async function reviewAnswer(
       actions: [],
       advance_suggestions: advanceSuggestionsField,
       gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
+        bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
+        intent: invocationIntent,
+        scope_detail: scopeDetail,
     };
   } catch (err) {
     const correlationId = randomUUID();
