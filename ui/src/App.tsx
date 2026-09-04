@@ -418,7 +418,20 @@ export default function App() {
   // showing, and rendering null would discard it. The state is still carried
   // in the payload and the model-visible text either way.
   if (data.status === "not_checked") {
-    return hasQuietContent ? quietCard("Notary · nothing to check against") : null;
+    // "nothing flagged", the same line `no_issue` uses — NOT "nothing to check
+    // against", which was the first wording and read as a complaint.
+    //
+    // The problem was one of emphasis, not accuracy. Leading with what Notary
+    // could NOT do frames a turn where it just produced two useful questions
+    // as a failure, and the useful content sits underneath the apology.
+    //
+    // "Flagged" stays honest without that: it is OUR action, and we raised
+    // nothing — true whether or not a source existed to check. It never claims
+    // anything was verified. What was not checked, and what would fix it, is
+    // carried by the gap lines below when there is something worth saying, and
+    // by the model-visible text either way. The distinction is not lost; it is
+    // just no longer the headline.
+    return hasQuietContent ? quietCard("Notary · nothing flagged") : null;
   }
 
   if (data.status === "could_not_check") {

@@ -54,7 +54,7 @@ body {
 }
 
 .notary-card {
-  font-size: 13.5px;
+  font-size: 15px;
   line-height: 1.55;
   color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
   max-width: 420px;
@@ -242,11 +242,15 @@ body {
   margin-top: 10px;
 }
 
+/* Side by side, wrapping when they do not fit. Stacking two short labels put
+   them on separate lines and made a 0-2 item list read like a menu; inline
+   keeps the whole card to one or two lines at rest, which is the point. */
 .notary-advance-pills {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 5px;
+  gap: 4px 14px;
 }
 
 /* One pill = one interaction, on every device, without detecting touch vs.
@@ -267,9 +271,10 @@ body {
   color: var(--color-text-tertiary, light-dark(#999, #8a8a86));
   text-decoration: underline;
   padding: 0;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 14.5px;
+  line-height: 1.45;
   cursor: pointer;
+  text-align: left;
 }
 
 .notary-pill-button:hover {
@@ -292,19 +297,19 @@ body {
 }
 
 .notary-pill-preview {
-  margin-top: 3px;
-  font-size: 13px;
+  margin-top: 4px;
+  font-size: 14px;
   color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
   /* Card content area is narrower now — this used to be wider than the
      card itself, which is what forced a sibling pill onto a new (flex-
      wrap) row in the first place. */
-  max-width: 280px;
-  line-height: 1.4;
+  max-width: 330px;
+  line-height: 1.5;
 }
 
 .notary-pill-preview-hint {
-  margin-top: 2px;
-  font-size: 11.5px;
+  margin-top: 3px;
+  font-size: 12.5px;
   color: var(--color-text-tertiary, light-dark(#bbb, #7a7a76));
   font-style: italic;
 }
@@ -319,7 +324,7 @@ body {
   list-style: none;
 }
 .notary-gaps li {
-  font-size: 0.8rem;
+  font-size: 0.86rem;
   opacity: 0.72;
   line-height: 1.45;
 }
