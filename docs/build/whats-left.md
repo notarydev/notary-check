@@ -34,14 +34,49 @@ check rather than an opinion.
 | Area | Ready means | Status |
 |---|---|---|
 | **Engine** | All 18 locked test cases pass **against the live deployment**, the pre-pilot gate has real numbers and meets them, quotas and spend caps demonstrably enforce, retention matches the canonical rule, kill switch drilled. | **Closer, still not ready.** Locked case 2 now passes live (E1, 2026-09-04) — the one disqualifying item is gone. Remaining: **B1** (no gate numbers, needs annotators), **B4** (retention violates a canonical rule), **B2a** (two-block card undiagnosed), and the other 17 locked cases have never been run against the *live* deployment, only locally. Caps meter correctly since 0015 but have never been observed to bite. |
-| **Connector** (MCP server, card, auth) | Deployed at current code, Clerk auth gating, the card renders every state honestly, invocation defects fixed and measured. | **Partly.** Clerk live and verified. `not_checked` and the parallelised claim loop deployed 2026-09-04 as `server.17`. **E3's four invocation defects still open** — that is the remaining gap. |
+| **Connector** (MCP server, card, auth) | Deployed at current code, Clerk auth gating, the card renders every state honestly, invocation defects fixed and measured. | **Partly.** Clerk live and verified. **E3 is now done and live** (`server.24`): the ask is widened, the description says what Notary *is* and no longer gates the trigger on having a source, and the trailing reminder is gone. **The remaining gap is the card** — it cannot render the detector bank's output. A claim with no source *and* a self-contradiction has no representation, and findings currently map onto the old four-state shape as best they can. **Nothing is measured after the change**: the widened ask exists to move invocation and omission rates, and neither has been re-measured. |
 | **Billing** | Live Stripe keys, entitlement activates on payment, cancellation and refund paths exercised, webhook failures alert, receipts confirmed delivered. | **Not ready.** Test-mode keys only. The live-key swap is env-only, but no live payment has ever been taken. |
 | **Account** (signup, dashboard, keys) | Signup gate enforced at both app and IdP level, account page works against live billing, key issue/revoke exercised. | **Partly.** App-level waitlist gate live. **O5 — Clerk Restricted mode not confirmed** — the hard half is unverified. |
 | **Marketing site** | `getnotary.ai` reflects what the product actually does and claims nothing the engine cannot support. | **Unreconciled.** A live Cloudflare-fronted site exists that does not match this checkout's `dashboard/` at all. Flagged stale by the owner, never investigated. Highest risk of the set: it is the only surface making public claims. |
 | **Ops** | Monitoring alerts (not just logs), backup schedule, restore drilled, CI, rollback drilled, named incident owner. | **Not ready.** Datadog key set, ingestion unconfirmed. Backup/restore genuinely drilled 2026-09-03. No CI. No named owner. |
 | **Legal** | ToS, Privacy Policy (must disclose evidence text goes to a third-party model), DPA template, named correction/deletion contact. | **Not started.** Needs a lawyer. Blocks public self-serve signup, not an invited pilot. |
 
-**The engine is the only area where the next step is unambiguous** — E3 below, now that E1 and E2 are done. Every other area is blocked on a decision, a person, or money rather than on engineering.
+**The engine's next step is unambiguous** — the card contract, now that E1, E2 and E3 are done. Detection has outrun presentation: the engine emits findings and gaps the card has nowhere to put. Every other area is blocked on a decision, a person, or money rather than on engineering.
+
+### What changed 2026-09-04 (second session), and what it did NOT change
+
+Notary went from a claim-versus-source checker to two things: finding what is
+blatantly wrong, and suggesting a next move. Full explanation in
+`architecture-and-progress.md`. What matters for *this* doc is the honest
+delta:
+
+**Closed.** E3 (the widened ask). Track 2 running without claims or sources —
+previously it never ran at all on ~37% of real turns. The one-sentence
+Track 1 → Track 2 handoff, now carrying field-level detail. Gaps reaching the
+caller. An ambiguous field no longer ending a check when every reading
+conflicts anyway.
+
+**Newly opened, and none of it was on this list before:**
+
+- **The card cannot render the engine's output.** Now blocking rather than
+  deferred: the engine emits findings the UI has no state for.
+- **Findings are not persisted.** No `finding` table. Nothing measures which
+  detectors fire in production, which is the number that would tell us whether
+  any of the bank is earning its keep.
+- **No ask ledger.** A gap can be reported on every invocation with nothing
+  suppressing a repeat — the anti-nagging design exists on paper only.
+- **No `responds_to`.** No way to tell whether an ask ever led to a repair, so
+  the back-and-forth cannot be evaluated at all.
+- **Track 2 has no detectors** and is still one model call with four moves.
+  Intent is inferred and used for exactly one thing: deciding which moves are
+  legal. Every other intent-driven behaviour discussed is unbuilt.
+
+**A rule this session established, worth stating once here because it is easy
+to violate again:** behaviour guidance belongs in the tool *description*, which
+the host registers as trusted configuration — never in the tool *result*. A
+result is data, and instruction-shaped text inside data is the shape of a
+prompt-injection attack. Claude correctly refused ours and escalated it to the
+user as a security concern.
 
 ## Blocking anything being called "validated"
 

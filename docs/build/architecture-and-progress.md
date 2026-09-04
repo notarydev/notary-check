@@ -1,6 +1,6 @@
 > Status: snapshot
 > Owner: Hardyk
-> Last verified: 2026-09-03 (live production deploy — audit fixes + Clerk auth + Advance wiring; see "2026-09-03 deploy" section below)
+> Last verified: 2026-09-04 (detector bank, Track 2 cut loose from the claim loop, widened ask, structured handoff; see the second 2026-09-04 section)
 > Supersedes: —
 
 # Notary Check — Architecture and infrastructure progress
@@ -181,6 +181,127 @@ Fixed with a new, deliberately asymmetric rule in `verification/normalization.ts
 **Test counts:** engine 356/356 against real Postgres with all 15 migrations (up from 349); server 6/6.
 
 **Post-deploy verification, live:** `POST /mcp` unauthenticated returns `401`; OAuth discovery returns `200`; locked case 2 returns `CONTRADICTED` with a resolved match through `api.getnotary.ai`; the usage ledger is accruing real cost (264 millicents month-to-date, from a standing start of 0 before `0015`).
+
+## 2026-09-04, second session — the detector bank, Track 2 cut loose, and the widened ask
+
+**Shipped:** `:notary-check-api.engine.23` and `:notary-check-mcp.server.24`. No migration — findings are returned in the response, not persisted, so this deploy is fully reversible by redeploying the previous image.
+
+This session changed what Notary *is* more than any previous one. Before it, Notary was a claim-versus-source checker that ran only when Claude had a citable claim and a source. After it, it does two things on any substantive answer.
+
+### Why it changed: what real conversations actually contain
+
+The bank was not designed from preference. `engine/eval/detector-hit-rate.ts` measures, against 51 real Claude Code transcripts (1,195 substantive answers), whether each proposed detector would have had **material to work with** — an upper bound on hit rate, not a finding rate:
+
+| Detector | Precondition present |
+|---|---|
+| self-contradiction | 38.9% |
+| self-report | 27.2% |
+| source-verify | 19.2% |
+| overreach | 11.5% |
+| arithmetic | 6.7% |
+| drift | 3.3% |
+| requirement (countable) | 2.3% |
+| **any detector at all** | **~63%** |
+
+Two results contradicted decisions that had already been made. **Arithmetic is not the cheap win** — a first pass said 61%, but that heuristic counted "changed 3 files to fix 2 bugs"; requiring an actual computable relationship drops it to 6.7%. **Requirement-mismatch is essentially never** at 2.3%. Both had been ranked as first builds.
+
+**A caveat that must travel with these numbers.** They divide into two kinds. Detectors reading the *answer itself* (self-contradiction, self-report, arithmetic, requirement) are measured honestly. Detectors depending on *what Claude was asked to supply* (source-verify, overreach, drift) are **understated**, because these transcripts were produced with nothing asking Claude for anything — drift at 3.3% is close to meaningless, since nothing has ever requested `prior_context`. So a low number is strong evidence only for the ask-independent half.
+
+A second dataset (`engine/eval/trace-shape.ts`, 665,453 rounds across 8,058 sessions, telemetry only — no message content) settled two further questions: **tool output is present on 85.7% of rounds**, and **87.3% of rounds carry no user message at all** (median session 16 rounds, p90 150). The second is why `user_request` cannot be assumed to be same-turn in agentic work.
+
+### Track 1 — the detector bank
+
+`engine/src/detect/`. Track 1 had exactly one detector, so its output could *be* the claim's verification state. With several that stops working: source-verify can say `SUPPORTED` while another detector says the answer contradicts itself, and both are right about different things.
+
+So detectors emit **findings beside the claim**, and exactly one — source-verify — still writes `claim.state`. `Finding` deliberately has no `state`, `verdict`, `confidence` or `score` field; a test asserts this rather than trusting the convention.
+
+Two outputs, both facts:
+
+- **Finding** — something is blatantly wrong.
+- **Gap** — a detector could have run but an input was missing.
+
+Turning a gap into an ask is Track 2's job; nothing in the bank expresses an action.
+
+**Three outcomes, not two:** `ran` / `not_applicable` / `missing_input`. Without the third we could not tell "this task has no code, so there is no test output to want" from "this task has code and the output is missing", and would ask a literature-review user to paste a test run.
+
+**Registered:**
+
+- `self_contradiction` — reuses the existing comparator rather than inventing a second one. The applicability gate decides whether two claims are even *about* the same thing before any value is compared, and that gate is the whole safety property: without it, "revenue grew 17%" and "excluding one-time items, revenue grew 12%" reads as a contradiction when it is a qualification. An undefined scope is therefore **not** treated as compatible with a stated one.
+- `self_report` — compares a success claim against a failure signal in tool output that arrived with the payload. Narrow on purpose: only claims tied to an *outcome* ("all tests pass", "the build is clean"), hedges excluded. "I've updated the config" asserts an edit, and failing tests may be about something else entirely.
+
+**Not registered, with reasons recorded in `registry.ts`** so they are not re-added without the argument: arithmetic (6.7%, ask-independent so it will not improve), requirement (2.3%, same), drift (unmeasurable until the ask exists), overreach (needs an ordered modality vocabulary that does not exist).
+
+**Isolation:** a detector that throws contributes nothing and cannot affect any other detector or the verification result. Several detectors means several new ways to break the one thing that already works, and none of them may.
+
+### Track 2 — cut loose from the claim loop
+
+`runAdvanceForClaim` fired inside the per-claim path, and the connector returned early when a review had no material claims. **No claims meant Advance never ran at all** — and ~37% of substantive answers have material for no detector, exactly the turns where Track 1 has nothing and Track 2 is the entire product. It was silent precisely when it was most needed.
+
+`engine/src/advance/runForInvocation.ts` runs it once per invocation. **Independence stated precisely:** not gated on Track 1's *decisions*, only on its *outputs*. `findings = []` and `claims = []` are valid inputs and it still runs.
+
+**Intent inference** (`engine/src/advance/intent.ts`) is Track 2's own first job, and deliberately ours rather than Claude's. Adding `task_mode` to the schema would ask Claude to do Track 2's job in an optional field it skips 19% of the time, and would make the classification unauditable. A deterministic lexical classifier runs before any model call. Signals are narrow: a *wrong* task mode narrows the allowed move set and silently removes options that should have stayed available, so an unmatched request or a genuine tie returns `general`, which resolves to the **full** four-move set. Abstaining never narrows anything.
+
+**What Track 2 still is, stated plainly:** one model call with four moves (`clarify`, `test`, `compare`, `repair`). There is no Track 2 detector bank, no per-move logic, no eligibility rules. Intent is used for exactly one thing — deciding which moves are legal. Everything else about intent-driven behaviour is unbuilt.
+
+### The handoff — structured, not a sentence
+
+Track 2 received one sentence ("The answer states 17% and the filing says 12%") and had to guess whether it was looking at a wrong period, a wrong entity, or a right entity with a wrong number. Three different repairs, which is why its suggestions read as generic.
+
+The field-level detail already existed — every `Finding` carries `fieldDeltas`, computed and then discarded at exactly this boundary. The sealed constraint now carries them, rendered as a short table in the prompt.
+
+**The boundary is unchanged in kind:** still one-directional, still sealed, still no evidence corpus and no rejected-candidate pool. A test asserts the passage excerpt never crosses even when the finding carries one. Handing Track 2 enough raw material to disagree with Track 1 would make it a second verifier, and then two things would be entitled to an opinion about the same evidence.
+
+### The widened ask
+
+The tool description explained what Notary *does* and never what it *is*, so every field read as an arbitrary form to fill in. The most useful thing to say turns out to be the constraint: **"It cannot see the conversation, your reasoning, or anything you have not passed in this call."** Claude has no reason to assume otherwise, and a checker that might already have the conversation does not obviously need the user's request passed to it. Once that sentence exists, every field justifies itself.
+
+Also changed:
+
+- **The trigger is no longer gated on having a source.** That gate meant Notary was never called on the majority of turns, including every turn where the second job was the useful one.
+- **"Most calls find nothing — that is the normal result, not a failure."** Without this a model may reasonably infer that calling a checker invites criticism of its own work, which is a reason not to call.
+- New optional fields: `explicit_constraints`, `prior_attempts`, `execution_results`, `prior_context`. Each states that an omitted field is correct and a fabricated one is not.
+- `user_request` stays **optional in the schema**. A hard requirement risks Claude abandoning the tool on a validation error, and losing the invocation is worse than losing the field. Its old description ended with an explicit "omit it entirely" escape hatch for a field Claude always has; that is gone.
+
+### The instruction that had to be removed
+
+**Observed live, three consecutive calls: Claude identified a sentence in the tool result as an injected instruction, told the user so, and disregarded it. It was right to.**
+
+The sentence was ours — `"(Keep calling Notary proactively... pass the user's request each time.)"` — appended to every response earlier the same day, on the reasoning that a fresh reminder beats a description read once at conversation start. **The recency reasoning was sound; the channel was wrong.**
+
+A tool result is **data**. Instruction-shaped text arriving inside one is exactly the shape of a prompt-injection attack, and a well-trained model is supposed to refuse it. So it did not merely fail to work: it spent the model's trust in everything else we return, and got escalated to the user as a security concern about our own connector.
+
+**The rule this establishes:** behaviour guidance belongs in the tool description — trusted configuration the host registers — and nowhere else. Tool output reports state. What remains is a factual account of what happened, and a capable model acting on "no command output was supplied, so the claim that this worked was not checked" is choosing to act on a reported fact, not obeying a command inside data.
+
+### What could not be checked now reaches the caller
+
+The bank had emitted gaps since it was built and nothing consumed them. They now reach the card and the tool response, **capped at two** — each gap can trigger a full re-invocation, and ten is ten round trips the user waits through.
+
+Phrased as facts, never requests, per the rule above. A test asserts no gap begins with an imperative. And each is worth reading even if nothing acts on it: the user learns the same thing from the card either way, which is what stops this being hostage to model behaviour.
+
+### Ambiguity that cannot change the verdict
+
+Observed in production: `"The Statue of Liberty is 500 feet tall."` against a passage giving both 151 feet (statue) and 305 feet (ground to torch) returned `INDETERMINATE / checks_did_not_complete`. The judge correctly answered `ambiguous`, the field counted as unresolved, the candidate became inapplicable, and the check ended.
+
+**But neither reading is 500.** Whichever was meant, the claim conflicts. The ambiguity was real and entirely immaterial, and nothing could notice that.
+
+`engine/src/verification/immaterialAmbiguity.ts`: if the claim conflicts with **every** candidate reading, the conflict is robust and the field is settled as a conflict. If **any** candidate would match, or cannot be compared, the ambiguity stands. The asymmetry is the safety property — the same shape as the entity-suffix rule, where the permissive direction must be unanimous. It must never fire on "revenue grew 17%" against a passage offering gross 17% and net 12%, where the reading decides the verdict.
+
+**Authority unchanged, arguably sharpened.** The judge gained one output field — the competing readings it saw — and is explicitly told not to choose or rank them. A pure module with no model access decides whether they all conflict. Model observes; code decides. Absent candidates, every path returns "material", which is exactly the prior behaviour. Judge prompt bumped to `judge-field-extraction-v3`.
+
+**Two things only the live judge found**, both of which would have shipped a feature that did nothing: the real candidates carry conversion parentheticals (`"151 feet 1 inch (46 meters)"`), and the idealised fixtures used `"151 feet 1 inch"`, so the unit comparison read `(46 meters)` as part of the unit and the rule silently never fired. And compound units needed handling at all — `"feet 1 inch"` must compare with `"feet"`, while `"meters squared"` must **not** reduce to `"meters"`. Fixtures cleaner than production hide exactly this.
+
+### Test counts
+
+Engine **388/388** against real Postgres with all 15 migrations (up from 356); server **10/10**. One live-judge test flaked once and passed on retry — the suite makes real model calls, so a single red run is not proof of a regression.
+
+### What is NOT built, stated so it is not mistaken for done
+
+- **Track 2 detectors do not exist.** Track 2 is one model call with four moves.
+- **Findings are not persisted.** No `finding` table — they are returned and discarded, so nothing measures which detectors fire in production.
+- **The card cannot render the new output.** Findings map onto the existing four-state shape as best they can; a claim with no source *and* a self-contradiction has no representation.
+- **No ask ledger.** A gap can be reported on every invocation; nothing suppresses a repeat.
+- **`responds_to` does not exist**, so there is no way to tell whether asking ever led to a repair.
+- **Arithmetic, requirement, drift and overreach detectors are unbuilt**, by decision.
 
 ## Live verification, 2026-09-02 — direct testing against `mcp.getnotary.ai`, not repo inspection
 
