@@ -37,10 +37,10 @@ The engine is live on **AWS Lightsail Container Service**, region `us-east-2` �
 **Where production actually points — resolved 2026-09-03, previously unrecorded and unknowable from this repo** (closes the long-standing "record what `DATABASE_URL` resolves to" action). Read directly off the `notary-check-api` container service's live environment:
 
 ```
-postgres://<user>:<password>@3.147.139.53:5432/notary_check?sslmode=require&uselibpqcompat=true
+postgres://<user>:<password>@<prod-db-host>:5432/notary_check?sslmode=require&uselibpqcompat=true
 ```
 
-A standalone Postgres on a Lightsail instance at `3.147.139.53`, database `notary_check`, TLS required. **Not** Lightsail managed Postgres, not RDS, not a co-located container. Credentials live only in the container service environment and are deliberately not recorded here. `uselibpqcompat=true` is a driver-compatibility flag, not a security setting.
+A standalone Postgres on a Lightsail instance (address deliberately not recorded here — read it from the container service's environment), database `notary_check`, TLS required. **Not** Lightsail managed Postgres, not RDS, not a co-located container. Credentials live only in the container service environment and are deliberately not recorded here. `uselibpqcompat=true` is a driver-compatibility flag, not a security setting.
 
 Practical consequence worth knowing before the next migration run: this is a single instance with no documented backup schedule beyond the manual `pg_dump` taken before the `0007`–`0013` run. Take a verified dump before every migration.
 

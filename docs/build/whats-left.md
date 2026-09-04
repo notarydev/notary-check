@@ -117,7 +117,7 @@ Small, and each one closes a gap between a stated rule and the code.
 | # | Item |
 |---|---|
 | ~~**D1**~~ | ~~`engine/README.md` says "No parsing of HTML/PDF/excerpts."~~ **RESOLVED 2026-09-03** — corrected to say what is actually absent (per-glyph PDF geometry, and a producer for structured JSON evidence). |
-| ~~**D2**~~ | ~~Live `DATABASE_URL` unrecorded.~~ **RESOLVED 2026-09-03** — standalone Postgres at `3.147.139.53:5432/notary_check`, TLS required. Recorded in `architecture-and-progress.md` § Database (credentials deliberately not written down). |
+| ~~**D2**~~ | ~~Live `DATABASE_URL` unrecorded.~~ **RESOLVED 2026-09-03** — standalone Postgres at `<prod-db-host>:5432/notary_check`, TLS required. Recorded in `architecture-and-progress.md` § Database (credentials deliberately not written down). |
 | ~~**D3**~~ | ~~`system-definition-synthesis.md` needs supersession notes.~~ **RESOLVED 2026-09-03** — banner added at the top plus an inline correction where it named Challenge as the build target. |
 | **D4** | `build/engine-brief-for-external-review.md` predates migrations `0011`–`0013`, the audit fixes, and Clerk. It is the doc external reviewers read. |
 | ~~**D5**~~ | ~~Cloudflare Container scaffold.~~ **RESOLVED 2026-09-03** — `wrangler.jsonc`, `worker/container.ts`, and the `@cloudflare/containers` dependency deleted after confirming the package was imported nowhere. |
