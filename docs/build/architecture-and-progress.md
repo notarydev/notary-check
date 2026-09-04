@@ -290,9 +290,53 @@ Observed in production: `"The Statue of Liberty is 500 feet tall."` against a pa
 
 **Two things only the live judge found**, both of which would have shipped a feature that did nothing: the real candidates carry conversion parentheticals (`"151 feet 1 inch (46 meters)"`), and the idealised fixtures used `"151 feet 1 inch"`, so the unit comparison read `(46 meters)` as part of the unit and the rule silently never fired. And compound units needed handling at all — `"feet 1 inch"` must compare with `"feet"`, while `"meters squared"` must **not** reduce to `"meters"`. Fixtures cleaner than production hide exactly this.
 
+### Five bugs, and the pattern connecting them
+
+Everything above was built, deployed, and verified as "live" before any of it
+was exercised by real traffic. Five separate things then turned out to be doing
+nothing, and the pattern is worth recording because it is a property of how
+this was tested, not of any one mistake:
+
+1. **Claim extraction truncating.** The prompt asks for step-by-step reasoning
+   per claim; the client's 1024-token default cut the JSON mid-sentence.
+   20-40% of real chat answers failed to parse, and the connector maps that to
+   `could_not_check` — so Notary was reporting that it could not check healthy
+   answers, having already paid for the call.
+2. **Self-contradiction unreachable.** The extractor set `scope` from any
+   qualifying phrase ("driven by enterprise demand"), and the detector requires
+   scopes to agree before comparing. Both correct alone; together they
+   cancelled, and the detector fired zero times on 161 real answers including a
+   deliberately planted contradiction.
+3. **Suggestions discarded by the renderer.** The card read
+   `advance_suggestions` after the early returns for `no_issue` and
+   `not_checked` — the exact states where Track 2 is the only thing that ran.
+4. **An instruction in the tool result.** Claude identified it as prompt
+   injection across three consecutive calls and disregarded it, correctly.
+5. **Advance running on the wrong path.** Per-claim and invocation-level
+   Advance were both wired; the per-claim path won, so intent inference, the
+   pre-ranking and the structured handoff shipped and never executed. Six model
+   calls per review instead of one.
+
+**None was caught by the test suite**, which passed 388-391 throughout. Each
+became visible the moment real data met the real code path. Three specific
+lessons:
+
+- **Fixtures cleaner than production hide the failure entirely.** Short test
+  answers never truncate; hand-written `ClaimFields` never carry a spurious
+  scope; idealised evidence strings never carry a "(46 meters)" conversion
+  parenthetical. Where a bug lives in that gap, the test must assert on the
+  MECHANISM — that the ceiling reaches the client, that no model call is paid
+  for — because no realistic fixture reproduces it.
+- **"Deployed" is not "running."** Four of the five were live and inert. The
+  check that caught the Advance double-run was reading `advance_invocation`
+  rows in production, not reading the card.
+- **Two individually correct components can cancel.** Nothing was wrong with
+  the extractor's scope handling or the detector's scope rule in isolation, and
+  no unit test of either could have found it.
+
 ### Test counts
 
-Engine **388/388** against real Postgres with all 15 migrations (up from 356); server **10/10**. One live-judge test flaked once and passed on retry — the suite makes real model calls, so a single red run is not proof of a regression.
+Engine **391/391** against real Postgres with all 15 migrations (up from 356); server **10/10**. One live-judge test flaked once and passed on retry — the suite makes real model calls, so a single red run is not proof of a regression.
 
 ### What is NOT built, stated so it is not mistaken for done
 
