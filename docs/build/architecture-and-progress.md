@@ -176,7 +176,11 @@ Fixed with a new, deliberately asymmetric rule in `verification/normalization.ts
 
 **Also now live:** the `not_checked` card state (previously committed but undeployed), so an unsourced claim no longer reports as a Notary malfunction.
 
+**False-supported safety check, since the release gate could not be met.** E1 made entity comparison *looser*, which is exactly the change class that can raise the false-supported rate — the primary product-quality error. With the held-out set unavailable (B1), `engine/eval/entity-suffix-safety.ts` is the honest substitute: eight adversarial entity pairs run end to end through the real judge. **8/8 correct, false-supported: 0.** Every pair that must stay separate did, including the real-world trap "Apple" vs "Apple Hospitality REIT" (an unrelated company sharing a first token) and "Acme Corp" vs "Acme Inc" (different legal entities, both carrying a suffix, so neither is stripped). This is evidence, not the gate's number; re-run it and re-score properly when B1 lands.
+
 **Test counts:** engine 356/356 against real Postgres with all 15 migrations (up from 349); server 6/6.
+
+**Post-deploy verification, live:** `POST /mcp` unauthenticated returns `401`; OAuth discovery returns `200`; locked case 2 returns `CONTRADICTED` with a resolved match through `api.getnotary.ai`; the usage ledger is accruing real cost (264 millicents month-to-date, from a standing start of 0 before `0015`).
 
 ## Live verification, 2026-09-02 — direct testing against `mcp.getnotary.ai`, not repo inspection
 
