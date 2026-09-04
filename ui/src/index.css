@@ -57,7 +57,7 @@ body {
   font-size: 15px;
   line-height: 1.55;
   color: var(--color-text-secondary, light-dark(#666664, #b8b8b4));
-  max-width: 420px;
+  max-width: 600px;
 }
 
 .notary-quiet {
@@ -342,7 +342,9 @@ body {
 
 .notary-detail {
   margin-top: 8px;
-  padding-left: 18px;
+  margin-left: 5px;
+  padding-left: 13px;
+  border-left: 2px solid var(--color-border, light-dark(#e8e8e5, #2c2c29));
 }
 
 /* Scope as counts, never as a verdict. "5 claims checked" would be false
@@ -412,4 +414,67 @@ body {
   font-size: 0.8rem;
   opacity: 0.55;
   line-height: 1.45;
+}
+
+/* ── The finding, consequence first ──────────────────────────────────────── */
+
+.notary-finding {
+  margin-bottom: 7px;
+}
+
+/* The consequence — "$6.9M vs $8M" or "Answer contradicts itself". Carries
+   full text weight because it is the one line that decides whether the reader
+   cares. No colour: canonical bans severity signalling, and weight alone is
+   enough to separate it from the sentence beneath. */
+.notary-finding-label {
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* One sentence, answering "why am I seeing this" and nothing more. Diagnostic,
+   not persuasive — the explanation research is clear that longer rationale
+   raises trust without improving decisions. */
+.notary-finding-why {
+  font-size: 0.9rem;
+  opacity: 0.72;
+  line-height: 1.5;
+}
+
+.notary-more {
+  font-size: 0.84rem;
+  margin-bottom: 6px;
+}
+
+/* Provenance as a horizontal strip. Stacked sentences wasted the width and
+   read as an apology; a dot-separated row scans in one pass. */
+.notary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 0.84rem;
+  opacity: 0.6;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.notary-meta > span + span::before {
+  content: "· ";
+  opacity: 0.7;
+}
+
+/* The commit step. Replaces italic hint text with something that looks like
+   the action it is. */
+.notary-pill-send {
+  margin-top: 5px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.notary-pill-send-arrow {
+  transition: transform 120ms ease;
+}
+.notary-pill:hover .notary-pill-send-arrow {
+  transform: translateX(2px);
 }

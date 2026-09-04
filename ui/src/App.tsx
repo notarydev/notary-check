@@ -226,18 +226,57 @@ function NotaryMark() {
  * exactly one job: answer "is something wrong, and what kind of thing is it?"
  * A snake_case identifier answers neither.
  */
+/**
+ * What a finding SAYS, as a consequence the reader can judge in a second.
+ *
+ * Never the detector name. "internal_conflict" is a classification, and a
+ * classification asks the reader to learn our taxonomy before they can decide
+ * whether they care. The consequence asks nothing.
+ *
+ * A LADDER, best form first, because the sharpest phrasing is not always
+ * derivable:
+ *
+ *   two short conflicting values   ->  "$6.9M vs $8M"
+ *   a modality conflict            ->  'says "may", answer says "will"'
+ *   anything else                  ->  prose for that finding type
+ *
+ * The first form is the strongest — the reader knows instantly whether it
+ * matters — but it only works when both operands are short and the conflict is
+ * about a value. An operator conflict rendered this way would read
+ * "increase vs decrease", which is worse than the prose. So the ladder falls
+ * back rather than forcing the shape.
+ */
 const FINDING_PROSE: Record<string, string> = {
-  internal_conflict: "the answer contradicts itself",
-  self_report_mismatch: "the output does not match what the answer claims",
-  source_contradiction: "a supplied source contradicts this",
-  arithmetic_conflict: "the numbers do not reconcile",
-  requirement_unmet: "part of what you asked for is missing",
-  overreach: "stated more strongly than the source supports",
-  conflict_candidate: "this differs from something established earlier",
+  internal_conflict: "Answer contradicts itself",
+  self_report_mismatch: "Output doesn't match the claim",
+  source_contradiction: "Source doesn't support this",
+  arithmetic_conflict: "Numbers don't add up",
+  requirement_unmet: "Part of the request is missing",
+  overreach: "Stated more strongly than the source",
+  conflict_candidate: "Conflicts with something earlier",
 };
 
-function findingProse(type: string): string {
-  return FINDING_PROSE[type] ?? "something worth checking";
+/** Short enough to read inside a pill without wrapping. */
+function isPillSized(v: string): boolean {
+  return v.length > 0 && v.length <= 14;
+}
+
+function findingLabel(f: {
+  type: string;
+  field_deltas: Array<{ field: string; claimed: string; observed: string; relation: string }>;
+}): string {
+  const conflict = f.field_deltas.find((d) => d.relation === "conflict");
+  if (conflict !== undefined) {
+    if (conflict.field === "modality") {
+      return `says "${conflict.observed}", answer says "${conflict.claimed}"`;
+    }
+    // Values only. "increase vs decrease" is a worse label than the prose.
+    const numeric = /\d/.test(conflict.claimed) && /\d/.test(conflict.observed);
+    if (numeric && isPillSized(conflict.claimed) && isPillSized(conflict.observed)) {
+      return `${conflict.claimed} vs ${conflict.observed}`;
+    }
+  }
+  return FINDING_PROSE[f.type] ?? "Worth checking";
 }
 
 /**
@@ -267,60 +306,70 @@ function DetailBlock({
   recordOpen: boolean;
   setRecordOpen: (v: boolean) => void;
 }) {
+  const [allOpen, setAllOpen] = useState(false);
   const bank = data.bank_findings ?? [];
   const gaps = data.gaps ?? [];
   const scope = data.scope_detail;
-  const intent = data.intent;
-  const moves = (data.advance_suggestions ?? []).map((s) => s.move);
-  const hasRecord = bank.length > 0 || (intent != null && !intent.defaulted && moves.length > 0);
+
+  // AN ATTENTION POLICY, even though findings are uncapped in the engine.
+  // "Facts do not compete for attention the way suggestions do" is true of the
+  // engine and false of the screen: four pills beside an answer is
+  // overwhelming whatever they contain. The rest stay one quiet click away.
+  const VISIBLE = 2;
+  const shown = bank.slice(0, VISIBLE);
+  const hidden = bank.length - shown.length;
 
   return (
     <div className="notary-detail">
-      {/* THE FINDING FIRST. It is the only element on this card that carries
-          the product; everything else is scaffolding. It used to appear after
-          the scope line and again inside the record — twice, under a sentence
-          about what had not happened. */}
-      {bank.length > 0 && (
-        <ul className="notary-detail-findings">
-          {bank.map((f, i) => (
-            <li key={`${f.detector}-${i}`}>{f.boundary_text}</li>
-          ))}
-        </ul>
+      {/* THE FINDING. Consequence first, then the sentence that earns it.
+          One question answered per line: what is it, then why. */}
+      {shown.map((f, i) => (
+        <div key={`${f.detector}-${i}`} className="notary-finding">
+          <div className="notary-finding-label">{findingLabel(f)}</div>
+          <div className="notary-finding-why">{f.boundary_text}</div>
+        </div>
+      ))}
+      {hidden > 0 && !allOpen && (
+        <button type="button" className="notary-link notary-more" onClick={() => setAllOpen(true)}>
+          +{hidden} more
+        </button>
       )}
+      {allOpen &&
+        bank.slice(VISIBLE).map((f, i) => (
+          <div key={`more-${i}`} className="notary-finding">
+            <div className="notary-finding-label">{findingLabel(f)}</div>
+            <div className="notary-finding-why">{f.boundary_text}</div>
+          </div>
+        ))}
 
-      {/* Scope, in the fewest words that stay honest. The long form — "10
-          claims · answered from Claude's own knowledge, not from a supplied
-          source" — was a sentence explaining what did NOT happen, sitting
-          above the thing that did. It only changes a decision for a reader who
-          assumed the answer had been verified, so it states that and stops. */}
+      {/* Provenance as a horizontal strip, not stacked sentences. Says where
+          the claims CAME FROM rather than what Notary was denied — an answer
+          from what a model knows is a normal mode, not a deficit, and three
+          earlier attempts at this line all framed it as one. */}
       {scope !== undefined && (
-        <div className="notary-scope">
-          {scope.checkable === 0
-            ? `${scope.claims} claim${scope.claims === 1 ? "" : "s"}, none source-backed`
-            : scope.checkable === scope.claims
-              ? `${scope.claims} claim${scope.claims === 1 ? "" : "s"} checked against ${scope.sources} source${scope.sources === 1 ? "" : "s"}`
-              : `${scope.checkable} of ${scope.claims} claims checked against ${scope.sources} source${scope.sources === 1 ? "" : "s"}`}
+        <div className="notary-meta">
+          <span>
+            {scope.claims} claim{scope.claims === 1 ? "" : "s"}
+          </span>
+          <span>
+            {scope.checkable === 0
+              ? "answered directly by Claude"
+              : scope.checkable === scope.claims
+                ? `checked against ${scope.sources} source${scope.sources === 1 ? "" : "s"}`
+                : `${scope.checkable} checked against a source`}
+          </span>
+          {gaps.length > 0 && <span>a source would let Notary check {gaps.length === 1 ? "one" : "more"}</span>}
         </div>
       )}
 
-      {/* Gaps sit BELOW the record toggle and read as one line, not a list.
-          Each is only actionable by someone about to supply a source, which in
-          a chat conversation is rare — so it states what is available rather
-          than presenting a chore list above the finding. */}
-      {gaps.length > 0 && (
-        <div className="notary-scope">
-          {gaps.length === 1 ? "A source would let Notary" : `Sources would let Notary`}{" "}
-          {gaps.map((g, i) => (
-            <span key={g.missing + g.unblocks}>
-              {i > 0 ? "; " : ""}
-              {g.unblocks}
-            </span>
-          ))}
-          .
-        </div>
-      )}
-
-      {hasRecord && (
+      {/* BASIS, not a record dump. It answers exactly one question — "how do
+          you know?" — and is reached only by a reader who is already doubting
+          the finding.
+          Deliberately dropped from here: which detector fired, the epistemic
+          owner, and which moves the policy allowed. Those answer "how does
+          Notary work", which nobody asked, and mixing them in is what made
+          this read as a book report. */}
+      {bank.length > 0 && (
         <>
           <button
             type="button"
@@ -328,50 +377,29 @@ function DetailBlock({
             aria-expanded={recordOpen}
             onClick={() => setRecordOpen(!recordOpen)}
           >
-            {recordOpen ? "Hide record" : "Record"}
+            {recordOpen ? "Hide basis" : "See basis"}
           </button>
-          {/* THE RECORD IS FOR CHECKING OUR WORK, and is worded that way
-              deliberately.
-              Research on explanation interfaces is consistent that
-              explanations can raise perceived transparency and trust WITHOUT
-              improving decision quality — they get read as persuasive
-              rationale rather than as diagnostic evidence. So this is framed
-              as a record to inspect, never as a justification for why the
-              finding is right, and it sits behind a second click so only a
-              reader who actually doubts the finding reaches it. */}
           {recordOpen && (
             <div className="notary-record">
-              {bank.map((f, i) => (
-                <div key={`rec-${i}`} className="notary-record-item">
-                  <div className="notary-record-head">
-                    {f.detector.replace(/_/g, " ")} · {f.owner.replace(/_/g, " ")}
+              {bank.map((f, i) =>
+                f.field_deltas.length > 0 ? (
+                  <table className="notary-record-table" key={`b-${i}`}>
+                    <tbody>
+                      {f.field_deltas.map((d) => (
+                        <tr key={d.field}>
+                          <td className="notary-record-field">{d.field}</td>
+                          <td>{d.claimed}</td>
+                          <td className="notary-record-rel">vs</td>
+                          <td>{d.observed}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="notary-record-note" key={`b-${i}`}>
+                    compared as whole statements — {f.basis_kind.replace(/_/g, " ")}
                   </div>
-                  {f.field_deltas.length > 0 ? (
-                    <table className="notary-record-table">
-                      <tbody>
-                        {f.field_deltas.map((d) => (
-                          <tr key={d.field}>
-                            <td className="notary-record-field">{d.field}</td>
-                            <td>
-                              <q>{d.claimed}</q> vs <q>{d.observed}</q>
-                            </td>
-                            <td className="notary-record-rel">{d.relation}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="notary-record-note">compared as whole statements</div>
-                  )}
-                </div>
-              ))}
-              {intent != null && !intent.defaulted && moves.length > 0 && (
-                <div className="notary-record-item">
-                  <div className="notary-record-head">moves offered</div>
-                  <div className="notary-record-note">
-                    read as a {intent.task_mode} task · {moves.join(", ")}
-                  </div>
-                </div>
+                ),
               )}
             </div>
           )}
@@ -417,7 +445,16 @@ function ActionPill({
       {revealed && (
         <div className="notary-pill-preview">
           {fullText}
-          <div className="notary-pill-preview-hint">Click again to send to Claude</div>
+          {/* THE COMMIT AFFORDANCE, not an instruction to read.
+              This was italic grey text saying "Click again to send to Claude" —
+              six words of instruction where the interface should simply look
+              clickable. Track 2's whole job is that acting costs one click, and
+              the closing beat of that flow was the weakest thing on the card.
+              Still the same two-step interaction: the first click reveals what
+              would be sent, the second sends it. Nothing is sent by accident. */}
+          <div className="notary-pill-send" aria-hidden="true">
+            Send to Claude <span className="notary-pill-send-arrow">→</span>
+          </div>
         </div>
       )}
     </div>
@@ -667,7 +704,7 @@ export default function App() {
   const findingSummary =
     totalFindings === 1
       ? bankHere.length === 1
-        ? findingProse(bankHere[0].type)
+        ? findingLabel(bankHere[0])
         : findings[0].label
       : `${totalFindings} things to check`;
 

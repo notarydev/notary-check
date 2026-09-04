@@ -69,7 +69,10 @@ export const MAX_PROMPT_CHARS = 600;
  * short_label is that it's scannable at a glance ("This answer has a
  * mistake: left door stays open"), not a second copy of the full ask.
  */
-export const MAX_SHORT_LABEL_CHARS = 100;
+// 48, down from 100. A button label that wraps is not a button, and at 100 the
+// model wrote headlines rather than instructions. The prompt asks for 2-6
+// imperative words; this is the enforcement.
+export const MAX_SHORT_LABEL_CHARS = 48;
 
 /** Part 11 § Suggestion cardinality: 0-2 suggestions per round, never more. */
 export const MAX_SUGGESTIONS = 2;

@@ -17,7 +17,7 @@
 import { delimitEvidenceForModel } from "../ingestion/delimitEvidence.ts";
 import type { AdvanceMove, InvocationContext, Track2EvidenceConstraint } from "./types.ts";
 
-export const ADVANCE_PROMPT_VERSION = "2026-09-04.1";
+export const ADVANCE_PROMPT_VERSION = "2026-09-04.2";
 
 export interface AdvancePromptInput {
   context: InvocationContext;
@@ -55,8 +55,19 @@ export function buildAdvancePrompt(input: AdvancePromptInput): { system: string;
     ...allowedMoves.map((m) => `- ${MOVE_DESCRIPTIONS[m]}`),
     "",
     "EACH SUGGESTION MUST BE:",
-    "- short_label: a short, scannable headline (under 100 characters) —",
-    "  e.g. \"This answer has a mistake: left door stays open\".",
+    // IMPERATIVE, VERB FIRST, SHORT. The label is a BUTTON, and it used to be
+    // written as a headline — "Clarify read/query patterns and cost
+    // constraints" — which describes the move instead of inviting it. A
+    // description reads as a note; a verb reads as something you do, and the
+    // whole point of this pill is that acting on it costs one click.
+    "- short_label: an IMPERATIVE instruction, 2-6 words, starting with a verb,",
+    "  under 48 characters. Write what the USER would be doing, not what you",
+    "  are proposing.",
+    "    good:  \"Pin down the query pattern\"  \"Compare cost at peak load\"",
+    "           \"Ask for the FY25 filing\"      \"Reconcile the two figures\"",
+    "    bad:   \"Clarify read/query patterns and cost constraints\"  (a headline)",
+    "           \"This answer has a mistake\"                        (a statement)",
+    "           \"Consider comparing the options\"                   (hedged)",
     "- prompt: one short, concrete, actionable REQUEST addressed to the",
     "  assistant (under 600 characters) — something to ask or tell it to do,",
     "  never a conclusion you state yourself.",
