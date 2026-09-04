@@ -44,6 +44,29 @@ export interface JudgeFieldAnswer {
   outcome: JudgeOutcome;
   /** Only ever populated when outcome === "present". */
   value?: string;
+  /**
+   * The competing readings the judge saw, populated ONLY when outcome ===
+   * "ambiguous". Never a guess at which one is right — that is precisely what
+   * the judge is forbidden to decide.
+   *
+   * Why this exists. An ambiguous required field used to end the check: the
+   * candidate became inapplicable, no relation was recorded, and the claim
+   * landed on INDETERMINATE / checks_did_not_complete. Observed live on
+   * "The Statue of Liberty is 500 feet tall" against a passage giving both
+   * 151 feet (statue) and 305 feet (ground to torch) — two readings, neither
+   * of them 500, and the ambiguity changes nothing about the verdict.
+   *
+   * Reporting the readings lets CODE ask whether the ambiguity is material:
+   * if the claim conflicts with every candidate, the conflict is robust to
+   * which reading is meant. If any candidate would match, the claim stays
+   * INDETERMINATE — the safe direction.
+   *
+   * The authority boundary is unchanged and arguably sharpened: the model
+   * still only OBSERVES (here are the values in the passage), and code still
+   * DECIDES (do they all conflict). Absent candidates, behaviour is exactly
+   * as before.
+   */
+  candidates?: string[];
   /** The span of the passage the outcome is based on, when the model gave one. */
   sourceSpan?: string;
   /**
@@ -191,6 +214,10 @@ const MODEL_OUTPUT_SCHEMA = z
     reasoning: z.string().min(1),
     outcome: z.enum(["present", "absent", "ambiguous", "cannot_be_determined"]),
     value: z.string().optional(),
+    // Only meaningful on "ambiguous". Capped at 6: a passage offering more
+    // than a handful of readings is not usefully disambiguated by listing
+    // them, and an unbounded array is an unbounded prompt-echo surface.
+    candidates: z.array(z.string()).max(6).optional(),
     source_span: z.string().optional(),
   })
   .strict()
@@ -199,7 +226,7 @@ const MODEL_OUTPUT_SCHEMA = z
   });
 
 export type ModelOutputParseResult =
-  | { ok: true; data: { reasoning: string; outcome: JudgeOutcome; value?: string; source_span?: string } }
+  | { ok: true; data: { reasoning: string; outcome: JudgeOutcome; value?: string; candidates?: string[]; source_span?: string } }
   | { ok: false; error: string };
 
 /** Defensively extracts the JSON object the model was asked to emit, tolerating
@@ -261,6 +288,10 @@ export function parseJudgeAnswer(rawAnswer: string, field: ApplicabilityField, r
     field,
     outcome: parsed.data.outcome,
     value: parsed.data.outcome === "present" ? parsed.data.value : undefined,
+    // Mirrors the `value` discipline exactly: candidates are kept ONLY on the
+    // outcome they are defined for. A model that returns them alongside
+    // "present" or "absent" has them dropped rather than half-honoured.
+    candidates: parsed.data.outcome === "ambiguous" ? parsed.data.candidates : undefined,
     sourceSpan: parsed.data.source_span,
     record,
   };

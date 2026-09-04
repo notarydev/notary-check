@@ -206,7 +206,12 @@ test(
       const matches = (await pool.query("SELECT * FROM evidence_match WHERE claim_id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
       assert.equal(matches.relation, "contradicts");
       assert.equal(matches.method, "entailed");
-      assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v2");
+      // v3 (2026-09-04): the judge's output contract gained `candidates` —
+      // the competing readings it saw when a field is ambiguous. Bumping the
+      // version is the point of this assertion: answers stored under v2 were
+      // produced by a prompt that could not report them, so the two are not
+      // comparable and must not silently share a version.
+      assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v3");
       // A contradiction is a POSITIVE finding about the evidence, so it may
       // only be persisted with a locator that actually dereferenced.
       assert.equal(matches.locator_resolved, true);

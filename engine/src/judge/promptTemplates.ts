@@ -31,7 +31,7 @@ import type { ApplicabilityField } from "../verification/applicability.ts";
 
 /** Version string persisted with every judge call (§ requirement #6). Bump on
  * any change to the prompt text or the output schema. */
-export const PROMPT_VERSION = "judge-field-extraction-v2";
+export const PROMPT_VERSION = "judge-field-extraction-v3";
 
 interface FieldCriterion {
   /** The narrow extraction question asked for this field. */
@@ -159,6 +159,7 @@ const OUTPUT_FORMAT =
   '- "reasoning": a string containing your numbered step-by-step reasoning.\n' +
   '- "outcome": exactly one of "present", "absent", "ambiguous", "cannot_be_determined".\n' +
   '- "value": a string, REQUIRED if and only if outcome is "present" — the extracted value exactly as it appears in the passage.\n' +
+  '- "candidates": an array of strings, ONLY when outcome is "ambiguous" — every competing reading the passage offers for this property, each written exactly as it appears. Do NOT choose between them and do NOT rank them; listing them is not a judgement about which is correct. Omit this key for any other outcome.\n' +
   '- "source_span": an optional string — the exact span (quote) of the passage your outcome is based on.\n' +
   'Never include any other key. In particular, never include a "confidence" key: this design deliberately carries no confidence signal.';
 

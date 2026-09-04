@@ -73,7 +73,8 @@ import { resolveEvidenceRow } from "../ingestion/resolveEvidence.ts";
 import type { ChallengeItem } from "../judge/challengeGeneration.ts";
 import { generateChallenges } from "../judge/challengeGeneration.ts";
 import { CHALLENGE_PROMPT_VERSION, MAX_CHALLENGES_PER_INVOCATION } from "../judge/challengePrompts.ts";
-import { extractField, assembleEvidenceFields } from "../judge/fieldExtraction.ts";
+import { extractField, assembleEvidenceFields, parseValueUnit } from "../judge/fieldExtraction.ts";
+import { assessAmbiguity } from "../verification/immaterialAmbiguity.ts";
 import type { JudgeFieldAnswer } from "../judge/fieldExtraction.ts";
 import type { JudgeClient } from "../judge/judgeClient.ts";
 import type { JudgeCallRecord } from "../judge/judgeClient.ts";
@@ -515,9 +516,19 @@ export async function runReview(
   const rejectedCandidates: RunReviewRejectedCandidate[] = [];
   // Bug 3's other two conditions, accumulated across rows.
   let hadAbstainedRequiredField = false;
+  // Fields whose ambiguity was found immaterial — every candidate reading
+  // conflicts with the claim, so the field is settled as a conflict rather
+  // than left unresolved. Per evidence row, cleared with it.
+  const immaterialAmbiguityFields = new Set<ApplicabilityField>();
   let hadUnresolvedLocator = false;
 
   for (const row of rows) {
+    // Per row. A field whose ambiguity was immaterial against ONE passage says
+    // nothing about the next one — the candidate readings differ per source,
+    // so carrying the decision across rows would apply a conclusion drawn from
+    // evidence the next row never contained.
+    immaterialAmbiguityFields.clear();
+
     // usableForClaim guarantees non-empty text; this narrows the type.
     const canonicalText = row.resolved.resolvedText ?? "";
     const canonicalHash = row.resolved.canonicalTextHash ?? sha256(canonicalText);
@@ -572,7 +583,34 @@ export async function runReview(
       // this, an abstention was indistinguishable from a completed check that
       // found nothing, so it fell through to UNSUPPORTED.
       if (answer.outcome === "ambiguous" || answer.outcome === "cannot_be_determined") {
-        hadAbstainedRequiredField = true;
+        // ...UNLESS the ambiguity cannot change the verdict. Observed live:
+        // "The Statue of Liberty is 500 feet tall" against a passage giving
+        // both 151 feet and 305 feet. Two readings, neither of them 500 — the
+        // ambiguity is real and completely immaterial, and this used to end
+        // the check at INDETERMINATE / checks_did_not_complete.
+        //
+        // assessAmbiguity is pure code with no model access. The judge only
+        // reported which readings it saw and was told not to choose between
+        // them; the decision that they all conflict is made here.
+        const verdict = assessAmbiguity(
+          claimFields[answer.field as keyof typeof claimFields] as string | undefined,
+          answer.candidates,
+        );
+        if (verdict.material) {
+          hadAbstainedRequiredField = true;
+        } else {
+          // Every reading conflicts. Record it as a settled conflict on this
+          // field so the candidate stays APPLICABLE and the contradiction can
+          // be seen, rather than the whole check dying on an unresolved field.
+          immaterialAmbiguityFields.add(answer.field);
+          logEvent({
+            event: "ambiguity_immaterial",
+            organization_id: organizationId,
+            review_id: input.reviewId,
+            field: String(answer.field),
+            candidate_count: verdict.candidateCount,
+          });
+        }
       }
 
       if (answer.outcome === "present") {
@@ -636,6 +674,28 @@ export async function runReview(
     }
 
     const judgeEvidence = assembleEvidenceFields(judgeAnswers);
+
+    // Fields whose ambiguity was found immaterial carry a REPRESENTATIVE
+    // reading into the comparison. Every candidate was checked and every one
+    // conflicts with the claim, so which representative is chosen cannot
+    // change the relation — the first is as good as any.
+    //
+    // This is what turns "unresolved field, therefore inapplicable, therefore
+    // no relation at all" into a visible conflict. It is deliberately done
+    // HERE rather than inside assembleEvidenceFields, which has one job and a
+    // strict rule (present -> value, everything else -> undefined) that should
+    // stay true of the judge's own output.
+    for (const answer of judgeAnswers) {
+      if (!immaterialAmbiguityFields.has(answer.field)) continue;
+      const representative = answer.candidates?.[0];
+      if (representative === undefined) continue;
+      if (answer.field === "valueUnit") {
+        judgeEvidence.valueUnit = parseValueUnit(representative);
+      } else {
+        judgeEvidence[answer.field] = representative;
+      }
+    }
+
     // Deterministic and judge answers never overlap (step 3 only ran for fields
     // step 2 left unresolved), so the overlay is safe.
     const evidenceFields: EvidenceFields = { ...judgeEvidence, ...row.deterministic };
