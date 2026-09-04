@@ -70,6 +70,36 @@ import type pg from "pg";
  * Bump on any change to the prompt text or the output schema. */
 export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction-v2";
 
+/**
+ * Output ceiling for claim extraction, deliberately far above the judge
+ * client's 1024-token default.
+ *
+ * THE BUG THIS FIXES, found 2026-09-04 against real LMSYS Arena chat answers:
+ * extraction was failing with `model_output_unparseable` on 20-40% of ordinary
+ * answers. The output was not malformed — it was TRUNCATED. This prompt asks
+ * for numbered step-by-step reasoning per claim (§ part (b), deliberately, so
+ * the model cannot emit a one-line verdict), and that reasoning runs to
+ * thousands of tokens whenever an answer actually contains claims. At 1024 the
+ * JSON was cut mid-sentence and could not parse.
+ *
+ * It never showed up in tests because every fixture was short and clean. The
+ * connector maps an extraction failure to `could_not_check`, so in production
+ * Notary was reporting "could not check this" on healthy answers, having
+ * already paid for the call.
+ *
+ * MEASURED DISTRIBUTION over 30 real answers (269-3376 chars):
+ *   median 7 tokens, p75 7, p90 2324, max 3027
+ * Bimodal, and the shape is the argument for a generous ceiling: most answers
+ * contain no material claims and emit `{"claims": []}` in ~7 tokens, while the
+ * ones that do contain claims need thousands. 4096 clears the observed maximum
+ * with headroom.
+ *
+ * This costs almost nothing. max_tokens is a CEILING, not a spend commitment —
+ * billing follows tokens actually generated, and 90% of calls generate 7
+ * regardless. Truncation, by contrast, wastes the entire call.
+ */
+export const CLAIM_EXTRACTION_MAX_TOKENS = 4096;
+
 /** One claim decomposed out of the answer text (§ Verification pipeline, step 2). */
 export interface ExtractedClaim {
   /** 1-based position of the claim in the extracted sequence. */
@@ -228,7 +258,8 @@ export async function extractClaims(
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    maxTokens: options.maxTokens,
+    // Explicit ceiling, not the client default — see the constant.
+    maxTokens: options.maxTokens ?? CLAIM_EXTRACTION_MAX_TOKENS,
   };
 
   const startedAt = performance.now();

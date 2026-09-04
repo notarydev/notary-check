@@ -8,7 +8,8 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { DEFAULT_JUDGE_MODEL, type JudgeCallInput, type JudgeCallRecord, type JudgeCallResult, type JudgeClient } from "../judge/judgeClient.ts";
-import { buildClaimPrompt, extractClaims, parseExtractionOutput, type ExtractClaimsResult, type ExtractedClaim } from "./extractClaims.ts";
+import type { ExtractClaimsOptions } from "./extractClaims.ts";
+import { buildClaimPrompt, extractClaims, parseExtractionOutput, type ExtractClaimsResult, type ExtractedClaim, CLAIM_EXTRACTION_MAX_TOKENS } from "./extractClaims.ts";
 
 /**
  * Unwraps a successful extraction, asserting ok === true first.
@@ -337,4 +338,34 @@ test("empty-string fields are treated as unasserted, not carried as values", () 
   assert.equal(claims[0].claimFields.entity, "Acme");
   assert.equal(claims[0].claimFields.period, undefined);
   assert.equal(claims[0].claimFields.scope, undefined);
+});
+
+test("extraction asks for a ceiling far above the client default", async () => {
+  // Regression guard for a live production bug (2026-09-04): at the client's
+  // 1024-token default, extraction failed with model_output_unparseable on
+  // 20-40% of real chat answers — not because the output was malformed but
+  // because it was TRUNCATED mid-JSON. This prompt deliberately asks for
+  // numbered step-by-step reasoning per claim, which runs to thousands of
+  // tokens whenever an answer actually contains claims.
+  //
+  // The failure was invisible to every existing test because the fixtures are
+  // short and clean, so this asserts the ceiling reaches the client rather
+  // than asserting on any output.
+  let seenMaxTokens: number | undefined;
+  const client = {
+    async call(input: { maxTokens?: number }) {
+      seenMaxTokens = input.maxTokens;
+      return {
+        record: { model: "test", promptVersion: "test", question: "q", answer: '{"claims":[]}' },
+        parsed: undefined,
+      };
+    },
+  } as unknown as NonNullable<ExtractClaimsOptions["client"]>;
+
+  await extractClaims("Some answer text long enough to be worth extracting from.", { client });
+  assert.equal(seenMaxTokens, CLAIM_EXTRACTION_MAX_TOKENS);
+  assert.ok(
+    (seenMaxTokens ?? 0) >= 3027,
+    "must clear the largest output observed on real data (3027 tokens), or truncation returns",
+  );
 });

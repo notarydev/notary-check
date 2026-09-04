@@ -1,3 +1,13 @@
 node_modules/
 dist/
 *.log
+
+# Defence in depth. The per-directory .gitignore files (engine/, server/,
+# dashboard/) already cover their own .env files, and were verified to be
+# working. These patterns exist so a NEW subdirectory cannot leak one by
+# being created without its own ignore file — this repo is public.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
