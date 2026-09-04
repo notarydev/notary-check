@@ -75,10 +75,18 @@ async function main() {
     });
     const b2 = (await r2.json()) as Record<string, unknown>;
     const findings = (b2.findings as Array<{ type: string; boundaryText: string; owner: string }>) ?? [];
+    const gaps2 = (b2.gaps as Array<{ missing: string; unblocks: string }>) ?? [];
     console.log(`  POST /detect -> ${r2.status}`);
-    console.log(`  findings: ${findings.length}`);
+    console.log(`  findings: ${findings.length}   gaps: ${gaps2.length}`);
+    // Printed because the source-gap detector's whole job is emitting these,
+    // and the first version of this script showed gaps for case 1 only — where
+    // there are no claims and therefore correctly no gaps. The one case that
+    // exercises it was the one case that hid it.
+    for (const g of gaps2) console.log(`            [${g.missing}] ${g.unblocks}`);
     for (const f of findings) console.log(`            [${f.type}] ${f.boundaryText}`);
     if (findings.length === 0) throw new Error("expected a self-contradiction finding with no sources at all");
+    if (gaps2.length === 0) throw new Error("expected addressable_source gaps — two material claims, no evidence");
+    if (!gaps2.every((g) => g.missing === "addressable_source")) throw new Error("unexpected gap kind");
     if (findings[0].owner !== "computed") throw new Error(`expected owner=computed, got ${findings[0].owner}`);
 
     console.log("\nPASS — detector bank live, Track 2 runs without claims or sources.");
