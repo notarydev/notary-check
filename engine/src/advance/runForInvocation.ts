@@ -130,12 +130,28 @@ export async function runAdvanceForInvocation(
     created_at: new Date().toISOString(),
   };
 
-  // The single highest-ranked finding becomes the sealed boundary, preserving
-  // the existing one-directional channel rather than opening a second one.
+  // The highest-ranked finding becomes the sealed boundary, now carrying its
+  // field-level detail. Those deltas were already computed by the detector and
+  // were being discarded at this boundary — the reason Track 2's suggestions
+  // read as generic was that it received a sentence and had to guess whether
+  // it was looking at a wrong period, a wrong entity, or a wrong number.
   const top = ranked.find((c) => c.kind === "finding");
   const constraint: Track2EvidenceConstraint | undefined =
     top !== undefined && top.kind === "finding"
-      ? { invocation_id: input.invocationId, material: true, boundary_text: top.item.boundaryText }
+      ? {
+          invocation_id: input.invocationId,
+          material: true,
+          boundary_text: top.item.boundaryText,
+          field_deltas: top.item.fieldDeltas.map((d) => ({
+            field: d.field,
+            claimed: d.claimed,
+            observed: d.observed,
+            relation: d.relation,
+          })),
+          // A reference only. The passage itself is never handed over — see
+          // Track2EvidenceConstraint's own comment on why.
+          evidence_locator: top.item.basis.ref,
+        }
       : undefined;
 
   const raw = await generateAdvanceSuggestions(context, allowedMoves, constraint, {

@@ -137,3 +137,71 @@ test("candidates rank findings before gaps, and by detector rank within findings
   assert.equal(ranked[1].kind, "finding");
   assert.equal(ranked[2].kind, "gap", "an established problem outranks something we could not check");
 });
+
+test("the handoff carries WHICH fields disagreed, not just a sentence", async () => {
+  // Before this, Track 2 received one sentence and had to guess whether it was
+  // looking at a wrong period, a wrong entity, or a wrong number — three
+  // different repairs. The deltas were already computed and thrown away here.
+  const { client, seen } = recordingClient();
+  await runAdvanceForInvocation(
+    {
+      organizationId: "org",
+      reviewId: "rev",
+      invocationId: "inv",
+      userRequest: "Check the revenue figure",
+      findings: [
+        finding({
+          boundaryText: "The answer states 17% and the filing says 12%.",
+          fieldDeltas: [{ field: "valueUnit", claimed: "17%", observed: "12%", relation: "conflict" }],
+          basis: { kind: "evidence", ref: "ev-123" },
+        }),
+      ],
+      gaps: [],
+    },
+    { client },
+  );
+  const sent = JSON.stringify(seen[0]);
+  assert.ok(sent.includes("valueUnit"), "the field name must reach Track 2");
+  assert.ok(sent.includes("17%") && sent.includes("12%"), "both sides of the disagreement must reach it");
+  assert.ok(sent.includes("ev-123"), "a locator reference lets a move name its source");
+});
+
+test("a finding with no field detail behaves exactly as before", async () => {
+  const { client, seen } = recordingClient();
+  await runAdvanceForInvocation(
+    {
+      organizationId: "org",
+      reviewId: "rev",
+      invocationId: "inv",
+      userRequest: "Check this",
+      findings: [finding({ fieldDeltas: [], basis: { kind: "answer_internal" } })],
+      gaps: [],
+    },
+    { client },
+  );
+  const sent = JSON.stringify(seen[0]);
+  assert.ok(sent.includes("The answer states X and also not-X."), "the sentence still crosses");
+  assert.ok(!sent.includes("WHICH FIELDS DISAGREED"), "no empty table is rendered");
+});
+
+test("the evidence passage itself still never crosses", async () => {
+  const { client, seen } = recordingClient();
+  await runAdvanceForInvocation(
+    {
+      organizationId: "org",
+      reviewId: "rev",
+      invocationId: "inv",
+      userRequest: "Check this",
+      findings: [
+        finding({
+          fieldDeltas: [{ field: "period", claimed: "FY25", observed: "FY24", relation: "conflict" }],
+          basis: { kind: "evidence", ref: "ev-1", excerpt: "SECRET PASSAGE TEXT" },
+        }),
+      ],
+      gaps: [],
+    },
+    { client },
+  );
+  const sent = JSON.stringify(seen[0]);
+  assert.ok(!sent.includes("SECRET PASSAGE TEXT"), "the excerpt must not reach Track 2 — it would make it a second verifier");
+});

@@ -17,7 +17,7 @@
 import { delimitEvidenceForModel } from "../ingestion/delimitEvidence.ts";
 import type { AdvanceMove, InvocationContext, Track2EvidenceConstraint } from "./types.ts";
 
-export const ADVANCE_PROMPT_VERSION = "2026-09-03.2";
+export const ADVANCE_PROMPT_VERSION = "2026-09-04.1";
 
 export interface AdvancePromptInput {
   context: InvocationContext;
@@ -102,10 +102,29 @@ export function buildAdvancePrompt(input: AdvancePromptInput): { system: string;
     sections.push(`PRIOR ATTEMPTS:\n${delimitEvidenceForModel(context.prior_attempts.join("\n"))}`);
   }
   if (constraint) {
-    sections.push(
+    // The sentence, as before.
+    let block =
       "SEALED EVIDENCE BOUNDARY — do not reinterpret or add to it, quote it as-is if you reference it:\n" +
-        delimitEvidenceForModel(constraint.boundary_text),
-    );
+      delimitEvidenceForModel(constraint.boundary_text);
+
+    // The structured half. Rendered as a plain table rather than JSON: the
+    // model reads this, and a table of three short columns is harder to
+    // misread than nested braces. Values are delimited exactly like every
+    // other caller-supplied string — a claim or a passage can contain
+    // instruction-shaped text, and this is content, not trusted input.
+    if (constraint.field_deltas !== undefined && constraint.field_deltas.length > 0) {
+      const rows = constraint.field_deltas
+        .map((d) => `  ${d.field}: claim says "${d.claimed}" / evidence says "${d.observed}" (${d.relation})`)
+        .join("\n");
+      block +=
+        "\n\nWHICH FIELDS DISAGREED — use this to choose a move that names the RIGHT problem. " +
+        "A wrong period, a wrong entity, and a right entity with a wrong number need different next steps:\n" +
+        delimitEvidenceForModel(rows);
+    }
+    if (constraint.evidence_locator !== undefined) {
+      block += `\n\nSOURCE THE FINDING CAME FROM (reference only, you have not been shown its contents): ${delimitEvidenceForModel(constraint.evidence_locator)}`;
+    }
+    sections.push(block);
   }
 
   const user = sections.join("\n\n");

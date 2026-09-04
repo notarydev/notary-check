@@ -118,6 +118,36 @@ export interface Track2EvidenceConstraint {
    * the model does not get to paraphrase what the evidence established.
    */
   boundary_text: string;
+  /**
+   * WHICH FIELDS DISAGREED, and how — the structured half of the handoff.
+   *
+   * boundary_text alone is a sentence, and a sentence cannot distinguish
+   * "wrong period" from "wrong entity" from "right entity, wrong number."
+   * Those are three different repairs, and until this existed Track 2 read one
+   * sentence and guessed which it was looking at.
+   *
+   * DELIBERATELY NOT INCLUDED, and this is the boundary: no evidence corpus,
+   * no resolved passages beyond a short excerpt, and no rejected-candidate
+   * pool. Track 2 gets enough to choose and phrase a move, and never enough to
+   * re-litigate the finding. Handing it the raw material would make it a
+   * second verifier, and then two things in the system would be entitled to an
+   * opinion about the same evidence.
+   *
+   * Empty when Track 1 produced no field-level detail (a detector that
+   * compares whole statements rather than fields), in which case behaviour is
+   * exactly as it was before this field existed.
+   */
+  field_deltas?: ReadonlyArray<{
+    /** The applicability field, e.g. "period", "entity", "valueUnit". */
+    field: string;
+    /** What the claim asserted for it. */
+    claimed: string;
+    /** What the evidence (or the other claim) had instead. */
+    observed: string;
+    relation: "conflict" | "missing" | "weaker" | "stronger";
+  }>;
+  /** Where the finding came from, so a move can name it. Never the passage itself. */
+  evidence_locator?: string;
 }
 
 /**

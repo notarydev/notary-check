@@ -199,13 +199,30 @@ function buildServer() {
             // principle the rest of this system runs on: the observation is
             // the product; the instruction was never ours to give.
             text:
-              cardData.status === "no_issue"
+              (cardData.status === "no_issue"
                 ? "No issue found."
                 : cardData.status === "not_checked"
                   ? "Nothing was checked: no inspectable source was supplied for the claims in this answer. No claim was verified either way."
                   : cardData.status === "could_not_check"
                     ? "Could not verify this against the supplied evidence."
-                    : "1 thing to check.",
+                    : "1 thing to check.") +
+              // WHAT COULD NOT BE CHECKED, AND WHY — stated as facts about this
+              // run, never as a request.
+              //
+              // The distinction is the whole lesson of the reminder that used
+              // to sit here. "Send me the command output" is an instruction
+              // inside data, and Claude is right to refuse it. "No command
+              // output was supplied, so the claim that this worked was not
+              // checked" is a report of what happened, and a capable model
+              // acting on it is choosing to act on a fact.
+              //
+              // Every ask must be worth reading even if nothing acts on it:
+              // the user learns the same thing from the card either way. That
+              // is what stops this being hostage to model behaviour.
+              (cardData.gaps === undefined || cardData.gaps.length === 0
+                ? ""
+                : "\n\nNot checked in this run:\n" +
+                  cardData.gaps.map((g) => `- ${g.unblocks} (nothing supplied for: ${g.missing})`).join("\n")),
           },
         ],
         structuredContent: cardData,

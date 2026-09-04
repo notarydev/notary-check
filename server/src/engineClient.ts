@@ -497,12 +497,43 @@ export interface InvocationExtras {
 /** Wire shape of POST /v1/reviews/:id/detect. Parsed loosely on purpose —
  *  findings are pass-through data for the card, and an unexpected shape must
  *  degrade to "no findings" rather than failing the review. */
+export interface CardGap {
+  /** What is missing, in the engine's closed vocabulary. */
+  missing: string;
+  /** What becomes checkable if it arrives. A statement of fact, never a request. */
+  unblocks: string;
+}
+
 interface DetectResponse {
   findings?: unknown[];
   gaps?: unknown[];
   advance_suggestions?: unknown;
   intent?: { task_mode?: string; defaulted?: boolean } | null;
 }
+
+/**
+ * Parses the engine's gaps into the shape the card and the response text use.
+ *
+ * Capped at 2. Each gap potentially triggers a full re-invocation — Claude
+ * fetching a source, then calling again — and ten of those is ten round trips
+ * the user waits through. Two is the same interrupt budget the suggestions use.
+ */
+function parseGaps(raw: unknown): CardGap[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CardGap[] = [];
+  for (const g of raw) {
+    if (typeof g !== "object" || g === null) continue;
+    const { missing, unblocks } = g as Record<string, unknown>;
+    if (typeof missing !== "string" || typeof unblocks !== "string") continue;
+    if (missing.length === 0 || unblocks.length === 0) continue;
+    out.push({ missing, unblocks });
+    if (out.length === MAX_GAPS) break;
+  }
+  return out;
+}
+
+/** See parseGaps — the same interrupt budget the suggestions use. */
+const MAX_GAPS = 2;
 
 /**
  * Runs the detector bank and invocation-level Track 2.
@@ -590,6 +621,7 @@ export async function reviewAnswer(
       const reviewId = await createReview(apiKey);
       const det = await runDetection(reviewId, answerText, extraction.claims, new Map(), false, apiKey, extras);
       const suggestions = parseAdvanceSuggestions(det.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
+      const zeroClaimGaps = parseGaps(det.gaps);
       const findingCount = Array.isArray(det.findings) ? det.findings.length : 0;
       if (findingCount > 0) {
         return {
@@ -602,6 +634,7 @@ export async function reviewAnswer(
           })),
           actions: ["Dismiss"],
           advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
+          gaps: zeroClaimGaps.length > 0 ? zeroClaimGaps : undefined,
         };
       }
       return {
@@ -609,6 +642,7 @@ export async function reviewAnswer(
         scope: "No material factual claims found to review.",
         actions: [],
         advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
+        gaps: zeroClaimGaps.length > 0 ? zeroClaimGaps : undefined,
       };
     } catch {
       return { status: "no_issue", scope: "No material factual claims found to review.", actions: [] };
@@ -749,6 +783,7 @@ export async function reviewAnswer(
     // claim.state alone.
     issueFindings.push(...bankFindings);
     // Invocation-level Advance replaces whatever the per-claim calls produced.
+    const invocationGaps = parseGaps(detection.gaps);
     const invocationAdvance = parseAdvanceSuggestions(detection.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
     if (invocationAdvance.length > 0) {
       advanceSuggestions.length = 0;
@@ -767,6 +802,7 @@ export async function reviewAnswer(
         actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
         challenges: challengesField,
         advance_suggestions: advanceSuggestionsField,
+        gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
       };
     }
     // Bug fix: this used to require `uncheckedFindings.length === materialClaims.length`
@@ -778,7 +814,12 @@ export async function reviewAnswer(
     // (with no issue found elsewhere) must produce could_not_check, never
     // no_issue.
     if (uncheckedFindings.length > 0) {
-      return { status: "could_not_check", scope: uncheckedFindings[0].text, actions: [] };
+      return {
+        status: "could_not_check",
+        scope: uncheckedFindings[0].text,
+        actions: [],
+        gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
+      };
     }
     // Nothing failed and nothing was contradicted. If every material claim
     // simply had no source to check against, say that plainly rather than
@@ -792,9 +833,16 @@ export async function reviewAnswer(
         scope: `No inspectable source was supplied for ${materialClaims.length === 1 ? "this claim" : `these ${materialClaims.length} claims`}.`,
         actions: [],
         advance_suggestions: advanceSuggestionsField,
+        gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
       };
     }
-    return { status: "no_issue", scope, actions: [], advance_suggestions: advanceSuggestionsField };
+    return {
+      status: "no_issue",
+      scope,
+      actions: [],
+      advance_suggestions: advanceSuggestionsField,
+      gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
+    };
   } catch (err) {
     const correlationId = randomUUID();
     console.error(`[reviewAnswer] review failed, correlation_id=${correlationId}:`, err);

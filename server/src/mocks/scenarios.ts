@@ -113,6 +113,16 @@ export type ReviewCardData = {
   // differently by the UI (§ Part 11's icon-vs-pill design). Never merged
   // into the same array.
   advance_suggestions?: AdvanceSuggestion[];
+  // What could not be checked, and what would make it checkable. Facts about
+  // this run, at most two.
+  //
+  // These are STATEMENTS, never requests. The distinction is load-bearing: an
+  // earlier build put an imperative in the tool result and Claude correctly
+  // refused it as an injected instruction, because a tool result is data. A
+  // capable model will often act on "no source was supplied for the FY25
+  // figure" — but that is it choosing to act on a reported fact, not us
+  // issuing a command inside data.
+  gaps?: Array<{ missing: string; unblocks: string }>;
 };
 
 // Scenario A — correct answer, nothing to flag.

@@ -514,3 +514,81 @@ test("a bank finding surfaces even when the claim itself is SUPPORTED", async ()
     globalThis.fetch = originalFetch;
   }
 });
+
+// The back-and-forth: what could not be checked reaches the caller as a FACT.
+test("a gap from the engine reaches the card, capped at two", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.ENGINE_URL = "http://engine.test";
+  process.env.ENGINE_API_KEY = "test-key";
+
+  globalThis.fetch = (async (...args: FetchArgs) => {
+    const [input, init] = args;
+    const path = pathOf(input);
+    const method = init?.method ?? "GET";
+    if (path === "/v1/extract-claims" && method === "POST") return jsonResponse(200, { claims: [] });
+    if (path === "/v1/reviews" && method === "POST") {
+      return jsonResponse(201, { review: { id: "11111111-1111-1111-1111-111111111111" } });
+    }
+    if (path.endsWith("/detect") && method === "POST") {
+      return jsonResponse(200, {
+        findings: [],
+        // Three gaps offered; the cap must keep two. Each gap can trigger a
+        // full re-invocation, so ten would be ten round trips of latency.
+        gaps: [
+          { detector: "self_report", missing: "execution_result", unblocks: "check whether the output supports the claim that this worked" },
+          { detector: "source_verify", missing: "addressable_source", unblocks: "check the FY25 revenue figure" },
+          { detector: "source_verify", missing: "addressable_source", unblocks: "check the headcount figure" },
+        ],
+        advance_suggestions: [],
+      });
+    }
+    throw new Error(`unexpected fetch: ${method} ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const { reviewAnswer } = await import("./engineClient.js");
+    const result = await reviewAnswer("I fixed it and all tests pass.", [], "test-key", {
+      userRequest: "fix the failing test",
+    });
+    assert.equal(result.gaps?.length, 2, "at most two gaps reach the card");
+    assert.ok(result.gaps?.[0].unblocks.includes("supports the claim"), "the gap text is what would become checkable");
+    // A gap is a statement of fact, not a request. Nothing here may read as an
+    // instruction to the model — that was the injected-instruction bug.
+    for (const g of result.gaps ?? []) {
+      assert.ok(!/^(please|send|attach|supply|call|provide)\b/i.test(g.unblocks), "a gap must not be phrased as a command");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("malformed gaps are dropped rather than trusted", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.ENGINE_URL = "http://engine.test";
+  process.env.ENGINE_API_KEY = "test-key";
+
+  globalThis.fetch = (async (...args: FetchArgs) => {
+    const [input, init] = args;
+    const path = pathOf(input);
+    const method = init?.method ?? "GET";
+    if (path === "/v1/extract-claims" && method === "POST") return jsonResponse(200, { claims: [] });
+    if (path === "/v1/reviews" && method === "POST") {
+      return jsonResponse(201, { review: { id: "11111111-1111-1111-1111-111111111111" } });
+    }
+    if (path.endsWith("/detect") && method === "POST") {
+      return jsonResponse(200, {
+        gaps: [{ missing: "" }, { unblocks: "no missing field" }, "a string", null, { missing: "x", unblocks: "y" }],
+        advance_suggestions: [],
+      });
+    }
+    throw new Error(`unexpected fetch: ${method} ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const { reviewAnswer } = await import("./engineClient.js");
+    const result = await reviewAnswer("Something.", [], "test-key", { userRequest: "check" });
+    assert.equal(result.gaps?.length, 1, "only the well-formed gap survives");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
