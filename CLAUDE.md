@@ -45,6 +45,9 @@ after it.
   sideways import between modules, or on anything but `review/` importing
   `verification/stateMachine.ts`. If you believe a rule is wrong, change the
   `LAYERS` table in that file deliberately — do not route around it.
+- **Infrastructure, domains and how to deploy**: [`OPERATIONS.md`](OPERATIONS.md)
+  — also names the three OTHER codebases (the marketing site is a separate repo
+  and a separate host) and records that there is no sign-up flow yet.
 - **The rules for this docs/ folder**: [`docs/README.md`](docs/README.md)
   — governs what's canonical vs. proposed vs. current-fact, and how to
   update each as you build.

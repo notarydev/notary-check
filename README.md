@@ -14,6 +14,7 @@ constraint shapes most of the design — see `docs/` below.
 | Know what the words mean | [`CLAUDE.md`](CLAUDE.md) — Verify / Act / Challenge / Move, and the one authority rule |
 | Find your way around the code | [`MODULES.md`](MODULES.md) — what each directory owns and what it may import |
 | Know what's actually live | [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md) |
+| Deploy, or find the infra/domains/keys | [`OPERATIONS.md`](OPERATIONS.md) |
 | Know what's next | [`docs/build/whats-left.md`](docs/build/whats-left.md) |
 | Know the rules code is held to | [`docs/build/tier-1-build-and-operating-plan.md`](docs/build/tier-1-build-and-operating-plan.md) |
 | See status at a glance | [`PROGRESS.md`](PROGRESS.md) |
@@ -84,6 +85,8 @@ engine, behind `api.getnotary.ai`) and `notary-check-mcp` (the MCP server, at
 provides OAuth. Credentials live only in the container service environment and
 are deliberately not recorded in this repo.
 
-Current image versions and the verification commands are in
+The full picture — every domain, the four separate codebases, the deploy
+procedure, and why there is no sign-up flow yet — is in
+[`OPERATIONS.md`](OPERATIONS.md). Current image versions are in
 [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md).
 Don't assume it's in sync — check the live endpoint after any deploy.

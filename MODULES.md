@@ -1,5 +1,7 @@
 # The module map
 
+For infrastructure, domains and deploys, see `OPERATIONS.md`.
+
 Read `CLAUDE.md` first for the vocabulary (Verify / Act / Challenge / Move) and
 the one authority rule. This file is the map: what each directory owns, what it
 may import, and where its tests are.
