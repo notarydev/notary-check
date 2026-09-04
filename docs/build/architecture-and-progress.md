@@ -334,6 +334,44 @@ lessons:
   the extractor's scope handling or the detector's scope rule in isolation, and
   no unit test of either could have found it.
 
+### The sixth: Notary had never asked for anything
+
+Added after the owner asked "did Notary ask for a source?" — a question worth
+asking of everything on this list, because the answer was no.
+
+`Gap` declared an `addressable_source` kind from the day the bank was built and
+**nothing ever emitted one**. `selfReport` was the only detector that could
+produce a gap, and only for command output. So on a real test — five material
+claims, every one unsourced — Notary produced zero gaps, said nothing about
+what would make them checkable, and the round-trip designed for exactly that
+case had never fired.
+
+The fact was always known: `source_verify` sets `no_source` on every claim row.
+But it lives in the review flow, writes `claim.state`, and has no path into
+`gaps[]`.
+
+Closed by registering `sourceGap` — the REPORTING half of source verification,
+never the checking half. It checks nothing, produces no Finding, and reports
+one fact in the shape Track 2 can turn into an ask. `source_verify` keeps its
+status as the only detector that assigns a verification state.
+
+**Still not built:** the ask ledger. Nothing suppresses a repeat, so a gap
+Claude ignores will reappear on the next invocation. The anti-nagging design
+remains on paper.
+
+### Wording: describe the answer, not what Notary lacked
+
+Two lines framed answering from knowledge — a normal, legitimate mode — as a
+deficiency:
+
+  "none had a source to check against"
+    -> "answered from Claude's own knowledge, not from a supplied source"
+  "Not checked: <x>"  ->  "Would let Notary <x>"
+
+Naming the mode is not approving it. Canonical § 5.7 still forbids rendering
+`no_source` as "fine"; these say where the answer came from and leave the
+judgement to the reader.
+
 ### Test counts
 
 Engine **391/391** against real Postgres with all 15 migrations (up from 356); server **10/10**. One live-judge test flaked once and passed on retry — the suite makes real model calls, so a single red run is not proof of a regression.
