@@ -46,7 +46,7 @@ Practical consequence worth knowing before the next migration run: this is a sin
 
 No ORM — raw SQL migrations (`engine/migrations/0001`–`0016`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package.
 
-**Applied to production: `0001`–`0015`. `0016` is written and applied locally but NOT yet in production** — it renames tables, so the running engine cannot survive it being applied ahead of a matching deploy (see "The Verify / Act rename" below). `0007`–`0013` ran on 2026-09-03; `0014`–`0015` ran later the same day (see the deploy record below). Migration `0013_advance.sql` adds `act_invocation`/`act_move`/`act_move_event` for the Move (Act v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
+**Applied to production: `0001`–`0016`, all of them.** `0016` ran 2026-09-04 alongside the matching deploy — it renames tables, so the running engine could not have survived it landing early. `0007`–`0013` ran on 2026-09-03; `0014`–`0015` ran later the same day (see the deploy record below). Migration `0013_advance.sql` adds `act_invocation`/`act_move`/`act_move_event` for the Move (Act v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
 
 **Schema, as it stands** (all raw SQL, no schema file to point to instead):
 - `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007). Still has **no `created_at` column** — `GET /v1/organization` (below) returns `created_at: null` rather than inventing one.
@@ -176,9 +176,15 @@ how to run things, and the mistakes this codebase has actually made);
 not mentioned `engine/` at all; `CLAUDE.md` gained the vocabulary glossary as
 its second section.
 
-**Not deployed.** The wire format changed (`advance_suggestions` → `moves`,
-`skip_claim_advance` → `skip_claim_moves`) and `0016` renames tables, so engine
-and server must go out together and the migration must land with them.
+**Deployed 2026-09-04**, engine and server together with the migration:
+`:notary-check-api.engine.37` (deployment 15) and `:notary-check-mcp.server.38`
+(deployment 23). Migration `0016` applied after a verified 223KB backup —
+`act_invocation`/`act_move`/`act_move_event` present in production, the
+`advance_*` tables gone, `organization.act_challenge_enabled` /
+`act_moves_enabled` in place. Verified against the live deployment rather than
+the deploy's own exit code: a real paraphrased contradiction returns
+`CONTRADICTED` with one move and accruing cost; the zero-claim/zero-source case
+returns two moves; self-contradiction returns one finding and two source gaps.
 
 
 ## 2026-09-03 deploy — audit fixes, Clerk auth, and Move now live

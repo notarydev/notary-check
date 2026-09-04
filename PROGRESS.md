@@ -13,7 +13,11 @@
 
 Found while wiring the boundary check: **`npm test` never ran `detect/` or `middleware/`** — the entire Verify detector bank had never executed in the suite. Fixed with a glob. Engine **428/428** (was 391), server **10/10**, all against real Postgres.
 
-**Not deployed.** Wire format changed and `0016` renames tables — engine and server must go out together, with the migration.
+**Deployed 2026-09-04.** `:notary-check-api.engine.37` (deployment 15) and `:notary-check-mcp.server.38` (deployment 23), both RUNNING. Migration `0016` applied to production after a verified 223KB backup; `act_invocation`/`act_move`/`act_move_event` present, the `advance_*` tables gone. Live smoke: a real contradiction returns `CONTRADICTED` with 1 move and cost accruing; the zero-claim/zero-source case returns 2 moves; self-contradiction returns 1 finding + 2 source gaps.
+
+Three review fixes shipped in the same deploy: **claim-level source gaps** (a single cited claim used to suppress the gap for every uncited claim in the review), **Act's task-state context** (`explicit_constraints`, `prior_attempts`, `prior_context` and the answer were collected, sent, validated — and read by nothing), and **`inputProvenance`** split from `owner`, so a deterministic comparison over Claude's own reported output no longer claims the independence of one over observed material.
+
+Deploy hazard now closed permanently: the backup step had been failing on `uselibpqcompat=true` in the production URL — a node-postgres flag libpq rejects outright — so `pg_dump` never connected and wrote a 0-byte file that looked like a backup. `scripts/deploy.sh` strips driver-only parameters for libpq tools and refuses any dump under 1KB.
 
 ---
 
