@@ -916,3 +916,63 @@ test(
     }
   },
 );
+
+// Migration 0014: Advance's own org feature flag. The rule in
+// docs/build/tier-1-build-and-operating-plan.md § Track 2 / Advance has always
+// been that Advance gets its own flag once it has persisted state to gate;
+// 0013 gave it that state and the flag was never added, so Advance ran ungated
+// in production. This test is what keeps the flag honest — a flag nothing
+// verifies is a flag that silently stops working.
+//
+// Two things asserted together, because either alone is insufficient: that no
+// suggestions come back, AND that the client was never called. A gate that
+// returns [] after paying for the call has not actually gated anything — the
+// whole reason the flag is read before any client construction or budget query
+// is that a disabled org must cost exactly zero extra DeepSeek calls.
+test(
+  "advance_enabled = false gates Advance entirely — no suggestions, and no model call is paid for",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool, { advanceEnabled: false });
+      const reviewId = await createReview(pool, orgId);
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
+
+      const { client: advanceClient, calls } = delayedAdvanceClient(50);
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          materiality: true,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [evidenceId],
+          // A real user_request, so a skip here can only be the flag —
+          // not the no_user_request short-circuit.
+          userRequest: "Can you double-check Acme's FY25 revenue growth figure for me?",
+        },
+        pool,
+        { advanceClient },
+      );
+
+      assert.deepEqual(result.advanceSuggestions, [], "a disabled org must produce no Advance suggestions");
+      assert.equal(calls(), 0, "a disabled org must not reach the model at all — the flag is read before any client work");
+
+      // Track 1 is completely unaffected: the flag gates Advance, never the
+      // evidence record. This is the same authority boundary Advance has
+      // everywhere else, checked at the flag path specifically.
+      assert.equal(result.state, "SUPPORTED");
+      assert.equal(result.lifecycle, "completed");
+
+      // No advance_invocation row either. 'skipped' means "was eligible and
+      // short-circuited on its own policy"; an org with the feature off was
+      // never eligible, and a row per claim would bury the real skips.
+      const rows = await pool.query("SELECT count(*)::int AS n FROM advance_invocation WHERE organization_id = $1", [orgId]);
+      assert.equal(rows.rows[0].n, 0, "a disabled org writes no advance_invocation row");
+    } finally {
+      await pool.end();
+    }
+  },
+);

@@ -48,8 +48,16 @@ documented stand-in), CI, and anything beyond the CHECK tier.
 
 ## What does NOT exist here
 
-- No parsing of HTML/PDF/excerpts, no canonical text extraction beyond
-  ingestion fencing.
+- No per-glyph PDF geometry. Corrected 2026-09-03: HTML and PDF parsing
+  DO exist (`src/ingestion/parsePdf.ts`, with `parsePdf.test.ts` and
+  `hostilePdf.test.ts`), and migration `0011` added `parse_status`,
+  `page_ranges`, and `canonical_text_hash`. A character offset maps
+  deterministically to exactly one page. What does not exist is a
+  bounding-box locator — the text API exposes no glyph geometry, so an
+  (x, y, w, h) rectangle is not derivable and is deliberately not faked.
+- No producer for structured (JSON) evidence. `locators.ts`'s `json_path`
+  kind is real and tested, but the ingestion MIME allowlist admits HTML
+  and PDF only, so it is deliberately unwired.
 - No real payload/object store — `evidence.resolved_text` (migration 0006)
   is a deliberate, narrow stand-in for what should eventually be an
   S3-equivalent store.

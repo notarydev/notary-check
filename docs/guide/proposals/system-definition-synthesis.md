@@ -1,7 +1,22 @@
 > Status: proposal
 > Owner: Hardyk
-> Last verified: 2026-09-02
+> Last verified: 2026-09-03
 > Supersedes: —
+
+> **Read this first — supersession notice, added 2026-09-03.** This document is
+> **design history**, not current spec. Two of its parts have been overtaken by
+> shipped code:
+>
+> - **Track 2 v1 / Challenge** (Part 6) is built but **frozen** — `track2_enabled`
+>   stays off, and it is not being extended. Design text archived at
+>   `docs/build/phase-0-and-challenge-archive.md`.
+> - **Advance** (Part 11) **shipped on 2026-09-03** and diverged from what Part 11
+>   describes: cardinality was corrected to 0–2 (not always exactly 1), and the
+>   persistence tables Part 11 defers were built (migration `0013`). Part 11's
+>   adversarial evaluation was **not** run before shipping.
+>
+> For what is actually real, read `docs/build/tier-1-build-and-operating-plan.md`
+> § Track 2 / Advance. This file explains *why* those decisions were made.
 
 # Notary — Complete System Definition (with Track 1 / Track 2), corrected
 
@@ -326,7 +341,7 @@ Track 2/Challenge stays a **future feature, not canonical product scope today**,
 
 **Track 2/Challenge, as decided, is explicitly not the same feature as `start_exploratory_review`** (the Tier 1 plan's open-ended Claude↔judge transcript, § Exploratory review) — that stays exactly where it was, Phase 2+, deferred. Track 2 is the typed, bounded, no-transcript, no-verdict-field alternative Part 6 already argued for over an open transcript; promoting Track 2 does not promote Exploratory Review.
 
-**The full build contract (output schema, action routing, caps, feature-flag rollout) is now written into `docs/build/tier-1-build-and-operating-plan.md`'s Product Contract section** ("Track 2 / Challenge layer" subsection, added the same day) — that's the canonical build target from here forward; this entry is the design-history record of how the decision was reached, not a duplicate spec.
+**SUPERSEDED 2026-09-03 — Challenge is frozen, not the build target.** `track2_enabled` stays off and this design is not being extended; its full text moved to `docs/build/phase-0-and-challenge-archive.md`. "Track 2" now means **Advance** (Part 11 below), which has since shipped and diverged from what Part 11 describes — read `docs/build/tier-1-build-and-operating-plan.md` § Track 2 / Advance for what is actually real. Original note kept for history: this entry is the design-history record of how the decision was reached, not a duplicate spec.
 
 **Still true, unchanged by this decision**: the claim-ambiguity detection mechanism (Part 5's open question — how would an extractor even notice its own ambiguity) remains genuinely unsettled and is being run as a separate research spike, not shipped as a feature. Promoting Track 2 into the build did not resolve that question; it's still open.
 

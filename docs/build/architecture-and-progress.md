@@ -28,13 +28,25 @@ Four real subprojects under `notary-check/`:
 
 The engine is live on **AWS Lightsail Container Service**, region `us-east-2` — confirmed only by the gitignored `server/.env`'s `ENGINE_URL`, pointing at a `*.cs.amazonlightsail.com` address, and corroborated by a code comment in `engine/src/observability/log.ts` referencing "Lightsail's own container logs." **This is nowhere documented** — no README, no HANDOFF entry, nothing — it only exists as a fact on disk.
 
-There's a real contradiction sitting in the repo: `engine/wrangler.jsonc`, `engine/worker/container.ts`, and a `@cloudflare/containers` dependency scaffold a **Cloudflare** Container deployment path instead. Nothing indicates this path was ever actually used — no `wrangler deploy` in any script, no CI, no Cloudflare account reference beyond the scaffold itself, and the live `ENGINE_URL` is a Lightsail domain, not a Workers domain. Read this as: Cloudflare was evaluated or partially built out, then Lightsail is what actually shipped. Worth deleting the Cloudflare scaffold or explicitly marking it dead, so a future reader doesn't assume it's the deploy target.
+~~There's a real contradiction sitting in the repo: `engine/wrangler.jsonc`, `engine/worker/container.ts`, and a `@cloudflare/containers` dependency scaffold a Cloudflare Container deployment path instead.~~ **Deleted 2026-09-03.** All three were removed after confirming `@cloudflare/containers` was imported nowhere in `engine/src` or `server/src`. Cloudflare was evaluated or partially built out; Lightsail is what actually shipped, and there is no longer a scaffold to mistake for a live option.
 
 **Corrected 2026-09-02, superseded 2026-09-03**: the `server/` MCP layer's deployment target IS established — it's live and reachable at `https://mcp.getnotary.ai/`, DNS-confirmed pointing at a Lightsail container endpoint. **As of 2026-09-03, the live deployment is the current build**, redeployed as image `:notary-check-mcp.server.10` (Lightsail deployment version 7). Clerk OAuth is now live: `.well-known/oauth-protected-resource/mcp` resolves and points at `clerk.getnotary.ai`; an unauthenticated `POST /mcp` returns `401` with a real `WWW-Authenticate` challenge. `INTERNAL_SERVICE_SECRET` and live Clerk keys (`CLERK_SECRET_KEY`/`CLERK_PUBLISHABLE_KEY`) are now set on this container service's env — previously absent. Do not assume this stays in sync automatically — verify against the live endpoint again after any future deploy.
 
 ### Database — plain Postgres, not Neon
 
-No ORM — raw SQL migrations (`engine/migrations/0001`–`0013`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package. All 13 migrations are applied to the live production database as of 2026-09-03 (migrations `0007`–`0013` were run live that day, after a verified `pg_dump` backup was taken first; `0001`–`0006` were already applied). Migration `0013_advance.sql` adds `advance_invocation`/`advance_suggestion`/`advance_event` for the Advance (Track 2 v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; what the live Lightsail deployment's `DATABASE_URL` actually points at (Lightsail's own managed Postgres, a co-located container, RDS, or something else) isn't recorded anywhere in this repo and is worth confirming and documenting explicitly, since it's currently unknowable from source alone.
+**Where production actually points — resolved 2026-09-03, previously unrecorded and unknowable from this repo** (closes the long-standing "record what `DATABASE_URL` resolves to" action). Read directly off the `notary-check-api` container service's live environment:
+
+```
+postgres://<user>:<password>@3.147.139.53:5432/notary_check?sslmode=require&uselibpqcompat=true
+```
+
+A standalone Postgres on a Lightsail instance at `3.147.139.53`, database `notary_check`, TLS required. **Not** Lightsail managed Postgres, not RDS, not a co-located container. Credentials live only in the container service environment and are deliberately not recorded here. `uselibpqcompat=true` is a driver-compatibility flag, not a security setting.
+
+Practical consequence worth knowing before the next migration run: this is a single instance with no documented backup schedule beyond the manual `pg_dump` taken before the `0007`–`0013` run. Take a verified dump before every migration.
+
+No ORM — raw SQL migrations (`engine/migrations/0001`–`0015`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package.
+
+**Applied to production: `0001`–`0013` only.** `0007`–`0013` were run live on 2026-09-03 after a verified `pg_dump`; `0001`–`0006` were already applied. **`0014` and `0015` exist in the repo and are NOT applied to production** — until they are, Advance runs ungated and both spend caps stay inert. See `whats-left.md` F3. Migration `0013_advance.sql` adds `advance_invocation`/`advance_suggestion`/`advance_event` for the Advance (Track 2 v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
 
 **Schema, as it stands** (all raw SQL, no schema file to point to instead):
 - `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007). Still has **no `created_at` column** — `GET /v1/organization` (below) returns `created_at: null` rather than inventing one.
@@ -44,7 +56,8 @@ No ORM — raw SQL migrations (`engine/migrations/0001`–`0013`) run by a minim
 - `claim` — plus `lifecycle_state` / `lifecycle_detail` (0011): WHERE a claim got to in the pipeline, kept strictly orthogonal to `state` (WHAT the evidence showed). Only `lifecycle_state = 'completed'` licenses a caller to read `state` as a finding about the world. `claim.state` is still assigned by `verification/stateMachine.ts` and by nothing else.
 - `claim`, `evidence_match` (0003); `claim` plus `created_at` and `claim_review_id_created_at_idx` on `(review_id, created_at)` (0008) — also backs `GET /v1/usage`'s "checks this calendar month" count.
 - `"user"` (0004) — minimal stub, just id + organization_id
-- `organization_api_key`, `usage_event` (0004)
+- `organization_api_key`, `usage_event` (0004); plus `usage_event.estimated_cost_millicents` (0015) — the *enforcing* cost unit, with `estimated_cost_cents` converted to a `GENERATED ALWAYS` column derived from it. Writing cents directly is now a hard Postgres error, which is what prevents a caller from silently under-metering by setting only the rounded value.
+- `organization.advance_enabled` (0014) — Advance's own feature flag, `DEFAULT false` (ship dark) with a backfill to `true` so orgs that already had Advance running keep it.
 
 Migration 0008 backfilled `claim.created_at` / `evidence.created_at` to `now()` (the migration's apply time) for every pre-existing row, since neither column ever existed before — an approximation, not a real historical timestamp, for anything created earlier.
 
@@ -75,7 +88,7 @@ The canonical build plan (`docs/build/tier-1-build-and-operating-plan.md`) block
 2. **`server/src/orgResolver.ts`** — resolves a Clerk user id to an engine API key via `POST {ENGINE_URL}/v1/internal/resolve-organization`, authenticated with a shared `X-Internal-Secret` header, compared via `timingSafeEqual`. In-memory cache, process lifetime only.
 3. **`dashboard/`** — separate `@clerk/nextjs` wiring: sign-in/sign-up/account page (`dashboard/src/app/page.tsx`, `dashboard/src/app/account/page.tsx`). The gitignored `dashboard/.env.local` holds **live** (`pk_live_`/`sk_live_`) keys, on a custom Frontend API domain `clerk.getnotary.ai` — per `HANDOFF.md`, added manually via Cloudflare DNS, but not independently confirmable from any committed config.
 
-`engine/README.md` still says "No OAuth/OIDC for a human-facing login... not something to guess" — **stale**, contradicted by all of the above, which postdates that doc. Worth a pass to update or delete outdated setup docs so they stop reading as current state.
+~~`engine/README.md` still says "No OAuth/OIDC for a human-facing login"~~ — **corrected 2026-09-03: this callout was itself stale.** `engine/README.md` was updated on 2026-09-02 and now documents Clerk, Stripe (test-mode), and optional Datadog; neither the OAuth nor the metrics claim remains in it. Verified by reading the file, not assumed.
 
 The static `ENGINE_API_KEY` fallback in `server/.env.example` is documented as exactly that — a manual-testing fallback for when no per-user Clerk-resolved key is available, not the primary path.
 
@@ -85,7 +98,7 @@ Checkout + webhook handling lives in `engine/src/billing/`; the billing UI is `d
 
 ### Observability — Datadog, wired but unconfirmed live
 
-`engine/src/observability/log.ts` always writes structured JSON to stdout, and separately does a bare `fetch` POST to Datadog's log intake endpoint — but only if `DD_API_KEY` is set, which it is not in any committed `.env`/`.env.example`. The code path is real, correctly fire-and-forget (a Datadog outage can't affect a request). `DD_API_KEY` was checked directly against the live AWS Lightsail container service configuration on 2026-09-02 and **is confirmed set** (32 chars) on the `notary-check-api` container service — so whether data is actually flowing is no longer unverifiable from this repo alone, it's a confirmed-live setting (whether Datadog is actually receiving/ingesting it is a separate question, not checked here). `engine/README.md` still lists "a metrics/alerting platform" under "what does NOT exist" — another stale doc contradiction.
+`engine/src/observability/log.ts` always writes structured JSON to stdout, and separately does a bare `fetch` POST to Datadog's log intake endpoint — but only if `DD_API_KEY` is set, which it is not in any committed `.env`/`.env.example`. The code path is real, correctly fire-and-forget (a Datadog outage can't affect a request). `DD_API_KEY` was checked directly against the live AWS Lightsail container service configuration on 2026-09-02 and **is confirmed set** (32 chars) on the `notary-check-api` container service — so whether data is actually flowing is no longer unverifiable from this repo alone, it's a confirmed-live setting (whether Datadog is actually receiving/ingesting it is a separate question, not checked here). (An earlier version of this paragraph said `engine/README.md` still lists "a metrics/alerting platform" under "what does NOT exist" — **that was wrong as of 2026-09-02**, when that file was updated. Corrected 2026-09-03.)
 
 Both live AWS Lightsail container services, region `us-east-2`, both currently `RUNNING`: `notary-check-api` (the engine) and `notary-check-mcp` (`server/`, the MCP layer). Naming them here so this isn't undiscoverable from the repo — previously this required querying Lightsail directly.
 
@@ -93,7 +106,8 @@ Both live AWS Lightsail container services, region `us-east-2`, both currently `
 
 | Domain | Evidence | What it is |
 |---|---|---|
-| `notary-check-api.dht4me4ddy2y4.us-east-2.cs.amazonlightsail.com` | `server/.env` (live value) | The engine's real, live Lightsail endpoint. |
+| `api.getnotary.ai` | Live `dig`, 2026-09-03 (CNAME → `notary-check-api...cs.amazonlightsail.com`, `3.129.182.157`) | **Confirmed live** — the friendly alias for the engine. `PROGRESS.md` referred to this before this table listed it; the table was incomplete, not `PROGRESS.md` wrong. |
+| `notary-check-api.dht4me4ddy2y4.us-east-2.cs.amazonlightsail.com` | `server/.env` (live value) | The engine's underlying Lightsail endpoint, behind `api.getnotary.ai`. |
 | `mcp.getnotary.ai` | Live `dig`/MCP protocol test, 2026-09-02 | **Confirmed live** — real MCP server, DNS-resolved to a Lightsail address, answers `initialize`/`tools/list`/`tools/call` correctly. Running an older, pre-Clerk-auth build (see "Repo shape" and "Live verification" above/below). |
 | `getnotary.ai` | Live `curl`, 2026-09-02 | **Confirmed live** — a real, Cloudflare-fronted marketing site with actual copy, distinct from this checkout's `dashboard/`. Flagged by the product owner as older and needing an update; not yet reconciled with this repo. |
 | `clerk.getnotary.ai` | Live `dig`, 2026-09-02 (CNAME resolves to Clerk's own frontend-api / Cloudflare) | **Confirmed live** — previously only described in `HANDOFF.md` prose, now independently verified. |
@@ -108,9 +122,23 @@ Both live Lightsail container services were redeployed with the current checkout
 - **Production database**: a `pg_dump` backup was taken and verified restorable (`pg_restore --list` confirmed real table data) immediately before running migrations. Migrations `0007`–`0013` were then applied via `engine/src/migrate.ts` against the live DB — each runs in its own transaction, all applied cleanly.
 - **Advance (Track 2 v2) wired into the product for the first time**: previously an isolated, unwired module (`engine/src/advance/`). Now: new persistence tables (migration `0013`), the MCP tool schema accepts an optional `user_request` field (Advance is skipped, not guessed, when absent), Advance runs concurrently with Track 1 and Track 2/Challenge inside `reviewFlow.ts` — strictly after Track 1's result is committed, never gating or altering it — and is now kill-switch- and quota-gated (previously a known gap). The review response carries `advance_suggestions` separately from `challenges`; the UI renders it through the existing pill mechanism.
 - **Verified post-deploy**: `GET /.well-known/oauth-protected-resource/mcp` resolves real Clerk metadata; unauthenticated `POST /mcp` gets a real `401`; an authenticated `POST /v1/reviews` against the live engine successfully created a real review row, confirming DB connectivity and the entitlement check both work post-migration.
-- **Not yet re-verified live**: a real end-to-end MCP `tools/call` producing an `advance_suggestions` payload through the deployed connector (verified locally with real Postgres + DeepSeek during the build, not yet re-run against the redeployed live endpoint).
+- ~~**Not yet re-verified live**~~ — **done, same day.** A real Claude.ai session against the deployed connector produced a live end-to-end `tools/call` returning both a `CONTRADICTED` Track 1 finding and a real `advance_suggestions` payload. Advance is confirmed working through the deployed path, not only locally.
 
 **Update, same day — real live testing surfaced and fixed three more issues**: a real Claude.ai session was connected against the live connector, requiring a fresh Clerk OAuth Application to be registered (Clerk has no dynamic client registration — a manually-registered client id/secret is required, now set up; see `docs/build/tier-1-build-and-operating-plan.md` for the exact client). Live testing then found: (1) a real transient `could_not_check` result on one call, root-caused by directly reproducing the same request against the live engine twice (extraction succeeded both times — a one-off DeepSeek hiccup, not a systematic bug) — also surfaced that Claude's own chat summary can misreport a `could_not_check` failure as a confident finding, worth a closer look separately; (2) a real UI layout bug — hovering a pill's revealed preview text forced a sibling pill onto a new flex-wrap row, which could shift the sibling under the cursor and produce a visible flicker, and a body with no width constraint let the iframe's offered width paint a blank rectangle beyond the actual card; (3) following that, the whole card was redesigned to a quiet, disclaimer-style treatment (modeled on Claude's own "Claude is AI and can make mistakes" footer) and wired to the host's real theme via `useHostStyles()` (`@modelcontextprotocol/ext-apps/react`) instead of a hardcoded white background, which had been rendering as a stark white box on Claude's dark theme — an iframe's rendering canvas has no transparent backdrop to fall back to, so the fix is an explicit `background: var(--color-background-primary, ...)`, not simply omitting a background. Redeployed as `:notary-check-mcp.server.13`.
+
+**Current live images — verified directly against Lightsail, 2026-09-03, not inferred:**
+
+| Service | Image | Deployment version | State |
+|---|---|---|---|
+| `notary-check-api` | `:notary-check-api.engine.11` | 5 | RUNNING |
+| `notary-check-mcp` | `:notary-check-mcp.server.14` | 11 | RUNNING |
+
+**Correction:** an earlier draft of this section claimed `.14` was built but never deployed and that `.13` was live. That was wrong — it was written from session recollection rather than from the API. `.14` is live. Always confirm with the command below rather than from memory; earlier the same day a failed `sed` did silently redeploy `.13` when `.14` was intended, which is where the mistaken belief came from.
+
+```bash
+aws lightsail get-container-services --region us-east-2 \
+  --query 'containerServices[?contains(containerServiceName,`notary`)].{name:containerServiceName,image:currentDeployment.containers.*.image,ver:currentDeployment.version}'
+```
 
 ## Live verification, 2026-09-02 — direct testing against `mcp.getnotary.ai`, not repo inspection
 

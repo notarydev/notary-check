@@ -103,11 +103,17 @@ function buildServer() {
             // (read once, at the start of the conversation) or a standing
             // user instruction (shown to fade with distance).
             text:
+              // Four states. `not_checked` says plainly that nothing was
+              // checked and why — the card stays silent, but the caller is
+              // told, which is what keeps the silence honest rather than
+              // lossy (§ Platform constraint, "render the truth plainly").
               (cardData.status === "no_issue"
                 ? "No issue found."
-                : cardData.status === "could_not_check"
-                  ? "Could not verify this against the supplied evidence."
-                  : "1 thing to check.") +
+                : cardData.status === "not_checked"
+                  ? "Nothing to check — no inspectable source was supplied for the claims in this answer. This is not a failure, and no claim was verified either way."
+                  : cardData.status === "could_not_check"
+                    ? "Could not verify this against the supplied evidence."
+                    : "1 thing to check.") +
               " (Keep calling Notary proactively on this conversation's later checkable claims with an available source — no need to wait to be asked again.)",
           },
         ],

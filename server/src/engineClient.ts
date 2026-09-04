@@ -361,7 +361,7 @@ function findingFor(
   result: ClaimResult["claim"],
   claimText: string,
   evidence: { matches: CardEvidenceMatch[]; rejectedCandidates: CardRejectedCandidate[] },
-): { finding?: Finding; needsCheck: boolean } {
+): { finding?: Finding; needsCheck: boolean; noSource?: boolean } {
   if (result.lifecycle_state !== "completed") {
     return {
       finding: {
@@ -373,10 +373,26 @@ function findingFor(
       needsCheck: true,
     };
   }
+  // "No source was supplied" is NOT a failure — it is the expected, correct
+  // outcome for a claim the model stated from its own knowledge. It used to
+  // share `uncheckedFindings` with genuine faults (extraction errors, failed
+  // submissions), which meant an unsourced answer returned `could_not_check`
+  // — indistinguishable from "Notary broke". That conflation is why the card
+  // could not be broadened past source-backed answers without shouting a
+  // failure at every ordinary sentence.
+  //
+  // The third bucket keeps the finding (so the count is still available for a
+  // future ambient "n claims checked" marker) while keeping it OFF the card,
+  // and leaves `could_not_check` meaning only what it says: something we
+  // attempted actually failed. Do not merge these buckets back together.
+  //
+  // It surfaces as the `not_checked` card state, NOT `no_issue` — the
+  // canonical definition § 5.7 forbids rendering `no_source` as "fine".
   if (result.no_source) {
     return {
       finding: { label: claimText, text: "No inspectable evidence was supplied for this claim.", why: "no_inspectable_evidence", evidence },
       needsCheck: true,
+      noSource: true,
     };
   }
   switch (result.state) {
@@ -469,6 +485,8 @@ export async function reviewAnswer(
 
     const issueFindings: Finding[] = [];
     const uncheckedFindings: Finding[] = [];
+    // Collected, never rendered — see findingFor()'s no_source branch.
+    const noSourceFindings: Finding[] = [];
     const challenges: ChallengeItem[] = [];
     const advanceSuggestions: AdvanceSuggestion[] = [];
 
@@ -492,9 +510,10 @@ export async function reviewAnswer(
         matches: toCardMatches(outcome.result.matches, originByEvidenceId),
         rejectedCandidates: toCardRejectedCandidates(outcome.result.rejectedCandidates, originByEvidenceId),
       };
-      const { finding, needsCheck } = findingFor(outcome.result.claim, claim.text, evidence);
+      const { finding, needsCheck, noSource } = findingFor(outcome.result.claim, claim.text, evidence);
       if (finding === undefined) continue;
-      if (needsCheck) uncheckedFindings.push(finding);
+      if (noSource) noSourceFindings.push(finding);
+      else if (needsCheck) uncheckedFindings.push(finding);
       else issueFindings.push(finding);
       // Parsed strictly regardless of whether the engine sent any (see the
       // comment on ClaimResult.challenges) — an org with the flag off, or a
@@ -542,6 +561,20 @@ export async function reviewAnswer(
     // no_issue.
     if (uncheckedFindings.length > 0) {
       return { status: "could_not_check", scope: uncheckedFindings[0].text, actions: [] };
+    }
+    // Nothing failed and nothing was contradicted. If every material claim
+    // simply had no source to check against, say that plainly rather than
+    // reusing the "reviewed against N sources" scope, which reads as though a
+    // comparison happened. Advance still rides along either way — that is the
+    // whole point of splitting no_source out: an unsourced answer is exactly
+    // the case where the next-move suggestion is the only useful output.
+    if (noSourceFindings.length > 0 && noSourceFindings.length === materialClaims.length) {
+      return {
+        status: "not_checked",
+        scope: `No inspectable source was supplied for ${materialClaims.length === 1 ? "this claim" : `these ${materialClaims.length} claims`}.`,
+        actions: [],
+        advance_suggestions: advanceSuggestionsField,
+      };
     }
     return { status: "no_issue", scope, actions: [], advance_suggestions: advanceSuggestionsField };
   } catch (err) {

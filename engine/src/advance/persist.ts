@@ -11,7 +11,7 @@
 // module has no reference to either.
 
 import type pg from "pg";
-import { estimateDeepSeekCostCents } from "../quotas/usage.ts";
+import { estimateDeepSeekCostMillicents } from "../quotas/usage.ts";
 import { POLICY_VERSION } from "./policy.ts";
 import type { GenerateAdvanceMoveResult } from "./liveGenerate.ts";
 import type { AdvanceMove, AdvanceSuggestion } from "./types.ts";
@@ -53,14 +53,16 @@ export async function persistAdvanceInvocation(db: pg.Pool, input: PersistAdvanc
   const error = result.error ?? null;
   const inputTokens = result.record?.inputTokens ?? null;
   const outputTokens = result.record?.outputTokens ?? null;
-  const estimatedCostCents =
-    inputTokens !== null && outputTokens !== null ? estimateDeepSeekCostCents(inputTokens, outputTokens) : null;
+  // Millicents only. estimated_cost_cents is GENERATED ALWAYS from this
+  // (migration 0015) and cannot be written directly.
+  const estimatedCostMillicents =
+    inputTokens !== null && outputTokens !== null ? estimateDeepSeekCostMillicents(inputTokens, outputTokens) : null;
 
   const inserted = await db.query(
     `INSERT INTO advance_invocation
        (organization_id, review_id, claim_id, invocation_context_id, task_mode,
         has_evidence_constraint, allowed_moves, policy_version, model, prompt_version,
-        status, error, input_tokens, output_tokens, estimated_cost_cents)
+        status, error, input_tokens, output_tokens, estimated_cost_millicents)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING id`,
     [
@@ -78,7 +80,7 @@ export async function persistAdvanceInvocation(db: pg.Pool, input: PersistAdvanc
       error,
       inputTokens,
       outputTokens,
-      estimatedCostCents,
+      estimatedCostMillicents,
     ],
   );
   const invocationId = inserted.rows[0].id as string;

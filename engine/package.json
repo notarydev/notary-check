@@ -1,7 +1,7 @@
 {
   "name": "notary-check-engine",
   "version": "0.1.0",
-  "description": "Notary Check — Phase 1 engine: evidence manifest + immutable locator/snapshot layer (build-order step 1).",
+  "description": "Notary Check \u2014 Phase 1 engine: evidence manifest + immutable locator/snapshot layer (build-order step 1).",
   "type": "module",
   "main": "src/server.ts",
   "scripts": {
@@ -15,7 +15,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@cloudflare/containers": "^0.3.7",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "pdf-parse": "^2.4.5",

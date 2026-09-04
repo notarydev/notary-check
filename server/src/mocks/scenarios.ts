@@ -75,7 +75,21 @@ export type AdvanceSuggestion = {
 };
 
 export type ReviewCardData = {
-  status: "no_issue" | "issue_found" | "could_not_check";
+  // Four states, not three. `not_checked` was added 2026-09-03 because three
+  // could not stay honest: it means the procedure did NOT RUN (no source was
+  // supplied, or the source is out of the declared document class), which is
+  // neither a pass nor a failure.
+  //
+  // It cannot be folded into either neighbour. `no_issue` is forbidden by the
+  // canonical definition § 5.7 — `no_source` "must never be rendered as either
+  // 'unsupported' or 'fine'" — and `could_not_check` means something we
+  // ATTEMPTED actually broke, which made an ordinary unsourced answer
+  // indistinguishable from Notary malfunctioning.
+  //
+  // See docs/build/tier-1-build-and-operating-plan.md's "Engine state ->
+  // finding type -> card state" table for the full mapping and the three
+  // separate rules that force this state to exist.
+  status: "no_issue" | "issue_found" | "could_not_check" | "not_checked";
   scope: string;
   claim?: string;
   findings?: Array<{

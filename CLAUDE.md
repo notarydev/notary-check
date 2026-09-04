@@ -15,12 +15,29 @@ pipeline, or judge design with them.
 - **The rules for this docs/ folder**: [`docs/README.md`](docs/README.md)
   — governs what's canonical vs. proposed vs. current-fact, and how to
   update each as you build.
-- **Current authority** (what Notary is, what it may claim):
+
+Four documents, one question each (restructured 2026-09-03):
+
+- **Vision** — what Notary is, what it may claim, and where it's going
+  (CHECK → WATCH → CAPTURE). Long-horizon; evolves slowly; **never edit
+  directly**, see the last section of this file:
   [`docs/guide/canonical-product-definition.md`](docs/guide/canonical-product-definition.md)
-- **Current deployed reality** (infra, what's actually live):
-  [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md)
-- **Current build target** (the spec being executed against):
+- **Guide** — the rules code is held to (card contract, tool contract,
+  verification pipeline, judge design, data model, security):
   [`docs/build/tier-1-build-and-operating-plan.md`](docs/build/tier-1-build-and-operating-plan.md)
+- **What's built** — infra and what's actually live right now:
+  [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md)
+- **What's left** — the ordered roadmap, blockers, and open decisions:
+  [`docs/build/whats-left.md`](docs/build/whats-left.md)
+
+- **Still on the path?** — whether today's build can still become the
+  vision, what must not be broken, and how to keep docs and code in sync:
+  [`docs/build/transition-map.md`](docs/build/transition-map.md)
+
+Proposals that are **not** rules yet live in `docs/guide/proposals/`.
+History that is no longer guidance (the Phase 0 build guide, the frozen
+Track 2 v1 / Challenge design) is in
+[`docs/build/phase-0-and-challenge-archive.md`](docs/build/phase-0-and-challenge-archive.md).
 
 ## The one rule that matters most
 

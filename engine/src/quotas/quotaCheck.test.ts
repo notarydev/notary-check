@@ -24,6 +24,7 @@ import {
 } from "./quotaCheck.ts";
 import {
   estimateDeepSeekCostCents,
+  estimateDeepSeekCostMillicents,
   insertUsageEvent,
   usageEventFromJudgeCall,
   type UsageEventShape,
@@ -80,8 +81,14 @@ test("usageEventFromJudgeCall maps a JudgeCallRecord into an insertable UsageEve
     inputTokens: 4_000,
     outputTokens: 700,
     fetchBytes: 0,
+    // A realistic call: 0.134 cents. The cent figure rounds to 0 — that is
+    // exactly the bug migration 0015 exists to route around, and this
+    // assertion documents it rather than treating 0 as correct metering.
     estimatedCostCents: estimateDeepSeekCostCents(4_000, 700),
+    estimatedCostMillicents: estimateDeepSeekCostMillicents(4_000, 700),
   });
+  assert.equal(event.estimatedCostCents, 0, "a real call rounds to 0 cents — display only, never the enforcing unit");
+  assert.equal(event.estimatedCostMillicents, 134, "the enforcing unit must be non-zero for a real call");
 });
 
 test("orgMonthlyLimitCents / globalSpendCapCents defaults and env overrides", () => {
@@ -111,6 +118,7 @@ test(
         outputTokens: 0,
         fetchBytes: 0,
         estimatedCostCents: estimateDeepSeekCostCents(1_000_000, 0),
+        estimatedCostMillicents: estimateDeepSeekCostMillicents(1_000_000, 0),
       };
       // The GLOBAL sum spans every organization in the database, so it is not
       // isolated from other tests the way a fresh org's sum is. node --test runs
@@ -156,8 +164,8 @@ test(
       process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = "1000";
 
       await pool.query(
-        `INSERT INTO usage_event (organization_id, event_type, input_tokens, output_tokens, fetch_bytes, estimated_cost_cents)
-         VALUES ($1, 'judge_call', 0, 0, 0, 40)`,
+        `INSERT INTO usage_event (organization_id, event_type, input_tokens, output_tokens, fetch_bytes, estimated_cost_millicents)
+         VALUES ($1, 'judge_call', 0, 0, 0, 40000)`,
         [orgId],
       );
       // 40 < 100 → allowed.
@@ -182,8 +190,11 @@ test(
 
       // Sum exactly at the limit → NOT allowed (>= is the hard cutoff).
       await pool.query(
-        `INSERT INTO usage_event (organization_id, event_type, estimated_cost_cents)
-         VALUES ($1, 'judge_call', 60), ($1, 'judge_call', 40)`,
+        // Millicents, because estimated_cost_cents is GENERATED ALWAYS as of
+        // migration 0015 and cannot be written. 60 + 40 cents = 100,000
+        // millicents, exactly the 100-cent limit set above.
+        `INSERT INTO usage_event (organization_id, event_type, estimated_cost_millicents)
+         VALUES ($1, 'judge_call', 60000), ($1, 'judge_call', 40000)`,
         [orgId],
       );
       const atLimit = await checkQuota(orgId, pool);
@@ -191,7 +202,7 @@ test(
 
       // One more unit pushes it clearly over; same reason.
       await pool.query(
-        `INSERT INTO usage_event (organization_id, event_type, estimated_cost_cents) VALUES ($1, 'judge_call', 1)`,
+        `INSERT INTO usage_event (organization_id, event_type, estimated_cost_millicents) VALUES ($1, 'judge_call', 1000)`,
         [orgId],
       );
       const over = await checkQuota(orgId, pool);
@@ -218,7 +229,7 @@ test(
       process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = "10"; // tiny aggregate ceiling
 
       await pool.query(
-        `INSERT INTO usage_event (organization_id, event_type, estimated_cost_cents) VALUES ($1, 'judge_call', 10)`,
+        `INSERT INTO usage_event (organization_id, event_type, estimated_cost_millicents) VALUES ($1, 'judge_call', 10000)`,
         [burnerOrg],
       );
 
@@ -237,6 +248,68 @@ test(
       assert.deepEqual(await checkQuota(burnerOrg, pool), { allowed: true });
     } finally {
       await pool.query("DELETE FROM usage_event WHERE organization_id = $1", [burnerOrg]);
+      await pool.end();
+    }
+  },
+);
+
+// Migration 0015 regression: the spend caps must actually bite on realistic
+// traffic. Before this, `estimated_cost_cents` rounded a typical ~0.134-cent
+// call to 0, both monthly sums summed zeros, and neither the per-org limit nor
+// the global provider cap could ever fire no matter how many calls were made.
+//
+// The test is written in terms of REAL call sizes deliberately. Asserting with
+// a huge synthetic token count would have passed even against the old rounding
+// bug, which is exactly why the bug survived: the existing coverage used
+// 1,000,000 input tokens (22 cents), a size no actual call reaches.
+test(
+  "realistic per-call costs accumulate — the rounding bug that made both spend caps inert",
+  { ...dbSkip },
+  async () => {
+    const pool: pg.Pool = await freshPool();
+    const orgId = await createOrganization(pool);
+    try {
+      // § Operating cost's own planning figure for one check: 4,000 input +
+      // 700 output tokens, which is $0.00134 — i.e. 0.134 cents.
+      const IN = 4_000;
+      const OUT = 700;
+
+      assert.equal(
+        estimateDeepSeekCostCents(IN, OUT),
+        0,
+        "precondition: a real call still rounds to 0 cents — this is why the cent column cannot be the enforcing unit",
+      );
+      assert.ok(
+        estimateDeepSeekCostMillicents(IN, OUT) > 0,
+        "a real call must be non-zero in the enforcing unit, or the caps are decorative",
+      );
+
+      const before = await organizationMonthCostCents(orgId, pool);
+
+      // 1,000 checks — the plan's "planning case" is 100,000/month across all
+      // users, so this is a small, entirely ordinary volume.
+      for (let i = 0; i < 1_000; i++) {
+        await insertUsageEvent(pool, {
+          organizationId: orgId,
+          eventType: "judge_call",
+          inputTokens: IN,
+          outputTokens: OUT,
+          fetchBytes: 0,
+          estimatedCostCents: estimateDeepSeekCostCents(IN, OUT),
+          estimatedCostMillicents: estimateDeepSeekCostMillicents(IN, OUT),
+        });
+      }
+
+      const after = await organizationMonthCostCents(orgId, pool);
+      const accrued = after - before;
+
+      // 1,000 x 0.134 cents = ~134 cents. Under the old behaviour this was 0.
+      assert.ok(
+        accrued > 100,
+        `1,000 realistic calls must accrue real cost; got ${accrued} cents (0 means the rounding bug is back)`,
+      );
+      assert.ok(accrued < 200, `sanity: expected roughly 134 cents, got ${accrued} — check the millicent conversion`);
+    } finally {
       await pool.end();
     }
   },

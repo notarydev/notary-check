@@ -238,3 +238,72 @@ test("review creation fails outright (engine 500, non-JSON body) -> could_not_ch
     globalThis.fetch = originalFetch;
   }
 });
+
+// Regression coverage for the no_source / could_not_check conflation
+// (2026-09-03). A claim the model stated from its own knowledge, with no
+// source attached, is the ORDINARY case — not a malfunction. It used to share
+// `uncheckedFindings` with genuine faults and return `could_not_check`, making
+// an unsourced answer indistinguishable from "Notary broke".
+//
+// It must now return `not_checked`, and specifically NOT `no_issue` — the
+// canonical definition § 5.7 forbids rendering `no_source` as "fine". Both
+// halves of that are asserted below, because collapsing into either neighbour
+// is a real, separately-tempting mistake.
+test("claims with no source supplied -> not_checked, never could_not_check and never no_issue", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.ENGINE_URL = "http://engine.test";
+  process.env.ENGINE_API_KEY = "test-key";
+
+  globalThis.fetch = (async (...args: FetchArgs) => {
+    const [input, init] = args;
+    const path = pathOf(input);
+    const method = init?.method ?? "GET";
+
+    if (path === "/v1/extract-claims" && method === "POST") {
+      return jsonResponse(200, {
+        claims: [{ ordinal: 0, text: "Tokyo has about 14 million residents.", materiality: true, claimFields: {} }],
+      });
+    }
+    if (path === "/v1/reviews" && method === "POST") {
+      return jsonResponse(201, { review: { id: "11111111-1111-1111-1111-111111111111" } });
+    }
+    if (path.startsWith("/v1/reviews/") && path.endsWith("/claims") && method === "POST") {
+      // The engine resolved the claim fine — there was simply nothing to
+      // check it against. lifecycle_state is `completed`: nothing failed.
+      return jsonResponse(201, {
+        claim: {
+          id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          state: "INDETERMINATE",
+          state_reason: "no_inspectable_evidence",
+          no_source: true,
+          lifecycle_state: "completed",
+          lifecycle_detail: null,
+        },
+        matches: [],
+        rejectedCandidates: [],
+      });
+    }
+    throw new Error(`unexpected fetch: ${method} ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const { reviewAnswer } = await import("./engineClient.js");
+    // No sources at all — the whole point of the case.
+    const result = await reviewAnswer("Tokyo has about 14 million residents.", [], "test-key");
+
+    assert.equal(result.status, "not_checked", `expected not_checked, got ${result.status}`);
+    assert.notEqual(
+      result.status,
+      "could_not_check",
+      "an unsourced claim is not a failure — that conflation is what made a working Notary look broken",
+    );
+    assert.notEqual(
+      result.status,
+      "no_issue",
+      "canonical § 5.7: no_source must never be rendered as 'fine'",
+    );
+    assert.equal(result.findings, undefined, "not_checked must carry no findings — there is nothing to surface");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

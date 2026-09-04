@@ -1145,6 +1145,20 @@ async function runAdvanceForClaim(
   client?: JudgeClient,
 ): Promise<AdvanceSuggestion[]> {
   try {
+    // Org feature flag (migration 0014), checked FIRST — before the
+    // user_request short-circuit, before any budget query, and before any
+    // client is constructed. Same ordering discipline as Track 2/Challenge's
+    // own flag read: a disabled org must cost exactly zero extra DeepSeek
+    // calls, not one whose result is then discarded.
+    //
+    // Deliberately writes no advance_invocation row. A 'skipped' row means
+    // "Advance was eligible to run and short-circuited on its own policy" —
+    // an org that has the feature turned off was never eligible at all, and
+    // recording one row per claim per disabled org would bury the real
+    // policy short-circuits in noise.
+    const flag = await db.query("SELECT advance_enabled FROM organization WHERE id = $1", [input.organizationId]);
+    if (flag.rows[0]?.advance_enabled !== true) return [];
+
     const userRequest = input.userRequest?.trim() ?? "";
     if (userRequest.length === 0) {
       // Recorded as a 'skipped' row (not silence) so "Advance never ran for

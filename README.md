@@ -1,6 +1,6 @@
 # Notary Check
 
-Phase 0 scaffolding for Notary Check — Notary's Tier 1, CHECK-tier product. An MCP App that shows an in-chat evidence-review card in Claude. This phase is **mocked data only**: no real claim extraction, no evidence retrieval, no database, no auth, no billing. See the build plan (`Notary — Tier 1 Build and Operating Plan`, § Phase 0 build guide) for the full spec this scaffolding follows.
+Phase 0 scaffolding for Notary Check — Notary's Tier 1, CHECK-tier product. An MCP App that shows an in-chat evidence-review card in Claude. This phase is **mocked data only**: no real claim extraction, no evidence retrieval, no database, no auth, no billing. **This description is historical** — Phase 0's mocked scaffolding has since been replaced by a real engine, judge, Clerk auth, and a redesigned card. For current state see [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md); for what's next see [`docs/build/whats-left.md`](docs/build/whats-left.md). The original Phase 0 spec is archived at [`docs/build/phase-0-and-challenge-archive.md`](docs/build/phase-0-and-challenge-archive.md).
 
 Separate, clean codebase — independent of the unrelated `notary-platform` repo.
 

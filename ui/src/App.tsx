@@ -71,7 +71,7 @@ type AdvanceSuggestion = {
 };
 
 type ReviewCardData = {
-  status: "no_issue" | "issue_found" | "could_not_check";
+  status: "no_issue" | "issue_found" | "could_not_check" | "not_checked";
   scope: string;
   claim?: string;
   findings?: Array<{
@@ -329,6 +329,17 @@ export default function App() {
 
   if (data.status === "no_issue") {
     return <div className="notary-card notary-quiet">Notary: no issue found.</div>;
+  }
+
+  // `not_checked` renders NOTHING. The procedure never ran — no source was
+  // supplied, or the source was out of the declared document class — so there
+  // is no finding to draw, and announcing "no source!" beside every unsourced
+  // sentence is exactly the noise this card exists to avoid. The state is
+  // still carried explicitly in the payload and the model-visible text, so
+  // silence here is a display choice, not a lost distinction (see the state
+  // table in docs/build/tier-1-build-and-operating-plan.md).
+  if (data.status === "not_checked") {
+    return null;
   }
 
   if (data.status === "could_not_check") {

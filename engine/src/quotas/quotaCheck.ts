@@ -42,10 +42,18 @@ function readCentsEnv(name: string, fallback: number): number {
 
 export type QuotaResult = { allowed: true } | { allowed: false; reason: string };
 
-/** Sums the current calendar month's usage_event cost for one org, in cents. */
+/**
+ * Sums the current calendar month's usage_event cost for one org, in CENTS.
+ *
+ * Sums the millicent column and divides, rather than summing the cent column:
+ * the cent column rounds a typical ~0.134-cent call to 0, so summing it
+ * returned 0 for essentially all real traffic and this gate never fired
+ * (migration 0015). Summing at millicent resolution and converting once at the
+ * end also avoids per-row rounding error.
+ */
 export async function organizationMonthCostCents(organizationId: string, db: pg.Pool): Promise<number> {
   const result = await db.query(
-    `SELECT COALESCE(SUM(estimated_cost_cents), 0) AS total
+    `SELECT COALESCE(SUM(estimated_cost_millicents), 0) / 1000.0 AS total
      FROM usage_event
      WHERE organization_id = $1
        AND created_at >= date_trunc('month', now())
@@ -55,10 +63,10 @@ export async function organizationMonthCostCents(organizationId: string, db: pg.
   return Number(result.rows[0].total);
 }
 
-/** Sums ALL orgs' usage_event cost for the current calendar month, in cents. */
+/** Sums ALL orgs' usage_event cost for the current calendar month, in CENTS. See above for why this reads the millicent column. */
 export async function globalMonthCostCents(db: pg.Pool): Promise<number> {
   const result = await db.query(
-    `SELECT COALESCE(SUM(estimated_cost_cents), 0) AS total
+    `SELECT COALESCE(SUM(estimated_cost_millicents), 0) / 1000.0 AS total
      FROM usage_event
      WHERE created_at >= date_trunc('month', now())
        AND created_at < date_trunc('month', now()) + interval '1 month'`,

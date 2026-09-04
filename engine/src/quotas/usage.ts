@@ -47,14 +47,43 @@ export interface UsageEventShape {
   outputTokens: number;
   fetchBytes: number;
   estimatedCostCents: number;
+  /**
+   * The same cost at 1000x resolution. This is the field the quota gates
+   * actually sum — `estimatedCostCents` rounds a typical ~0.134-cent call to
+   * 0, which made both spend caps sum zeros and never bite (migration 0015).
+   * Keep both: cents stays the human-readable figure, millicents is the one
+   * that enforces.
+   */
+  estimatedCostMillicents: number;
 }
 
-/** Cents from a DeepSeek token count, via the constants above. */
-export function estimateDeepSeekCostCents(inputTokens: number, outputTokens: number): number {
-  const usd =
+/** US dollars from a DeepSeek token count, via the constants above. Unrounded. */
+function deepSeekCostUsd(inputTokens: number, outputTokens: number): number {
+  return (
     (inputTokens / 1_000_000) * DEEPSEEK_INPUT_PRICE_USD_PER_MTOK +
-    (outputTokens / 1_000_000) * DEEPSEEK_OUTPUT_PRICE_USD_PER_MTOK;
-  return Math.round(usd * 100);
+    (outputTokens / 1_000_000) * DEEPSEEK_OUTPUT_PRICE_USD_PER_MTOK
+  );
+}
+
+/**
+ * Cents, rounded. FOR DISPLAY ONLY — do not sum these to enforce a cap.
+ *
+ * A typical call in this system costs about $0.00134 = 0.134 cents, which
+ * rounds to 0 here. That is not a precision nit: both spend gates used to sum
+ * this value, so they summed zeros and never fired. Use
+ * `estimateDeepSeekCostMillicents` for anything that enforces (migration 0015).
+ */
+export function estimateDeepSeekCostCents(inputTokens: number, outputTokens: number): number {
+  return Math.round(deepSeekCostUsd(inputTokens, outputTokens) * 100);
+}
+
+/**
+ * Millicents (1/1000 of a cent) — the enforcing unit. A typical call lands
+ * around 134 rather than 0, so a month of real traffic actually accumulates
+ * toward the per-org limit and the global provider cap.
+ */
+export function estimateDeepSeekCostMillicents(inputTokens: number, outputTokens: number): number {
+  return Math.round(deepSeekCostUsd(inputTokens, outputTokens) * 100_000);
 }
 
 export interface JudgeUsageMeta {
@@ -79,6 +108,7 @@ export function usageEventFromJudgeCall(record: JudgeCallRecord, meta: JudgeUsag
     outputTokens,
     fetchBytes: 0,
     estimatedCostCents: estimateDeepSeekCostCents(inputTokens, outputTokens),
+    estimatedCostMillicents: estimateDeepSeekCostMillicents(inputTokens, outputTokens),
   };
 }
 
@@ -106,6 +136,7 @@ export function usageEventFromExtractionCall(record: JudgeCallRecord, meta: Judg
     outputTokens,
     fetchBytes: 0,
     estimatedCostCents: estimateDeepSeekCostCents(inputTokens, outputTokens),
+    estimatedCostMillicents: estimateDeepSeekCostMillicents(inputTokens, outputTokens),
   };
 }
 
@@ -132,6 +163,7 @@ export function usageEventFromChallengeCall(record: JudgeCallRecord, meta: Judge
     outputTokens,
     fetchBytes: 0,
     estimatedCostCents: estimateDeepSeekCostCents(inputTokens, outputTokens),
+    estimatedCostMillicents: estimateDeepSeekCostMillicents(inputTokens, outputTokens),
   };
 }
 
@@ -157,6 +189,7 @@ export function usageEventFromAdvanceCall(record: JudgeCallRecord, meta: JudgeUs
     outputTokens,
     fetchBytes: 0,
     estimatedCostCents: estimateDeepSeekCostCents(inputTokens, outputTokens),
+    estimatedCostMillicents: estimateDeepSeekCostMillicents(inputTokens, outputTokens),
   };
 }
 
@@ -165,7 +198,7 @@ export async function insertUsageEvent(db: pg.Pool, event: UsageEventShape): Pro
   const result = await db.query(
     `INSERT INTO usage_event (
        organization_id, user_id, review_id, event_type,
-       input_tokens, output_tokens, fetch_bytes, estimated_cost_cents
+       input_tokens, output_tokens, fetch_bytes, estimated_cost_millicents
      )
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
@@ -177,7 +210,10 @@ export async function insertUsageEvent(db: pg.Pool, event: UsageEventShape): Pro
       event.inputTokens,
       event.outputTokens,
       event.fetchBytes,
-      event.estimatedCostCents,
+      // estimated_cost_cents is GENERATED ALWAYS from this (migration 0015)
+      // and cannot be written directly — that is what stops a caller from
+      // silently under-metering by setting only the rounded cent value.
+      event.estimatedCostMillicents,
     ],
   );
   return result.rows[0].id as string;
