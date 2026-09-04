@@ -259,10 +259,22 @@ function DetailBlock({
           line never carries a number and this does. */}
       {scope !== undefined && (
         <div className="notary-scope">
+          {/* Describes what the ANSWER IS, not what Notary lacked.
+              "none had a source to check against" was accurate and read as a
+              deficiency — it framed answering from knowledge, which is a normal
+              and legitimate mode, as a failure of the answer or of Notary.
+              "Answered from Claude's own knowledge" is the same fact stated as
+              what happened.
+              It must still not read as approval: canonical § 5.7 forbids
+              rendering no_source as "fine". Naming the mode does not endorse
+              it — it says where the answer came from and leaves the judgement
+              to the reader. */}
           {scope.claims} claim{scope.claims === 1 ? "" : "s"} ·{" "}
           {scope.checkable === 0
-            ? "none had a source to check against"
-            : `${scope.checkable} checked against ${scope.sources} source${scope.sources === 1 ? "" : "s"}`}
+            ? "answered from Claude's own knowledge, not from a supplied source"
+            : scope.checkable === scope.claims
+              ? `checked against ${scope.sources} supplied source${scope.sources === 1 ? "" : "s"}`
+              : `${scope.checkable} checked against ${scope.sources} supplied source${scope.sources === 1 ? "" : "s"}, the rest answered from knowledge`}
         </div>
       )}
 
@@ -277,7 +289,7 @@ function DetailBlock({
       {gaps.length > 0 && (
         <ul className="notary-gaps">
           {gaps.map((g) => (
-            <li key={g.missing + g.unblocks}>Not checked: {g.unblocks}</li>
+            <li key={g.missing + g.unblocks}>Would let Notary {g.unblocks}</li>
           ))}
         </ul>
       )}

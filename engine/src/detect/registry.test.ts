@@ -47,14 +47,20 @@ test("a gap and a finding can coexist — they are different outputs", () => {
       ],
     }),
   );
-  assert.equal(r.gaps.length, 1, "self_report wants execution output");
+  // self_report wants execution output; sourceGap wants a source for each of
+  // the two claims. Different detectors, different missing inputs, all facts.
+  assert.ok(r.gaps.some((g) => g.missing === "execution_result"), "self_report wants execution output");
+  assert.ok(r.gaps.some((g) => g.missing === "addressable_source"), "sourceGap wants a source");
   assert.equal(r.findings.length, 1, "self_contradiction still fires independently");
 });
 
 test("every detector reports an outcome, including not_applicable", () => {
   const r = runDetectors(input({ answerText: "A short neutral statement with nothing to check." }));
-  assert.equal(r.outcomes.length, 2, "one row per registered detector, always");
-  assert.ok(r.outcomes.every((o) => o.status === "not_applicable"));
+  assert.equal(r.outcomes.length, 3, "one row per registered detector, always");
+  assert.ok(
+    r.outcomes.every((o) => o.status === "not_applicable"),
+    "no claims and no tool output means nothing is applicable — and nothing to ask for either",
+  );
 });
 
 test("no finding carries anything that could be read as a verdict", () => {

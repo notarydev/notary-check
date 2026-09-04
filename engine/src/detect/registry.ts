@@ -26,6 +26,7 @@
 
 import { logEvent } from "../observability/log.ts";
 import { selfContradictionDetector } from "./selfContradiction.ts";
+import { sourceGapDetector } from "./sourceGap.ts";
 import { selfReportDetector } from "./selfReport.ts";
 import type { Detector, DetectorInput, Finding, Gap } from "./types.ts";
 
@@ -49,11 +50,15 @@ import type { Detector, DetectorInput, Finding, Gap } from "./types.ts";
  *   overreach     needs an ordered modality vocabulary that does not exist,
  *                 and is gated on sources anyway.
  *
- * source_verify is not here because it is not a peer: it is the only detector
- * that writes `claim.state`, it runs inside the existing verification pipeline,
- * and it produces a verification state rather than a Finding.
+ * source_verify's CHECKING half is still not here — it is the only detector
+ * that writes `claim.state`, it runs inside the verification pipeline, and it
+ * produces a state rather than a Finding. What IS registered is sourceGap: the
+ * half that reports "this claim had nothing to check against", which is a fact
+ * the bank can carry and the checking half had no way to express. Without it
+ * `Gap`'s `addressable_source` kind was declared and never emitted, so Notary
+ * never once asked for a source.
  */
-const DETECTORS: readonly Detector[] = [selfReportDetector, selfContradictionDetector];
+const DETECTORS: readonly Detector[] = [selfReportDetector, selfContradictionDetector, sourceGapDetector];
 
 export interface DetectionResult {
   findings: Finding[];
