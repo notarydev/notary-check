@@ -161,13 +161,29 @@ test(
     const orgId = await createOrganization(pool);
     try {
       process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "100"; // $1.00 org ceiling
-      process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = "1000";
 
       await pool.query(
         `INSERT INTO usage_event (organization_id, event_type, input_tokens, output_tokens, fetch_bytes, estimated_cost_millicents)
          VALUES ($1, 'judge_call', 0, 0, 0, 40000)`,
         [orgId],
       );
+
+      // The global cap is set RELATIVE to what the database already holds.
+      //
+      // It used to be the literal "1000", which quietly assumed the whole
+      // usage_event table summed to under $10 for the current month. That is
+      // true of a fresh database and false of one that has been tested against
+      // for a while — the local DB had accumulated 5,144 rows and ~1114 cents,
+      // so this test failed deterministically rather than flakily, and it had
+      // been invisible because the whole file was silently skipping.
+      //
+      // Reading the real sum keeps the assertion about the thing it is meant to
+      // be about: the ORG limit, with the global cap deliberately not binding.
+      // The same reasoning as the sibling test above, which already refuses to
+      // assume an exact global total.
+      const globalNow = await globalMonthCostCents(pool);
+      process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = String(globalNow + 1000);
+
       // 40 < 100 → allowed.
       const result = await checkQuota(orgId, pool);
       assert.deepEqual(result, { allowed: true });
@@ -186,7 +202,11 @@ test(
     const orgId = await createOrganization(pool);
     try {
       process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "100";
-      process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = "100000"; // global not the constraint here
+      // Relative, not the literal 100000 this used to be: a fixed "large"
+      // number is a silent assumption that the whole usage_event table stays
+      // under it forever, and the table only grows. Making it relative keeps
+      // the test about the ORG limit, which is what it is named for.
+      process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = String((await globalMonthCostCents(pool)) + 100000);
 
       // Sum exactly at the limit → NOT allowed (>= is the hard cutoff).
       await pool.query(
@@ -243,7 +263,9 @@ test(
       assert.deepEqual(blocked, { allowed: false, reason: "global_spend_cap_exceeded" });
 
       // And with the cap high again, both orgs are allowed.
-      process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = "100000";
+      // Relative for the same reason as above — a fixed ceiling assumes a
+      // database that never accumulates.
+      process.env.NOTARY_GLOBAL_SPEND_CAP_CENTS = String((await globalMonthCostCents(pool)) + 100000);
       assert.deepEqual(await checkQuota(innocentOrg, pool), { allowed: true });
       assert.deepEqual(await checkQuota(burnerOrg, pool), { allowed: true });
     } finally {

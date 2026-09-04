@@ -125,6 +125,15 @@ network timing — a different one each time, passing in isolation. A single red
 live-judge test is very likely this, not a regression. Re-run before
 investigating; if it reproduces on the same test twice, it is real.
 
+**Not everything red is that flake, and the quota tests are the counter-example.**
+`quotaCheck.test.ts` used to hardcode a global spend cap ("under $10 across the
+whole table") which is true of a fresh database and false of one that has been
+tested against — the local DB reached 5,144 usage rows and ~1114 cents, at
+which point the test failed on every single run. It looked like a flake and was
+not one. The caps are now set relative to the database's actual sum. If a
+failure reproduces identically twice, it is real regardless of which file it is
+in.
+
 ---
 
 ## Things that are true and easy to get wrong
