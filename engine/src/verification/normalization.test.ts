@@ -96,3 +96,65 @@ test("compareValueUnit: a claimed unit with no evidence unit at all is a hard mi
   const result = compareValueUnit({ value: "17", unit: "%" }, { value: "17" });
   assert.equal(result.unitStatus, "mismatched");
 });
+
+// ---------------------------------------------------------------------------
+// Optional corporate suffix — locked case 2's actual root cause, 2026-09-03.
+//
+// The claim side and evidence side are extracted from different texts by
+// different prompts and legitimately disagree on how much of a name to
+// include ("Acme" vs "Acme Corp"). Both are faithful; neither is wrong. The
+// comparator has to bridge them or the system fails whenever a source uses a
+// fuller legal name than the answer does — which is the normal case.
+//
+// The negative cases below matter more than the positive one. This is the
+// only entity rule that can make unequal strings match, so each boundary it
+// must NOT cross is pinned explicitly.
+// ---------------------------------------------------------------------------
+
+test("compareField(entity) matches a bare name against the same name with a corporate suffix", () => {
+  assert.equal(compareField("entity", "Acme", "Acme Corp").status, "matched");
+  assert.equal(compareField("entity", "Acme Corp", "Acme").status, "matched");
+  assert.equal(compareField("entity", "Apple", "Apple Inc.").status, "matched");
+  assert.equal(compareField("entity", "Acme", "Acme Corporation").status, "matched");
+});
+
+test("compareField(entity) records the rule that fired, so a match is never silent", () => {
+  const c = compareField("entity", "Acme", "Acme Corp");
+  assert.equal(c.claimed.ruleId, NORMALIZATION_RULES.ENTITY_OPTIONAL_SUFFIX_V1);
+  assert.equal(c.evidence.ruleId, NORMALIZATION_RULES.ENTITY_OPTIONAL_SUFFIX_V1);
+});
+
+test("compareField(entity) still separates two DIFFERENT suffixes — the dangerous case", () => {
+  // "Acme Corp" and "Acme Inc" can be genuinely different legal entities.
+  // Both sides carry a suffix, so neither is stripped.
+  assert.equal(compareField("entity", "Acme Corp", "Acme Inc").status, "mismatched");
+  assert.equal(compareField("entity", "Acme LLC", "Acme Ltd").status, "mismatched");
+});
+
+test("compareField(entity) does not strip qualifiers that are not corporate suffixes", () => {
+  assert.equal(compareField("entity", "Acme", "Acme Holdings").status, "mismatched");
+  assert.equal(compareField("entity", "Acme", "Acme US").status, "mismatched");
+  assert.equal(compareField("entity", "Acme", "Acme Europe").status, "mismatched");
+});
+
+test("compareField(entity) leaves locked case 6 (wrong entity) untouched", () => {
+  // Neither side carries a suffix; nothing is stripped; the flagship
+  // wrong-entity distractor still fails, which is the whole point of the
+  // applicability gate.
+  assert.equal(compareField("entity", "Acme", "market").status, "mismatched");
+  assert.equal(compareField("entity", "Acme Corp", "market").status, "mismatched");
+});
+
+test("compareField(entity) never reduces a name to nothing", () => {
+  // A bare suffix is not an entity. "Corp" must not become "" and match
+  // some other empty base.
+  assert.equal(compareField("entity", "Corp", "Acme").status, "mismatched");
+  assert.equal(compareField("entity", "Inc", "Corp").status, "mismatched");
+});
+
+test("the optional-suffix rule applies to entity only, not to other string fields", () => {
+  // metric/scope/modality must stay strict — "gross revenue" never equals
+  // "revenue" (§ Verification pipeline step 5).
+  assert.equal(compareField("metric", "revenue", "revenue corp").status, "mismatched");
+  assert.equal(compareField("scope", "retail", "retail inc").status, "mismatched");
+});

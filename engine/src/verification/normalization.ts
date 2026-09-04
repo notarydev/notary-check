@@ -17,6 +17,11 @@ import type { ApplicabilityField, ValueUnit } from "./applicability.ts";
 export const NORMALIZATION_RULES = {
   SAFE_SYNTAX_V1: "safe-syntax-v1",
   ENTITY_SUFFIX_V1: "entity-corporate-suffix-v1",
+  /** Bridges a present-vs-absent corporate suffix ("Acme" ~ "Acme Corp").
+   *  Only fires when exactly ONE side carries a known suffix — see
+   *  compareEntityAllowingOptionalSuffix for why that asymmetry is the
+   *  safety property, not an implementation detail. */
+  ENTITY_OPTIONAL_SUFFIX_V1: "entity-optional-corporate-suffix-v1",
   PERIOD_FISCAL_LABEL_V1: "period-fiscal-label-v1",
   VALUE_PERCENT_V1: "value-percent-v1",
   VALUE_NUMERIC_SEPARATOR_V1: "value-numeric-separator-v1",
@@ -253,6 +258,70 @@ function normalizeStringField(field: Exclude<ApplicabilityField, "valueUnit">, v
   return normalizer ? normalizer(value) : normalizeSafeSyntax(value);
 }
 
+/**
+ * Entity comparison across a PRESENT-vs-ABSENT corporate suffix.
+ *
+ * WHY THIS EXISTS — locked case 2, root-caused 2026-09-03.
+ *
+ * The claim side and the evidence side are extracted by different prompts from
+ * different texts, and they legitimately disagree on how much of a company's
+ * name to include. An answer says "Acme's revenue grew 17%"; the filing says
+ * "Acme Corp FY25 results". Both extractions are faithful. Neither is wrong.
+ *
+ * But `normalizeEntity` canonicalizes the SPELLING of a suffix ("Corporation"
+ * -> "corp"), not its PRESENCE — so "acme" and "acme corp" stayed different
+ * strings, entity landed in `mismatched`, the whole candidate was ruled
+ * inapplicable, and it was dropped before the state machine ever saw it. The
+ * live symptom was UNSUPPORTED where CONTRADICTED was correct, on the
+ * project's own flagship example. Reproduced 3/3 with the judge extracting
+ * every field correctly, including "declined" -> decrease.
+ *
+ * This is the normal case, not an edge case: answers use short names and
+ * primary sources use full legal names ("Apple" vs "Apple Inc.").
+ *
+ * THE RULE IS DELIBERATELY ASYMMETRIC, and the asymmetry is the safety:
+ *
+ *   - neither side has a known suffix -> compare as-is.
+ *     "market" vs "Acme" still mismatches (locked case 6 — the flagship
+ *     wrong-entity distractor — is unaffected).
+ *   - BOTH sides have a known suffix  -> compare in full, suffix included.
+ *     "Acme Corp" vs "Acme Inc" still MISMATCHES. Those can be genuinely
+ *     different legal entities and this function must not merge them.
+ *   - exactly ONE side has a known suffix -> compare base names only.
+ *     "Acme" == "Acme Corp". This is the only new match, and it is the one
+ *     the failure was actually about.
+ *
+ * Still never a similarity or alias resolution: the suffix must be an exact
+ * token in the existing CORPORATE_SUFFIXES table. "Acme Holdings" and
+ * "Acme US" keep their qualifiers and continue to mismatch a bare "Acme",
+ * because "holdings" and "us" are not corporate suffixes.
+ */
+function compareEntityAllowingOptionalSuffix(
+  claimed: NormalizedValue,
+  evidence: NormalizedValue,
+): { status: "matched" | "mismatched"; ruleApplied: boolean } {
+  if (claimed.normalized === evidence.normalized) return { status: "matched", ruleApplied: false };
+
+  const split = (normalized: string): { base: string; hasSuffix: boolean } => {
+    const tokens = normalized.split(" ").filter(Boolean);
+    if (tokens.length < 2) return { base: normalized, hasSuffix: false };
+    const last = tokens[tokens.length - 1];
+    // Compare against the CANONICAL suffix values, because `normalized` has
+    // already been through canonicalizeEntitySuffix ("Corporation" -> "corp").
+    const isSuffix = Object.values(CORPORATE_SUFFIXES).includes(last);
+    return isSuffix ? { base: tokens.slice(0, -1).join(" "), hasSuffix: true } : { base: normalized, hasSuffix: false };
+  };
+
+  const c = split(claimed.normalized);
+  const e = split(evidence.normalized);
+
+  // Exactly one side carries a suffix — and only then.
+  if (c.hasSuffix === e.hasSuffix) return { status: "mismatched", ruleApplied: false };
+  if (c.base.length === 0 || e.base.length === 0) return { status: "mismatched", ruleApplied: false };
+
+  return c.base === e.base ? { status: "matched", ruleApplied: true } : { status: "mismatched", ruleApplied: false };
+}
+
 export function compareField(
   field: Exclude<ApplicabilityField, "valueUnit">,
   claimedRaw: string,
@@ -260,6 +329,23 @@ export function compareField(
 ): FieldComparison {
   const claimed = normalizeStringField(field, claimedRaw);
   const evidence = normalizeStringField(field, evidenceRaw);
+
+  if (field === "entity") {
+    const { status, ruleApplied } = compareEntityAllowingOptionalSuffix(claimed, evidence);
+    // Record the rule on both sides when it fired, so a stored EvidenceMatch
+    // shows WHY two differently-written names were treated as one entity.
+    // Auditability is the point: this is the one entity rule that can make
+    // unequal strings match, so it must never be invisible in the record.
+    if (ruleApplied) {
+      return {
+        status,
+        claimed: { ...claimed, ruleId: NORMALIZATION_RULES.ENTITY_OPTIONAL_SUFFIX_V1 },
+        evidence: { ...evidence, ruleId: NORMALIZATION_RULES.ENTITY_OPTIONAL_SUFFIX_V1 },
+      };
+    }
+    return { status, claimed, evidence };
+  }
+
   return {
     status: claimed.normalized === evidence.normalized ? "matched" : "mismatched",
     claimed,

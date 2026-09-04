@@ -357,6 +357,49 @@ function toCardRejectedCandidates(
 // `text` below is now always the fixed, human-readable copy; the code itself is
 // preserved in `why` (already a stable, separate field for exactly this) for
 // logs/telemetry, never for display.
+/**
+ * How many claims may be in flight at once. Claims are capped at 10 per
+ * review (§ Cost-control rules), so this bounds a worst-case review to three
+ * waves rather than ten simultaneous judge conversations — enough parallelism
+ * to collapse the latency, not enough to stampede the provider or trip a rate
+ * limit. Deliberately a small constant, not tuned: the win is going from
+ * sequential to concurrent at all, and a larger number mostly buys risk.
+ */
+const CLAIM_CONCURRENCY = 4;
+
+/**
+ * Runs `fn` over `items` with at most `limit` in flight, returning results in
+ * INPUT ORDER regardless of completion order.
+ *
+ * Order preservation is the whole reason this exists rather than a plain
+ * `Promise.all` over a sliced array: callers here fill first-come caps from
+ * the results, so a result array shuffled by network timing would make the
+ * output non-deterministic for identical input.
+ *
+ * Rejections propagate, matching `Promise.all`. Every caller in this module
+ * passes a function that already degrades its own failures into a value
+ * (`submitClaim` returns `{ok:false}` rather than throwing), so this path is
+ * not load-bearing for error handling — but it must not silently swallow a
+ * genuine bug either.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 function findingFor(
   result: ClaimResult["claim"],
   claimText: string,
@@ -490,8 +533,31 @@ export async function reviewAnswer(
     const challenges: ChallengeItem[] = [];
     const advanceSuggestions: AdvanceSuggestion[] = [];
 
-    for (const claim of materialClaims) {
-      const outcome = await submitClaim(reviewId, claim, evidenceIds, apiKey, userRequest);
+    // Claims are submitted CONCURRENTLY but accumulated IN ORDER, and the
+    // split matters.
+    //
+    // Concurrency: each submitClaim is a network round trip that internally
+    // runs a judge call and an Advance call, and claims are fully independent
+    // — nothing about claim 2 depends on claim 1. Serially, a five-claim
+    // answer was five sequential round trips while the MCP tool call blocked
+    // Claude's turn, so the user watched a spinner for the sum rather than
+    // the max. Bounded rather than unbounded so a 10-claim review (the § Cost
+    // control rules cap) cannot open ten simultaneous judge conversations.
+    //
+    // Order: the caps below (4 challenges, 2 Advance suggestions per
+    // invocation) are FIRST-COME. Accumulating them as promises resolve would
+    // let network timing decide which claim's suggestions survive — the same
+    // answer would produce different cards on different runs, and a
+    // reproduction would stop being a reproduction. So the fan-out only
+    // gathers results; the loop that fills the caps runs afterwards, strictly
+    // in claim order, exactly as it did when this was serial.
+    const outcomes = await mapWithConcurrency(materialClaims, CLAIM_CONCURRENCY, (claim) =>
+      submitClaim(reviewId, claim, evidenceIds, apiKey, userRequest),
+    );
+
+    for (let i = 0; i < materialClaims.length; i++) {
+      const claim = materialClaims[i];
+      const outcome = outcomes[i];
       // Bug fix: a failed/undefined submission used to `continue` here with no
       // finding recorded at all — silently dropping the claim from both
       // issueFindings and uncheckedFindings, so a mixed review (one claim

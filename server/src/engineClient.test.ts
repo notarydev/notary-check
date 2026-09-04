@@ -307,3 +307,101 @@ test("claims with no source supplied -> not_checked, never could_not_check and n
     globalThis.fetch = originalFetch;
   }
 });
+
+// Regression coverage for the parallelised claim loop (E2, 2026-09-03).
+//
+// Two properties, and the second is the one a naive Promise.all breaks.
+//
+//   1. Claims are submitted CONCURRENTLY — a five-claim review must not take
+//      five sequential round trips while the MCP tool call blocks Claude's
+//      turn.
+//   2. Results are accumulated IN CLAIM ORDER regardless of which network
+//      call returns first. The challenge/Advance caps are first-come, so if
+//      accumulation followed completion order, identical input would produce
+//      different cards run to run and a reproduction would stop reproducing.
+//
+// The mock below makes the LAST claim the fastest and the FIRST the slowest,
+// so completion order is the exact reverse of claim order. Anything that
+// accumulates by completion would visibly mis-attribute.
+test("claims are submitted concurrently but findings stay in claim order", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.ENGINE_URL = "http://engine.test";
+  process.env.ENGINE_API_KEY = "test-key";
+
+  const DELAYS = [120, 90, 60, 30, 10]; // claim 1 slowest, claim 5 fastest
+  let inFlight = 0;
+  let maxInFlight = 0;
+
+  globalThis.fetch = (async (...args: FetchArgs) => {
+    const [input, init] = args;
+    const path = pathOf(input);
+    const method = init?.method ?? "GET";
+
+    if (path === "/v1/extract-claims" && method === "POST") {
+      return jsonResponse(200, {
+        claims: DELAYS.map((_, i) => ({
+          ordinal: i,
+          text: `Claim ${i + 1} is true.`,
+          materiality: true,
+          claimFields: {},
+        })),
+      });
+    }
+    if (path === "/v1/reviews" && method === "POST") {
+      return jsonResponse(201, { review: { id: "11111111-1111-1111-1111-111111111111" } });
+    }
+    if (path.startsWith("/v1/reviews/") && path.endsWith("/claims") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { text: string };
+      const n = Number(/Claim (\d+)/.exec(body.text)?.[1] ?? 0);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, DELAYS[n - 1]));
+      inFlight -= 1;
+      // Every claim comes back CONTRADICTED so each produces a finding whose
+      // label is its own claim text — that label is what proves attribution.
+      return jsonResponse(201, {
+        claim: {
+          id: `aaaaaaaa-aaaa-aaaa-aaaa-00000000000${n}`,
+          state: "CONTRADICTED",
+          state_reason: "contradicting_applicable_relation",
+          no_source: false,
+          lifecycle_state: "completed",
+          lifecycle_detail: null,
+        },
+        matches: [],
+        rejectedCandidates: [],
+      });
+    }
+    throw new Error(`unexpected fetch: ${method} ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const { reviewAnswer } = await import("./engineClient.js");
+    const started = Date.now();
+    const result = await reviewAnswer(
+      DELAYS.map((_, i) => `Claim ${i + 1} is true.`).join(" "),
+      [],
+      "test-key",
+    );
+    const elapsed = Date.now() - started;
+
+    assert.equal(result.status, "issue_found");
+    assert.equal(result.findings?.length, 5, "every claim must produce a finding");
+
+    // ORDER: findings must follow claim order, not completion order. Under a
+    // completion-ordered implementation this array would read 5,4,3,2,1.
+    assert.deepEqual(
+      result.findings?.map((f) => f.label),
+      ["Claim 1 is true.", "Claim 2 is true.", "Claim 3 is true.", "Claim 4 is true.", "Claim 5 is true."],
+      "findings must be in claim order regardless of which request finished first",
+    );
+
+    // CONCURRENCY: serial would be 120+90+60+30+10 = 310ms. Generous ceiling
+    // so this does not turn into a flaky timing test on a loaded machine — it
+    // only needs to distinguish "concurrent" from "one at a time".
+    assert.ok(maxInFlight > 1, `expected overlapping requests, saw max ${maxInFlight} in flight`);
+    assert.ok(elapsed < 280, `expected concurrency to beat the 310ms serial sum, took ${elapsed}ms`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
