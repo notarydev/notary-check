@@ -15,7 +15,8 @@ constraint shapes most of the design — see `docs/` below.
 | Find your way around the code | [`MODULES.md`](MODULES.md) — what each directory owns and what it may import |
 | Know what's actually live | [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md) |
 | Deploy, or find the infra/domains/keys | [`OPERATIONS.md`](OPERATIONS.md) |
-| Know what's next | [`docs/build/whats-left.md`](docs/build/whats-left.md) |
+| Know what's left to a real SaaS | [`ROADMAP.md`](ROADMAP.md) — **the index** |
+| Know the detail behind a roadmap item | [`docs/build/whats-left.md`](docs/build/whats-left.md) |
 | Know the rules code is held to | [`docs/build/tier-1-build-and-operating-plan.md`](docs/build/tier-1-build-and-operating-plan.md) |
 | See status at a glance | [`PROGRESS.md`](PROGRESS.md) |
 

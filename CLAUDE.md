@@ -48,6 +48,8 @@ after it.
 - **Infrastructure, domains and how to deploy**: [`OPERATIONS.md`](OPERATIONS.md)
   — also names the three OTHER codebases (the marketing site is a separate repo
   and a separate host) and records that there is no sign-up flow yet.
+- **What's left, and which status file does what**: [`ROADMAP.md`](ROADMAP.md)
+  — the milestone view and the index over the other four status documents.
 - **The rules for this docs/ folder**: [`docs/README.md`](docs/README.md)
   — governs what's canonical vs. proposed vs. current-fact, and how to
   update each as you build.
