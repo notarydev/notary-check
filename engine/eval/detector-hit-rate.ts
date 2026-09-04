@@ -112,6 +112,23 @@ function hasOverreachMaterial(t: string): boolean {
   return hasSourceMaterial(t) && /\b(will|always|never|guaranteed|certainly|proves?|definitely|ensures?)\b/i.test(t);
 }
 
+/** self-report: the answer claims something about work it DID, and there is a
+ *  tool result in the same turn to check it against.
+ *
+ *  Added after the first run showed half of all turns have material for
+ *  nothing. In agentic work the evidence is ALREADY PRESENT — Claude ran the
+ *  command, the output is right there — so this needs no external source and
+ *  no new adapter. It is the one place a coding conversation carries its own
+ *  ground truth.
+ *
+ *  Directly supported by the research already in the plan: 91% of visible
+ *  agent resolutions required explicit user correction, and inaccurate
+ *  self-reporting grew as a share of failures over time. */
+function hasSelfReportMaterial(t: string, hadToolResult: boolean): boolean {
+  if (!hadToolResult) return false;
+  return /\b(I(?:'ve| have)? (?:fixed|updated|added|removed|changed|created|deleted|implemented|migrated|refactored)|all (?:tests?|checks?) pass|tests? (?:now )?pass|now works?|is (?:now )?working|successfully|done|complete[d]?|verified|confirmed)\b/i.test(t);
+}
+
 /** drift: needs the answer to reference something established earlier. */
 function hasDriftMaterial(t: string): boolean {
   return /\b(as (we|you) (discussed|decided|agreed|established)|earlier you|previously|we settled on|the constraint (was|is)|you said)\b/i.test(t);
@@ -125,6 +142,7 @@ interface Row {
   requirement: number;
   overreach: number;
   drift: number;
+  selfReport: number;
   any: number;
 }
 
@@ -132,7 +150,8 @@ function main() {
   const maxFiles = Number(process.argv[2] ?? 0) || Infinity;
   const files = walk(ROOT).slice(0, maxFiles);
 
-  const r: Row = { turns: 0, arithmetic: 0, source: 0, selfContra: 0, requirement: 0, overreach: 0, drift: 0, any: 0 };
+  const r: Row = { turns: 0, arithmetic: 0, source: 0, selfContra: 0, requirement: 0, overreach: 0, drift: 0, selfReport: 0, any: 0 };
+  let sawToolResult = false;
   let lastUserText = "";
 
   for (const f of files) {
@@ -146,7 +165,10 @@ function main() {
       }
       const type = d.type;
       if (type === "user") {
-        lastUserText = prose(textOf(d.message ?? d.content ?? ""));
+        const raw = JSON.stringify(d);
+        // A tool result comes back as a user-role message in this format.
+        if (raw.includes("tool_result") || raw.includes("toolUseResult")) sawToolResult = true;
+        else lastUserText = prose(textOf(d.message ?? d.content ?? ""));
         continue;
       }
       if (type !== "assistant") continue;
@@ -164,7 +186,9 @@ function main() {
         requirement: hasCountableRequirement(lastUserText),
         overreach: hasOverreachMaterial(answer),
         drift: hasDriftMaterial(answer),
+        selfReport: hasSelfReportMaterial(answer, sawToolResult),
       };
+      sawToolResult = false;
       for (const [k, v] of Object.entries(hits)) if (v) (r as never as Record<string, number>)[k]++;
       if (Object.values(hits).some(Boolean)) r.any++;
     }
@@ -181,6 +205,7 @@ function main() {
     ["requirement (countable)", r.requirement],
     ["overreach", r.overreach],
     ["drift", r.drift],
+    ["self-report", r.selfReport],
   ];
   rows.sort((a, b) => b[1] - a[1]);
   for (const [name, n] of rows) {
