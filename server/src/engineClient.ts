@@ -494,6 +494,69 @@ export interface InvocationExtras {
   priorContext?: Array<{ kind: string; text: string }>;
 }
 
+/** Wire shape of POST /v1/reviews/:id/detect. Parsed loosely on purpose —
+ *  findings are pass-through data for the card, and an unexpected shape must
+ *  degrade to "no findings" rather than failing the review. */
+interface DetectResponse {
+  findings?: unknown[];
+  gaps?: unknown[];
+  advance_suggestions?: unknown;
+  intent?: { task_mode?: string; defaulted?: boolean } | null;
+}
+
+/**
+ * Runs the detector bank and invocation-level Track 2.
+ *
+ * Called on EVERY review, including one with zero material claims — that is
+ * the ~37% of turns where Track 1 has nothing and Track 2 is the whole
+ * product, and where Advance used to be silent because it rode on the claim
+ * loop.
+ *
+ * Never throws: detection is additive, so a failure here loses findings and
+ * suggestions but must never turn a completed verification into an error.
+ */
+async function runDetection(
+  reviewId: string,
+  answerText: string,
+  claims: ExtractedClaim[],
+  claimIds: Map<number, string>,
+  hasResolvedEvidence: boolean,
+  apiKey: string,
+  extras: InvocationExtras,
+): Promise<DetectResponse> {
+  try {
+    const res = await engineFetch(
+      `/v1/reviews/${reviewId}/detect`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+        answer_text: answerText,
+        user_request: extras.userRequest,
+        explicit_constraints: extras.explicitConstraints,
+        prior_attempts: extras.priorAttempts,
+        execution_results: extras.executionResults,
+        prior_context: extras.priorContext,
+        has_resolved_evidence: hasResolvedEvidence,
+        claims: claims.map((c) => ({
+          // Use the engine's own claim id when the claim was submitted, so a
+          // finding can be tied back to a real row; fall back to the ordinal
+          // for the unsubmitted (zero-claim) path.
+          id: claimIds.get(c.ordinal) ?? `ordinal-${c.ordinal}`,
+          text: c.text,
+          materiality: c.materiality,
+            claim_fields: c.claimFields,
+          })),
+        }),
+      },
+      apiKey,
+    );
+    if (!res.ok) return {};
+    return (await res.json()) as DetectResponse;
+  } catch {
+    return {};
+  }
+}
+
 export async function reviewAnswer(
   answerText: string,
   sourceRefs: SourceRef[],
@@ -515,7 +578,41 @@ export async function reviewAnswer(
   const materialClaims = extraction.claims.filter((c) => c.materiality);
 
   if (materialClaims.length === 0) {
-    return { status: "no_issue", scope: "No material factual claims found to review.", actions: [] };
+    // THE 37% CASE. No material claims means Track 1 has nothing — but the
+    // answer can still contradict itself, still claim work succeeded that the
+    // output disproves, and the user still has a task Track 2 can act on.
+    // This path used to return here blind, which is why Advance produced
+    // nothing on the majority of real turns.
+    //
+    // A review is created purely to carry the invocation; no claims are
+    // submitted, so no verification work or judge cost is incurred.
+    try {
+      const reviewId = await createReview(apiKey);
+      const det = await runDetection(reviewId, answerText, extraction.claims, new Map(), false, apiKey, extras);
+      const suggestions = parseAdvanceSuggestions(det.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
+      const findingCount = Array.isArray(det.findings) ? det.findings.length : 0;
+      if (findingCount > 0) {
+        return {
+          status: "issue_found",
+          scope: `${findingCount} finding${findingCount === 1 ? "" : "s"} in the answer itself.`,
+          findings: (det.findings as Array<{ boundaryText?: string; type?: string }>).map((f) => ({
+            label: String(f.type ?? "finding"),
+            text: String(f.boundaryText ?? ""),
+            why: "internal_conflict",
+          })),
+          actions: ["Dismiss"],
+          advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
+        };
+      }
+      return {
+        status: "no_issue",
+        scope: "No material factual claims found to review.",
+        actions: [],
+        advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
+      };
+    } catch {
+      return { status: "no_issue", scope: "No material factual claims found to review.", actions: [] };
+    }
   }
 
   // Everything from here on talks to the engine over the network. extractClaims
@@ -619,6 +716,43 @@ export async function reviewAnswer(
           ...parseAdvanceSuggestions(outcome.result.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS - advanceSuggestions.length),
         );
       }
+    }
+
+    // Detection runs AFTER the claim loop so findings can reference real claim
+    // ids, and its own Track 2 call supersedes the per-claim one — the
+    // cardinality contract is per INVOCATION, and the per-claim path could
+    // only ever approximate that with a first-come cap.
+    const claimIds = new Map<number, string>();
+    for (let i = 0; i < materialClaims.length; i++) {
+      const o = outcomes[i];
+      if (o.ok) claimIds.set(materialClaims[i].ordinal, o.result.claim.id);
+    }
+    const detection = await runDetection(
+      reviewId,
+      answerText,
+      materialClaims,
+      claimIds,
+      evidenceIds.length > 0,
+      apiKey,
+      extras,
+    );
+    const bankFindings: Finding[] = Array.isArray(detection.findings)
+      ? (detection.findings as Array<{ boundaryText?: string; type?: string }>).map((f) => ({
+          label: String(f.type ?? "finding"),
+          text: String(f.boundaryText ?? ""),
+          why: "internal_conflict",
+        }))
+      : [];
+    // Bank findings join the issue list rather than replacing it: a claim can
+    // be SUPPORTED by its source AND the answer still contradict itself, and
+    // both are true. "Is there a problem?" is no longer readable off
+    // claim.state alone.
+    issueFindings.push(...bankFindings);
+    // Invocation-level Advance replaces whatever the per-claim calls produced.
+    const invocationAdvance = parseAdvanceSuggestions(detection.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
+    if (invocationAdvance.length > 0) {
+      advanceSuggestions.length = 0;
+      advanceSuggestions.push(...invocationAdvance);
     }
 
     const scope = `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;

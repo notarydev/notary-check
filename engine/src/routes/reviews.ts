@@ -7,6 +7,9 @@ import type pg from "pg";
 import { z } from "zod";
 import { verifyApiKey } from "../auth/apiKey.ts";
 import { checkEntitlement } from "../auth/entitlement.ts";
+import { runDetectors } from "../detect/registry.ts";
+import type { ClaimFields } from "../verification/applicability.ts";
+import { runAdvanceForInvocation } from "../advance/runForInvocation.ts";
 import { logEvent } from "../observability/log.ts";
 import { runReview } from "../review/reviewFlow.ts";
 
@@ -29,6 +32,38 @@ const claimFieldsSchema = z.object({
   comparatorBaseline: z.string().optional(),
   modality: z.string().optional(),
   scope: z.string().optional(),
+});
+
+// POST /v1/reviews/:reviewId/detect — the detector bank plus Track 2, run
+// ONCE per invocation rather than per claim.
+//
+// Why its own route rather than folding into /claims: Track 2 must run when
+// there are NO claims at all (~37% of real turns, measured), and the claims
+// route by definition never fires then. Making detection a separate call also
+// keeps it additive — the existing verification path is untouched, so a fault
+// here cannot affect a claim's state.
+//
+// Claims are supplied in the body rather than read back from the database
+// because the zero-claim case has nothing to read, and because the caller
+// already holds them from extraction.
+const detectSchema = z.object({
+  answer_text: z.string(),
+  user_request: z.string().optional(),
+  explicit_constraints: z.array(z.string()).optional(),
+  prior_attempts: z.array(z.string()).optional(),
+  execution_results: z.array(z.object({ ref: z.string(), text: z.string() })).optional(),
+  prior_context: z.array(z.object({ kind: z.string(), text: z.string() })).optional(),
+  claims: z
+    .array(
+      z.object({
+        id: z.string(),
+        text: z.string(),
+        materiality: z.boolean().default(false),
+        claim_fields: claimFieldsSchema.default({}),
+      }),
+    )
+    .default([]),
+  has_resolved_evidence: z.boolean().default(false),
 });
 
 const createClaimSchema = z.object({
@@ -504,6 +539,93 @@ export function reviewsRouter(database: pg.Pool): Router {
         move: s.move,
         prompt: s.prompt,
       })),
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // POST /v1/reviews/:reviewId/detect
+  // ---------------------------------------------------------------------
+  router.post("/v1/reviews/:reviewId/detect", async (req, res) => {
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      return res.status(401).json({ error: "missing Authorization: Bearer <api-key> header" });
+    }
+    const auth = await verifyApiKey(authHeader.slice(BEARER_PREFIX.length).trim(), database);
+    if (!auth.ok) {
+      return res.status(401).json({ error: "invalid or revoked API key" });
+    }
+    const orgId = auth.organizationId;
+
+    // Same entitlement gate as /claims: Track 2 makes a billable model call.
+    // The detector bank itself is free (pure code), so a denied org still gets
+    // its findings — only the suggestion is withheld.
+    const entitlement = await checkEntitlement(orgId, database);
+
+    const parsed = detectSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid request body", details: parsed.error.flatten() });
+    }
+    const { reviewId } = req.params;
+    if (!z.string().uuid().safeParse(reviewId).success) {
+      return res.status(400).json({ error: "reviewId must be a UUID" });
+    }
+    const body = parsed.data;
+
+    // The bank is pure code and cannot throw past runDetectors, which isolates
+    // each detector individually.
+    const detection = runDetectors({
+      answerText: body.answer_text,
+      userRequest: body.user_request,
+      claims: body.claims.map((c) => ({
+        id: c.id,
+        text: c.text,
+        fields: c.claim_fields as ClaimFields,
+        materiality: c.materiality,
+      })),
+      executionResults: body.execution_results,
+      priorContext: body.prior_context,
+      hasResolvedEvidence: body.has_resolved_evidence,
+    });
+
+    let advance: Awaited<ReturnType<typeof runAdvanceForInvocation>> | undefined;
+    if (entitlement.allowed) {
+      // Org feature flag, read before any client work — a disabled org costs
+      // exactly zero model calls, same discipline as runAdvanceForClaim.
+      const flag = await database.query("SELECT advance_enabled FROM organization WHERE id = $1", [orgId]);
+      if (flag.rows[0]?.advance_enabled === true) {
+        try {
+          advance = await runAdvanceForInvocation({
+            organizationId: orgId,
+            reviewId,
+            invocationId: reviewId,
+            userRequest: body.user_request,
+            findings: detection.findings,
+            gaps: detection.gaps,
+          });
+        } catch (err) {
+          // Track 2 failing must never fail the request — the findings are
+          // already computed and are the more important half.
+          logEvent({ event: "advance_invocation_failed", organization_id: orgId, error_cause: String(err) });
+        }
+      }
+    }
+
+    logEvent({
+      event: "detect_completed",
+      organization_id: orgId,
+      review_id: reviewId,
+      finding_count: detection.findings.length,
+      gap_count: detection.gaps.length,
+      task_mode: advance?.intent.taskMode,
+      intent_defaulted: advance?.intent.defaulted,
+    });
+
+    return res.status(200).json({
+      findings: detection.findings,
+      gaps: detection.gaps,
+      outcomes: detection.outcomes,
+      advance_suggestions: advance?.suggestions ?? [],
+      intent: advance === undefined ? null : { task_mode: advance.intent.taskMode, defaulted: advance.intent.defaulted },
     });
   });
 

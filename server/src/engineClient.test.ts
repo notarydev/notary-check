@@ -405,3 +405,112 @@ test("claims are submitted concurrently but findings stay in claim order", async
     globalThis.fetch = originalFetch;
   }
 });
+
+// Regression coverage for the detector bank being wired in (2026-09-04).
+//
+// The property that was broken: a review with NO material claims returned
+// immediately, so the detector bank never ran and Advance never ran. Measured
+// over 51 real transcripts, ~37% of substantive answers have material for no
+// detector at all — those are exactly the turns where Track 1 has nothing and
+// Track 2 is the entire product, and it was silent on all of them.
+test("zero material claims still runs detection and can return suggestions", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.ENGINE_URL = "http://engine.test";
+  process.env.ENGINE_API_KEY = "test-key";
+
+  let detectCalled = false;
+  globalThis.fetch = (async (...args: FetchArgs) => {
+    const [input, init] = args;
+    const path = pathOf(input);
+    const method = init?.method ?? "GET";
+
+    if (path === "/v1/extract-claims" && method === "POST") {
+      // A real extraction that found nothing material — not a failure.
+      return jsonResponse(200, { claims: [] });
+    }
+    if (path === "/v1/reviews" && method === "POST") {
+      return jsonResponse(201, { review: { id: "11111111-1111-1111-1111-111111111111" } });
+    }
+    if (path.endsWith("/detect") && method === "POST") {
+      detectCalled = true;
+      const body = JSON.parse(String(init?.body ?? "{}")) as { user_request?: string };
+      assert.equal(body.user_request, "Should I use Postgres or DynamoDB?", "the task must reach detection");
+      return jsonResponse(200, {
+        findings: [],
+        gaps: [],
+        advance_suggestions: [
+          { id: "s1", short_label: "Compare write throughput", move: "compare", prompt: "Compare write throughput." },
+        ],
+      });
+    }
+    throw new Error(`unexpected fetch: ${method} ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const { reviewAnswer } = await import("./engineClient.js");
+    const result = await reviewAnswer("Both databases would work here.", [], "test-key", {
+      userRequest: "Should I use Postgres or DynamoDB?",
+    });
+    assert.ok(detectCalled, "detection must run even with zero material claims");
+    assert.equal(result.status, "no_issue");
+    assert.equal(result.advance_suggestions?.length, 1, "Track 2 must produce value with no claims and no sources");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a bank finding surfaces even when the claim itself is SUPPORTED", async () => {
+  // The case that breaks the old model: source-verify says fine, the bank says
+  // the answer contradicts itself. Both are right, and "is there a problem?"
+  // is no longer readable off claim.state alone.
+  const originalFetch = globalThis.fetch;
+  process.env.ENGINE_URL = "http://engine.test";
+  process.env.ENGINE_API_KEY = "test-key";
+
+  globalThis.fetch = (async (...args: FetchArgs) => {
+    const [input, init] = args;
+    const path = pathOf(input);
+    const method = init?.method ?? "GET";
+
+    if (path === "/v1/extract-claims" && method === "POST") {
+      return jsonResponse(200, { claims: [{ ordinal: 0, text: "Claim A.", materiality: true, claimFields: {} }] });
+    }
+    if (path === "/v1/reviews" && method === "POST") {
+      return jsonResponse(201, { review: { id: "11111111-1111-1111-1111-111111111111" } });
+    }
+    if (path.startsWith("/v1/reviews/") && path.endsWith("/claims") && method === "POST") {
+      return jsonResponse(201, {
+        claim: {
+          id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          state: "SUPPORTED",
+          state_reason: null,
+          no_source: false,
+          lifecycle_state: "completed",
+          lifecycle_detail: null,
+        },
+        matches: [],
+        rejectedCandidates: [],
+      });
+    }
+    if (path.endsWith("/detect") && method === "POST") {
+      return jsonResponse(200, {
+        findings: [{ type: "internal_conflict", boundaryText: "The answer states X and also not-X." }],
+        gaps: [],
+        advance_suggestions: [],
+      });
+    }
+    throw new Error(`unexpected fetch: ${method} ${path}`);
+  }) as typeof fetch;
+
+  try {
+    const { reviewAnswer } = await import("./engineClient.js");
+    const result = await reviewAnswer("Claim A.", [], "test-key", { userRequest: "check this" });
+    assert.equal(result.status, "issue_found", "a bank finding must surface even when the claim is SUPPORTED");
+    assert.ok(
+      result.findings?.some((f) => f.text.includes("states X and also not-X")),
+      "the bank's finding must reach the card",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
