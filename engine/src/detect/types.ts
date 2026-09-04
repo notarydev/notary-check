@@ -89,10 +89,23 @@ export type InputProvenance =
    */
   | "model_reported";
 
+/**
+ * Every detector this bank has a name for.
+ *
+ * ONLY THE FIRST THREE ARE REGISTERED (see registry.ts's DETECTORS). The rest
+ * are planned and deliberately unbuilt — restraint, not omission: six fuzzy
+ * detectors wired in early would be worse than three that hold. They are kept
+ * as names because the card already has copy for their findings and the
+ * ordering ranks assume them, but nothing reachable emits one, and this comment
+ * exists because the bare union read as a bank seven detectors deep to two
+ * separate readers of this file.
+ */
 export type DetectorId =
+  // Registered and running.
   | "source_verify"
   | "self_contradiction"
   | "self_report"
+  // Named, not built. Adding one means registering it in registry.ts.
   | "arithmetic"
   | "requirement"
   | "overreach"
@@ -169,7 +182,13 @@ export interface Finding {
 export interface Gap {
   detector: DetectorId;
   claimId?: string;
-  missing: "addressable_source" | "user_request" | "prior_context" | "execution_result";
+  /**
+   * Exactly the kinds some detector emits. `user_request` and `prior_context`
+   * were also declared here and nothing ever produced either — a union member
+   * no code path can reach is a claim about the system that is not true, and
+   * it is one line to add back when a detector genuinely needs it.
+   */
+  missing: "addressable_source" | "execution_result";
   /** What becomes checkable if this arrives. Act turns this into an ask; this is not itself an ask. */
   unblocks: string;
 }

@@ -652,6 +652,30 @@ async function runDetection(
   }
 }
 
+/**
+ * Records one interaction with a move.
+ *
+ * Fire-and-forget by design: telemetry must never be able to break the card.
+ * A failure here loses one data point, which is strictly better than a user
+ * seeing an error because we could not write a row about their click.
+ */
+export async function recordMoveEvent(
+  moveId: string,
+  eventType: "shown" | "revealed" | "committed" | "dismissed",
+  apiKey: string,
+): Promise<boolean> {
+  try {
+    const res = await engineFetch(
+      "/v1/move-events",
+      { method: "POST", body: JSON.stringify({ move_id: moveId, event_type: eventType }) },
+      apiKey,
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function reviewAnswer(
   answerText: string,
   sourceRefs: SourceRef[],

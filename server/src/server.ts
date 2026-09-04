@@ -15,7 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { clerkMiddleware } from "@clerk/express";
 import { mcpAuthClerk, protectedResourceHandlerClerk, authServerMetadataHandlerClerk } from "@clerk/mcp-tools/express";
-import { reviewAnswer } from "./engineClient.js";
+import { recordMoveEvent, reviewAnswer } from "./engineClient.js";
 import { resolveApiKeyForUser } from "./orgResolver.js";
 
 try {
@@ -227,6 +227,53 @@ function buildServer() {
         ],
         structuredContent: cardData,
       };
+    },
+  );
+
+  /**
+   * record_move_event — called by the CARD, not by Claude.
+   *
+   * WHY A SEPARATE TOOL. act_move_event has existed since migration 0013 and
+   * nothing has ever written a row, so production has shown moves to real
+   * users and holds no record of whether one was ever useful. The card is the
+   * only thing that knows a move was displayed, expanded or acted on, and
+   * `callServerTool` is its one channel to say so — `sendMessage` stages text
+   * in the user's input box and tells us nothing.
+   *
+   * This is registered with registerTool rather than registerAppTool because
+   * it has no UI of its own, and its description is written for a machine
+   * caller: Claude has no reason to call it, and nothing good happens if it
+   * does — the worst case is a spurious row, which is why the engine checks
+   * that the move belongs to the caller's organization rather than trusting
+   * the id.
+   */
+  server.registerTool(
+    "record_move_event",
+    {
+      title: "Record a Notary move interaction",
+      description:
+        "Internal telemetry for the Notary review card. Records that a suggested next move was shown, expanded, acted on, or dismissed. " +
+        "Called by the card itself; there is no reason to call it while composing an answer. It changes nothing a user sees and returns no information.",
+      inputSchema: {
+        move_id: z.string().describe("The move's id, exactly as it appeared in the review card data."),
+        event_type: z
+          .enum(["shown", "revealed", "committed", "dismissed"])
+          .describe("shown: rendered. revealed: full prompt expanded. committed: sent to the conversation. dismissed: dismissed."),
+      },
+    },
+    async (
+      args: { move_id: string; event_type: "shown" | "revealed" | "committed" | "dismissed" },
+      extra: { authInfo?: { extra?: { userId?: string; email?: string } } },
+    ) => {
+      const clerkUserId = extra?.authInfo?.extra?.userId;
+      if (!clerkUserId) {
+        throw new Error("Unauthenticated tool call: no Clerk user id on authInfo.");
+      }
+      const apiKey = await resolveApiKeyForUser(clerkUserId, extra?.authInfo?.extra?.email);
+      const ok = await recordMoveEvent(args.move_id, args.event_type, apiKey);
+      // Reports state, gives no instruction — the same discipline the review
+      // tool's own response block is held to.
+      return { content: [{ type: "text" as const, text: ok ? "recorded" : "not recorded" }] };
     },
   );
 

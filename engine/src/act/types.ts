@@ -63,14 +63,6 @@ export interface InvocationContext {
   visible_context?: string;
 
   /**
-   * Artifacts the USER supplied (pasted text, uploaded file references,
-   * URLs) — never something Notary fetched or resolved on its own. Kept as
-   * an array of opaque strings/descriptors rather than parsed content: this
-   * module does no retrieval and no parsing of artifact contents.
-   */
-  user_supplied_artifacts?: readonly string[];
-
-  /**
    * What the user says they already tried, in their own words. Optional —
    * most invocations are a first attempt — but load-bearing for distinguishing
    * "test" (nothing tried yet, don't guess) from "repair" (something was

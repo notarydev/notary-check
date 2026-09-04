@@ -22,7 +22,11 @@ test(
       );
       assert.deepEqual(
         tables.rows.map((r) => r.table_name).sort(),
-        ["act_move_event", "act_invocation", "act_move"],
+        // Sorted, matching the .sort() above. The rename (migration 0016)
+        // changed the alphabetical order of these names, and the expected list
+        // had been written in the old order — the assertion was comparing a
+        // sorted list against an unsorted literal and passing only by accident.
+        ["act_invocation", "act_move", "act_move_event"],
       );
     } finally {
       await pool.end();

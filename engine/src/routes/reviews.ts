@@ -74,6 +74,17 @@ const detectSchema = z.object({
   has_resolved_evidence: z.boolean().default(false),
 });
 
+/**
+ * One recorded interaction with a move. The closed vocabulary matches
+ * act_move_event's CHECK constraint exactly (migration 0013) — the DB is the
+ * second, independent guard, so a caller that bypassed this parser still
+ * cannot invent an event type.
+ */
+const moveEventSchema = z.object({
+  move_id: z.string().uuid(),
+  event_type: z.enum(["shown", "revealed", "committed", "dismissed"]),
+});
+
 const createClaimSchema = z.object({
   // Set by a caller that runs Move once per invocation via
   // POST /v1/reviews/:id/detect. Defaults false so a direct API caller that
@@ -625,7 +636,7 @@ export function reviewsRouter(database: pg.Pool): Router {
             priorAttempts: body.prior_attempts,
             explicitConstraints: body.explicit_constraints,
             priorContext: body.prior_context,
-          });
+          }, { db: database });
         } catch (err) {
           // Act failing must never fail the request — the findings are
           // already computed and are the more important half.
@@ -642,6 +653,14 @@ export function reviewsRouter(database: pg.Pool): Router {
       gap_count: detection.gaps.length,
       task_mode: moveResult?.intent.taskMode,
       intent_defaulted: moveResult?.intent.defaulted,
+      // Per-detector outcomes: how often each detector was even APPLICABLE,
+      // which is the question "is this detector earning its place" reduces to.
+      // The bank computed this from the day it was built and it went nowhere —
+      // returned on the response, read by no one. Logging it costs nothing and
+      // makes the answer queryable instead of arguable.
+      detector_outcomes: detection.outcomes.map((o) => `${o.detector}:${o.status}:${o.count}`).join(","),
+      move_count: moveResult?.moves.length ?? 0,
+      move_skipped: moveResult?.skipped,
     });
 
     return res.status(200).json({
@@ -651,6 +670,64 @@ export function reviewsRouter(database: pg.Pool): Router {
       moves: moveResult?.moves ?? [],
       intent: moveResult === undefined ? null : { task_mode: moveResult.intent.taskMode, defaulted: moveResult.intent.defaulted },
     });
+  });
+
+  /**
+   * POST /v1/move-events — record one interaction with a move.
+   *
+   * WHY THIS EXISTS. act_move_event has existed since migration 0013 and
+   * nothing has ever written a row. Production has shown moves to real users
+   * and holds zero record of whether a single one was useful, so "is Act
+   * earning its cost" is unanswerable from data and can only be argued.
+   *
+   * DELIBERATELY NOT AUTHORITATIVE. An event is a fact about a UI interaction
+   * and nothing more. It cannot assign a state, cannot alter a claim, cannot
+   * change a move's text. The only table it writes is its own.
+   *
+   * The org check is the load-bearing line: move_id is a client-supplied uuid,
+   * so without it any authenticated caller could write events against another
+   * organization's moves and quietly corrupt the one metric this table exists
+   * to produce.
+   */
+  router.post("/v1/move-events", async (req, res) => {
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      return res.status(401).json({ error: "missing Authorization: Bearer <api-key> header" });
+    }
+    const auth = await verifyApiKey(authHeader.slice(BEARER_PREFIX.length).trim(), database);
+    if (!auth.ok) {
+      return res.status(401).json({ error: "invalid or revoked API key" });
+    }
+    const orgId = auth.organizationId;
+
+    const parsed = moveEventSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid_request", detail: parsed.error.issues[0]?.message });
+    }
+    const { move_id, event_type } = parsed.data;
+
+    // Deliberately NOT entitlement-gated. Recording that a user clicked
+    // something costs no model call, and an org whose billing lapsed mid-turn
+    // should not have its telemetry silently stop — that would bias the one
+    // metric this table produces, in the exact population most worth reading.
+
+    // Ownership, established through the move's own invocation rather than
+    // trusted from the request.
+    const owned = await database.query(
+      `SELECT 1 FROM act_move m
+         JOIN act_invocation i ON i.id = m.invocation_id
+        WHERE m.id = $1 AND i.organization_id = $2`,
+      [move_id, orgId],
+    );
+    if (owned.rowCount === 0) {
+      // 404 rather than 403: whether a move id exists in another org is not
+      // this caller's business to learn.
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    await database.query("INSERT INTO act_move_event (move_id, event_type) VALUES ($1, $2)", [move_id, event_type]);
+    logEvent({ event: "move_event_recorded", organization_id: orgId, event_type });
+    return res.status(201).json({ recorded: true });
   });
 
   return router;

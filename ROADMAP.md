@@ -62,9 +62,9 @@ That is not the same claim.
 | **B5** | 17 of the 18 locked cases have never been run against the *live* deployment, only locally. |
 | **S5b** | **`inputProvenance` is set but never persisted or surfaced.** The semantics are now correct in memory; no row records them and the card does not distinguish a finding computed over observed material from one computed over Claude's own report. |
 | **S4** | **Findings are not persisted.** There is no `finding` table, so nothing measures which detectors ever fire in production. We cannot answer "is the detector bank earning its place." |
-| **O2** | `act_move_event` is written by nothing — zero interaction telemetry for Move. We don't know if anyone clicks. |
+| ~~**O2**~~ | ~~`act_move_event` is written by nothing.~~ **RESOLVED 2026-09-04** — the card now records shown / revealed / committed / dismissed through a `record_move_event` app tool. The root cause was deeper than the missing write: the invocation-level Act path persisted nothing at all, so there was no row for an event to reference. |
 
-S4 and O2 are the same shape: we ship things and then cannot tell whether they
+S4 is the same shape as O2 was: we ship things and then cannot tell whether they
 did anything. That pattern has already cost this codebase seven features that
 were built, deployed, confirmed live, and silently inert.
 

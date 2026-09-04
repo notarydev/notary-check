@@ -85,14 +85,24 @@ export async function persistMoveInvocation(db: pg.Pool, input: PersistMoveInput
   );
   const invocationId = inserted.rows[0].id as string;
 
-  const moves = result.moves ?? [];
-  for (const [ordinal, s] of moves.entries()) {
-    await db.query(
+  // The RETURNED move carries the DATABASE id, not the model's own.
+  //
+  // The model names its moves "s1"/"s2" — unique within one response and
+  // meaningless outside it. Handing that id to the card meant an interaction
+  // could not be tied back to a row: act_move_event.move_id is a foreign key,
+  // and "s1" matches every invocation ever made. The model's id is still
+  // stored as model_move_id for provenance; only what leaves this function
+  // changes, and `Move.id` is opaque to every consumer of it.
+  const persisted: Move[] = [];
+  for (const [ordinal, s] of (result.moves ?? []).entries()) {
+    const row = await db.query(
       `INSERT INTO act_move (invocation_id, model_move_id, ordinal, move, short_label, prompt)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
       [invocationId, s.id, ordinal, s.move, s.short_label, s.prompt],
     );
+    persisted.push({ ...s, id: row.rows[0].id as string });
   }
 
-  return { invocationId, moves };
+  return { invocationId, moves: persisted };
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react";
 
 // Mirrors engine/src/evidence/locators.ts's Locator union as it arrives over
@@ -414,11 +414,18 @@ function ActionPill({
   fullText,
   busy,
   onCommit,
+  onReveal,
 }: {
   label: string;
   fullText: string;
   busy: boolean;
   onCommit: () => void;
+  /**
+   * Fired on the deliberate click-to-reveal ONLY, never on hover. Hover fires
+   * on every pointer pass across the card and would drown the signal we
+   * actually want — "someone chose to look at this" — in mouse noise.
+   */
+  onReveal?: () => void;
 }) {
   const [revealed, setRevealed] = useState(false);
 
@@ -435,6 +442,7 @@ function ActionPill({
         onClick={() => {
           if (!revealed) {
             setRevealed(true);
+            onReveal?.();
             return;
           }
           onCommit();
@@ -473,6 +481,15 @@ export default function App() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
+  /**
+   * Move ids already reported as `shown`.
+   *
+   * A ref rather than state on purpose: recording a display must not itself
+   * cause a render, or the effect below re-runs on its own output. The set is
+   * per-card-instance, which is the right scope — the same move rendered in a
+   * new invocation is genuinely a new display.
+   */
+  const shownMoves = useRef<Set<string>>(new Set());
 
   // Real host wiring. Verified against @modelcontextprotocol/ext-apps@1.7.5:
   // useApp() connects this sandboxed view to the host (Claude) over
@@ -509,6 +526,30 @@ export default function App() {
   // colors that only worked against a light host.
   useHostStyles(app, app?.getHostContext());
 
+  /**
+   * Records that a move was DISPLAYED.
+   *
+   * The denominator for every other event. Without it "3 moves were committed"
+   * is uninterpretable — out of three shown, or three hundred? act_move_event
+   * has existed since migration 0013 and had never held a row, so production
+   * had shown moves to real users and could not answer either question.
+   *
+   * Guarded by a ref so a re-render never re-reports the same display, and
+   * capped at the same 2 the card actually renders.
+   */
+  useEffect(() => {
+    if (!app || !data) return;
+    for (const m of (data.moves ?? []).slice(0, 2)) {
+      if (shownMoves.current.has(m.id)) continue;
+      shownMoves.current.add(m.id);
+      void app
+        .callServerTool({ name: "record_move_event", arguments: { move_id: m.id, event_type: "shown" } })
+        .catch(() => {
+          /* telemetry is never worth surfacing to a user */
+        });
+    }
+  }, [app, data]);
+
   if (typeof window !== "undefined") {
     // Local dev only: read a `?mock=` query param so the card can be tested
     // standalone without a live Claude session (§ 0.9's isolated browser test).
@@ -528,6 +569,28 @@ export default function App() {
   }
 
   if (!data || dismissed) return null;
+
+  /**
+   * Records one interaction with a move.
+   *
+   * FIRE AND FORGET, ALWAYS. Telemetry must never be able to break the card or
+   * delay an action the user asked for — every call site below deliberately
+   * does not await this, and every failure path is swallowed. A lost data
+   * point is strictly better than a user watching a spinner because we wanted
+   * to write a row about their click.
+   *
+   * `callServerTool` rather than `sendMessage`: sendMessage stages text in the
+   * user's input box and tells us nothing about what happened. This talks to
+   * our own MCP server directly, without involving Claude.
+   */
+  function recordMove(moveId: string, eventType: "shown" | "revealed" | "committed" | "dismissed") {
+    if (!app) return;
+    void app
+      .callServerTool({ name: "record_move_event", arguments: { move_id: moveId, event_type: eventType } })
+      .catch(() => {
+        /* telemetry is never worth surfacing to a user */
+      });
+  }
 
   async function sendToHost(label: string, text: string) {
     if (!app) return;
@@ -617,7 +680,13 @@ export default function App() {
             <span className="notary-sep">·</span>
           </>
         )}
-        <button type="button" className="notary-link" onClick={() => setDismissed(true)}>
+        <button type="button" className="notary-link" onClick={() => {
+          // Dismissal is a real signal, not an absence of one: "shown and
+          // rejected" is different from "shown and ignored", and only the
+          // first tells us the move was wrong rather than unnoticed.
+          for (const m of (data.moves ?? []).slice(0, 2)) recordMove(m.id, "dismissed");
+          setDismissed(true);
+        }}>
           Dismiss
         </button>
       </div>
@@ -630,7 +699,11 @@ export default function App() {
                 label={s.short_label}
                 fullText={s.prompt}
                 busy={busy === `move:${s.id}`}
-                onCommit={() => sendToHost(`move:${s.id}`, s.prompt)}
+                onReveal={() => recordMove(s.id, "revealed")}
+                onCommit={() => {
+                  recordMove(s.id, "committed");
+                  void sendToHost(`move:${s.id}`, s.prompt);
+                }}
               />
             ))}
           </div>
@@ -728,7 +801,13 @@ export default function App() {
           {findingOpen ? "Hide details" : "Details"}
         </button>
         <span className="notary-sep">·</span>
-        <button type="button" className="notary-link" onClick={() => setDismissed(true)}>
+        <button type="button" className="notary-link" onClick={() => {
+          // Dismissal is a real signal, not an absence of one: "shown and
+          // rejected" is different from "shown and ignored", and only the
+          // first tells us the move was wrong rather than unnoticed.
+          for (const m of (data.moves ?? []).slice(0, 2)) recordMove(m.id, "dismissed");
+          setDismissed(true);
+        }}>
           Dismiss
         </button>
       </div>
@@ -865,7 +944,11 @@ export default function App() {
                       label={s.short_label}
                       fullText={s.prompt}
                       busy={busy === busyKey}
-                      onCommit={() => sendToHost(busyKey, s.prompt)}
+                      onReveal={() => recordMove(s.id, "revealed")}
+                      onCommit={() => {
+                        recordMove(s.id, "committed");
+                        void sendToHost(busyKey, s.prompt);
+                      }}
                     />
                   );
                 })}

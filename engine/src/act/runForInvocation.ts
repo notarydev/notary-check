@@ -23,7 +23,9 @@
 // verifier, and then two things in the system would be entitled to an opinion
 // about the same evidence. One is the whole design.
 
+import type pg from "pg";
 import { getAllowedMoves } from "./policy.ts";
+import { persistMoveInvocation } from "./persist.ts";
 import { inferIntent } from "./intent.ts";
 import type { IntentResult } from "./intent.ts";
 import { generateMoves } from "./liveGenerate.ts";
@@ -153,7 +155,7 @@ function renderContext(
  */
 export async function runMovesForInvocation(
   input: MoveInvocationInput,
-  options: { client?: JudgeClient; organizationId?: string } = {},
+  options: { client?: JudgeClient; organizationId?: string; db?: pg.Pool } = {},
 ): Promise<MoveInvocationResult> {
   // Intent first. This is Act's own object, and it is computed before any
   // model call — a task_mode we can explain beats one we cannot.
@@ -164,14 +166,55 @@ export async function runMovesForInvocation(
   const hasConstraint = input.findings.length > 0;
   const allowedMoves = getAllowedMoves(intent.taskMode, hasConstraint);
 
+  /**
+   * Writes the act_invocation / act_move rows.
+   *
+   * THIS PATH PERSISTED NOTHING UNTIL NOW, and it is the path the connector
+   * actually uses. Every move a real user saw was invisible afterwards: 38
+   * act_invocation rows existed in production and all 38 came from the
+   * per-claim path, which the connector skips. So we could not answer "how
+   * often does Act run", "what does it propose", or — because
+   * act_move_event.move_id is a foreign key into act_move — "did anyone act on
+   * it". A move nobody can count is a move nobody can evaluate.
+   *
+   * Failure to persist must never lose the moves themselves: the user still
+   * gets them, we simply lose the record, which is strictly better than
+   * turning a working suggestion into an error.
+   */
+  const persist = async (result: GenerateMoveResult): Promise<readonly Move[]> => {
+    const moves = result.moves ?? [];
+    if (options.db === undefined) return moves;
+    try {
+      const saved = await persistMoveInvocation(options.db, {
+        organizationId: options.organizationId ?? input.organizationId,
+        reviewId: input.reviewId,
+        // Deliberately null: this invocation is about the TURN, not one claim.
+        // It is also what distinguishes the two paths in the table.
+        claimId: undefined,
+        invocationContextId: input.invocationId,
+        taskMode: intent.taskMode,
+        hasEvidenceConstraint: hasConstraint,
+        allowedMoves,
+        result,
+      });
+      // Carries the database ids, which is what makes an interaction
+      // recordable at all.
+      return saved.moves;
+    } catch {
+      return moves;
+    }
+  };
+
   const userRequest = input.userRequest?.trim() ?? "";
   if (userRequest.length === 0) {
     // Without the user's request Act has no task, and inventing one is the
     // one thing it must never do. Note this is NOT the same as "no findings" —
     // Act runs happily with zero findings, which is the common case.
+    await persist({});
     return { moves: [], intent, allowedMoves, skipped: "no_user_request" };
   }
   if (allowedMoves.length === 0) {
+    await persist({});
     return { moves: [], intent, allowedMoves, skipped: "no_legal_move" };
   }
 
@@ -218,5 +261,5 @@ export async function runMovesForInvocation(
     organizationId: options.organizationId ?? input.organizationId,
   });
 
-  return { moves: raw.moves ?? [], intent, allowedMoves, raw };
+  return { moves: await persist(raw), intent, allowedMoves, raw };
 }

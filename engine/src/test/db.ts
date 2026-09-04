@@ -13,6 +13,15 @@
 // idempotent but its schema_migrations insert can race; a Postgres advisory
 // lock serializes migration runs across processes.
 
+// Loaded HERE, before HAS_DB is evaluated below.
+//
+// Until now the env arrived by luck of import order: src/db.ts does
+// `import "dotenv/config"`, so any test that transitively reached it got
+// DATABASE_URL, and any test that did not silently SKIPPED — reporting as a
+// pass. A whole test file can disappear from the suite that way without
+// anything looking wrong, which is the same class of failure as detect/ never
+// being globbed.
+import "dotenv/config";
 import pg from "pg";
 import { migrate } from "../migrate.ts";
 
