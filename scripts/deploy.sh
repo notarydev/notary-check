@@ -179,17 +179,28 @@ if $MIGRATE; then
   say "Backing up production before migrating"
   BACKUP="$REPO/.backups/notary_check-$(date +%Y%m%d-%H%M%S).sql"
   mkdir -p "$REPO/.backups"
-  if command -v pg_dump >/dev/null; then
-    pg_dump "$PROD_DATABASE_URL" > "$BACKUP" || die "pg_dump failed — refusing to migrate without a backup"
-    echo "  -> $BACKUP ($(wc -c < "$BACKUP") bytes)"
-  else
-    # No local pg_dump on this machine, so use the image. If this fails with a
-    # server-version complaint, bump the tag to match production's major
-    # version — pg_dump refuses to dump a NEWER server than itself.
-    docker run --rm postgres:16 pg_dump "$PROD_DATABASE_URL" > "$BACKUP" \
-      || die "pg_dump (via docker) failed — refusing to migrate without a backup. If it complained about server version, re-run with a postgres:N image matching production."
-    echo "  -> $BACKUP ($(wc -c < "$BACKUP") bytes)"
+
+  # pg_dump refuses to dump a server NEWER than itself, so the client version
+  # has to match production's major. Detect it rather than hardcode it: psql
+  # has no such restriction and will connect to any server, so we can ask.
+  PG_MAJOR="$(docker run --rm postgres:16 psql "$PROD_DATABASE_URL" \
+      -tAc "SELECT current_setting('server_version_num')::int / 10000" 2>/dev/null | tr -d '[:space:]')"
+  if [[ ! "$PG_MAJOR" =~ ^[0-9]+$ ]]; then
+    die "could not reach production Postgres to read its version. Check PROD_DATABASE_URL and network access."
   fi
+  echo "  production Postgres is major version $PG_MAJOR"
+
+  DUMP_ERR="$(mktemp)"
+  if command -v pg_dump >/dev/null && [[ "$(pg_dump --version | grep -oE '[0-9]+' | head -1)" -ge "$PG_MAJOR" ]]; then
+    pg_dump "$PROD_DATABASE_URL" > "$BACKUP" 2>"$DUMP_ERR" || { cat "$DUMP_ERR" >&2; die "pg_dump failed — refusing to migrate without a backup"; }
+  else
+    docker run --rm "postgres:$PG_MAJOR" pg_dump "$PROD_DATABASE_URL" > "$BACKUP" 2>"$DUMP_ERR" \
+      || { cat "$DUMP_ERR" >&2; die "pg_dump (postgres:$PG_MAJOR via docker) failed — refusing to migrate without a backup"; }
+  fi
+  BYTES="$(wc -c < "$BACKUP" | tr -d ' ')"
+  [[ "$BYTES" -gt 1000 ]] || die "backup is only $BYTES bytes — that is not a real dump. Refusing to migrate."
+  echo "  -> $BACKUP ($BYTES bytes)"
+
   say "Applying migrations to production"
   (cd engine && DATABASE_URL="$PROD_DATABASE_URL" npm run migrate) || die "migration failed — production may be mid-schema. Restore from $BACKUP"
 fi
