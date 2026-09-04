@@ -308,3 +308,23 @@ body {
   color: var(--color-text-tertiary, light-dark(#bbb, #7a7a76));
   font-style: italic;
 }
+
+/* What could not be checked, and what would make it checkable.
+   Deliberately plain and muted: a gap is a statement about THIS RUN, not a
+   defect in the answer, so it must not read as a warning. No colour, no icon,
+   no border — the same discipline as the resting line above it. */
+.notary-gaps {
+  margin: 0.35rem 0 0;
+  padding-left: 0.1rem;
+  list-style: none;
+}
+.notary-gaps li {
+  font-size: 0.8rem;
+  opacity: 0.72;
+  line-height: 1.45;
+}
+.notary-gaps li::before {
+  content: "·";
+  margin-right: 0.4rem;
+  opacity: 0.6;
+}

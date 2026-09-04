@@ -72,6 +72,8 @@ type AdvanceSuggestion = {
 
 type ReviewCardData = {
   status: "no_issue" | "issue_found" | "could_not_check" | "not_checked";
+  /** What a detector could not check, and what would make it checkable. Facts, at most two. */
+  gaps?: Array<{ missing: string; unblocks: string }>;
   scope: string;
   claim?: string;
   findings?: Array<{
@@ -176,6 +178,36 @@ function RejectedCandidateView({ candidate }: { candidate: CardRejectedCandidate
 // Desktop additionally gets hover as a free shortcut to the same preview —
 // never a replacement for the click-twice path, since hover doesn't exist on
 // touch at all.
+/**
+ * The Notary mark, taken verbatim from getnotary.ai — three circles joined at
+ * a centre point.
+ *
+ * Every stroke is `currentColor` and every fill is `none`, so it inherits the
+ * surrounding text colour and needs no theme handling whatsoever. That matters
+ * here specifically: this card renders inside a sandboxed iframe that never
+ * receives the host's CSS variables, so anything with a hardcoded colour has to
+ * be maintained as a light/dark pair by hand. This has nothing to maintain.
+ */
+function NotaryMark() {
+  return (
+    <span className="notary-flag-icon" aria-hidden="true">
+      <svg viewBox="0 0 100 100" width="11" height="11">
+        <path
+          d="M32 32L50 50L68 32M50 50L50 68"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="25" cy="25" r="10" fill="none" stroke="currentColor" strokeWidth="5" />
+        <circle cx="75" cy="25" r="10" fill="none" stroke="currentColor" strokeWidth="5" />
+        <circle cx="50" cy="80" r="10" fill="none" stroke="currentColor" strokeWidth="5" />
+      </svg>
+    </span>
+  );
+}
+
 function ActionPill({
   label,
   fullText,
@@ -327,27 +359,70 @@ export default function App() {
     }
   }
 
+  // Computed BEFORE the quiet-state returns below, and that ordering is the
+  // whole fix. These used to be read further down, after `no_issue` and
+  // `not_checked` had already returned — so Track 2's suggestions were
+  // discarded on exactly the states where Track 2 is the ONLY thing that ran.
+  // An unsourced answer is the case where a next move is the sole useful
+  // output, and the card was throwing it away.
+  const quietAdvance = (data.advance_suggestions ?? []).slice(0, 2);
+  const quietGaps = (data.gaps ?? []).slice(0, 2);
+  const hasQuietContent = quietAdvance.length > 0 || quietGaps.length > 0;
+
+  /** The one-line resting state, plus anything Track 2 produced. */
+  const quietCard = (line: string) => (
+    <div className="notary-card notary-quiet">
+      <div className="notary-header">
+        <NotaryMark />
+        <span className="notary-summary">{line}</span>
+      </div>
+      {quietGaps.length > 0 && (
+        <ul className="notary-gaps">
+          {quietGaps.map((g) => (
+            <li key={g.missing + g.unblocks}>Not checked: {g.unblocks}</li>
+          ))}
+        </ul>
+      )}
+      {quietAdvance.length > 0 && (
+        <div className="notary-advance">
+          <div className="notary-advance-pills">
+            {quietAdvance.map((s) => (
+              <ActionPill
+                key={s.id}
+                label={s.short_label}
+                fullText={s.prompt}
+                busy={busy === `advance:${s.id}`}
+                onCommit={() => sendToHost(`advance:${s.id}`, s.prompt)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // "nothing flagged" rather than "no issue found" or a claim count. The count
+  // would be a lie whenever some claims had no source, and a verdict word
+  // drifts toward the green badge canonical § 15 forbids. "Flagged" is OUR
+  // action: we looked and raised nothing. The absence of a flag says the rest.
   if (data.status === "no_issue") {
-    return <div className="notary-card notary-quiet">Notary: no issue found.</div>;
+    return quietCard("Notary · nothing flagged");
   }
 
-  // `not_checked` renders NOTHING. The procedure never ran — no source was
-  // supplied, or the source was out of the declared document class — so there
-  // is no finding to draw, and announcing "no source!" beside every unsourced
-  // sentence is exactly the noise this card exists to avoid. The state is
-  // still carried explicitly in the payload and the model-visible text, so
-  // silence here is a display choice, not a lost distinction (see the state
-  // table in docs/build/tier-1-build-and-operating-plan.md).
+  // `not_checked` stays SILENT when there is genuinely nothing to say — the
+  // procedure never ran, and announcing "no source!" beside every unsourced
+  // sentence is the noise this card exists to avoid.
+  //
+  // But silence is now conditional. When Track 2 produced a next move, or a
+  // detector named something it could not check, there IS something worth
+  // showing, and rendering null would discard it. The state is still carried
+  // in the payload and the model-visible text either way.
   if (data.status === "not_checked") {
-    return null;
+    return hasQuietContent ? quietCard("Notary · nothing to check against") : null;
   }
 
   if (data.status === "could_not_check") {
-    return (
-      <div className="notary-card notary-quiet">
-        Notary: could not verify this against the supplied evidence.
-      </div>
-    );
+    return quietCard("Notary · could not verify this against the supplied evidence");
   }
 
   const findings = data.findings ?? [];
@@ -378,12 +453,8 @@ export default function App() {
           icon + summary together do what the old separate claim-row/flag/
           Dismiss-button trio did, just inline. */}
       <div className="notary-header">
-        <span className="notary-flag-icon" aria-hidden="true">
-          <svg viewBox="0 0 10 10" width="10" height="10">
-            <circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" strokeWidth="1.3" />
-          </svg>
-        </span>
-        <span className="notary-summary">Notary: {findingSummary}</span>
+        <NotaryMark />
+        <span className="notary-summary">Notary · {findingSummary}</span>
         <button
           type="button"
           className="notary-link"
