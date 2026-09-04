@@ -52,7 +52,7 @@ export interface CardRejectedCandidate {
 }
 
 // Locked contract from docs/build/tier-1-build-and-operating-plan.md's
-// "Track 2 / Challenge layer" section — quoted, not paraphrased. Never
+// "Act / Challenge layer" section — quoted, not paraphrased. Never
 // carries a verdict/confidence/answer field.
 export type ChallengeItem = {
   challenge_type: "ambiguity" | "missing_assumption" | "alternative_interpretation" | "evidence_request" | "adversarial_test";
@@ -61,13 +61,13 @@ export type ChallengeItem = {
   action: "clarify_claim" | "add_source" | "open_evidence" | "ask_host" | "draft_test" | "leave_unchanged";
 };
 
-// Advance (Track 2 v2) — the CURRENT "Track 2" per docs/guide/proposals/
+// Move (Act v2) — the CURRENT "Act" per docs/guide/proposals/
 // system-definition-synthesis.md Part 11, a separate system from ChallengeItem
-// above (which is Track 2 v1, frozen, still shipped dark). Mirrors
-// engine/src/advance/types.ts's AdvanceSuggestion exactly: id, short_label,
+// above (which is Act v1, frozen, still shipped dark). Mirrors
+// engine/src/act/types.ts's Move exactly: id, short_label,
 // move (one of the closed four-move vocabulary), prompt. No verdict,
 // confidence, score, or answer field — same discipline as ChallengeItem.
-export type AdvanceSuggestion = {
+export type Move = {
   id: string;
   short_label: string;
   move: "clarify" | "test" | "compare" | "repair";
@@ -105,14 +105,14 @@ export type ReviewCardData = {
     };
   }>;
   actions: string[];
-  // Optional, defensive: absent whenever the engine hasn't landed Track 2 yet,
+  // Optional, defensive: absent whenever the engine hasn't landed Act yet,
   // or produced zero items. Never rendered above the evidence record.
   challenges?: ChallengeItem[];
-  // Advance's 0-2 next-move suggestions. Structurally SEPARATE from
+  // Act's 0-2 moves. Structurally SEPARATE from
   // `challenges` — different system, different authority level, rendered
   // differently by the UI (§ Part 11's icon-vs-pill design). Never merged
   // into the same array.
-  advance_suggestions?: AdvanceSuggestion[];
+  moves?: Move[];
   // What could not be checked, and what would make it checkable. Facts about
   // this run, at most two.
   //
@@ -124,7 +124,7 @@ export type ReviewCardData = {
   // issuing a command inside data.
   gaps?: Array<{ missing: string; unblocks: string }>;
   // The detector bank's own findings, distinct from `findings` above (which
-  // are Track 1 verification results mapped onto the card's finding shape).
+  // are Verify verification results mapped onto the card's finding shape).
   // Carries the field-level detail the record view renders.
   bank_findings?: Array<{
     detector: string;

@@ -42,15 +42,15 @@ const reviewInputSchema = {
     )
     .optional()
     .describe("Sources Claude can identify as actually available — never invented."),
-  // TRACK 2's OBJECT. Not an optional extra — without it Track 2 has no task
+  // ACT's OBJECT. Not an optional extra — without it Act has no task
   // to reason about and skips entirely, which is why it used to produce
-  // nothing on the ~37% of turns where Track 1 also has nothing.
+  // nothing on the ~37% of turns where Verify also has nothing.
   //
   // Kept optional in the SCHEMA but not in the DESCRIPTION, deliberately.
   // Making it hard-required means a validation error when Claude omits it,
   // which may prompt a corrected retry or may make Claude stop calling the
   // tool at all — and losing the invocation is worse than losing the field.
-  // Measured omission rate before this change: 19% of Advance invocations.
+  // Measured omission rate before this change: 19% of Move invocations.
   // Re-measure after; harden only if the description alone does not close it.
   //
   // The previous description ended with "omit it entirely if it isn't"
@@ -62,12 +62,12 @@ const reviewInputSchema = {
     .describe(
       "The user's own request for this turn, verbatim — never paraphrased, summarized, or invented. You always have this: it is the message you are answering, and Notary cannot see it any other way. It is what Notary uses to work out what the user is trying to do, which is half of what it returns; without it, Notary can check your answer but cannot suggest anything.",
     ),
-  // Everything below is Track 2's material. None of it is required, and none
+  // Everything below is Act's material. None of it is required, and none
   // of it may be invented — an absent field is a correct answer, a fabricated
   // one silently corrupts the task model.
   //
   // Deliberately NOT asked for: task_mode. Classifying the task is Notary's
-  // job (engine/src/advance/intent.ts), not Claude's. Asking would put an
+  // job (engine/src/act/intent.ts), not Claude's. Asking would put an
   // unauditable label in an optional field Claude often skips; inferring it
   // makes the classification ours to explain and improve.
   explicit_constraints: z

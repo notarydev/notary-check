@@ -111,9 +111,9 @@ guide/
 ├── grounded-decision-records-paper.md — reference — scholarly backing, not a rule source
 └── proposals/
     ├── invocation-pivot.md                 — proposal — call broadly, Verify only on claims,
-    │                                         Track 2 unconditional. NOT decided.
-    ├── system-definition-synthesis.md      — proposal — Track 1/2 design history; Part 11 is
-    │                                         Advance's design source (Advance has since shipped
+    │                                         Act unconditional. NOT decided.
+    ├── system-definition-synthesis.md      — proposal — Verify/2 design history; Part 11 is
+    │                                         Move's design source (Move has since shipped
     │                                         and diverged — see the Tier 1 plan for what's real)
     ├── development-operating-system-proposal.md — proposal
     ├── claim-ambiguity-detection.md        — proposal
@@ -125,7 +125,7 @@ build/
 ├── whats-left.md                         — snapshot — the ordered roadmap
 ├── transition-map.md                     — canonical — build-to-vision seam + doc/build sync
 ├── phase-0-and-challenge-archive.md      — reference (historical) — Phase 0 build guide and
-│                                           the frozen Track 2 v1 / Challenge design
+│                                           the frozen Act v1 / Challenge design
 └── engine-brief-for-external-review.md   — reference — what the engine does (stale, see D4)
 ```
 

@@ -1,10 +1,10 @@
-// Post-deploy check for the detector bank and invocation-level Track 2.
+// Post-deploy check for the detector bank and invocation-level Act.
 //
 // Exercises the two paths that were broken, against the LIVE engine:
 //
-//   1. ZERO CLAIMS — the ~37% case. Track 2 used to be silent here because it
+//   1. ZERO CLAIMS — the ~37% case. Act used to be silent here because it
 //      rode on the claim loop and there was no claim loop. It must now return
-//      a suggestion from the payload alone.
+//      a move from the payload alone.
 //   2. SELF-CONTRADICTION — a finding produced with no sources at all, which
 //      the old engine could not do: every finding required evidence.
 //
@@ -34,7 +34,7 @@ async function main() {
     const reviewId = ((await rev.json()) as { review?: { id?: string } })?.review?.id;
     if (reviewId === undefined) throw new Error(`no review id (status ${rev.status})`);
 
-    // --- 1. zero claims, no sources: Track 2 must still speak -------------
+    // --- 1. zero claims, no sources: Act must still speak -------------
     console.log("CASE 1 — zero claims, no sources (the ~37% case)");
     const r1 = await fetch(`${ENGINE}/v1/reviews/${reviewId}/detect`, {
       method: "POST",
@@ -51,11 +51,11 @@ async function main() {
     console.log(`  POST /detect -> ${r1.status}`);
     console.log(`  findings: ${(b1.findings as unknown[])?.length ?? 0}   gaps: ${(b1.gaps as unknown[])?.length ?? 0}`);
     console.log(`  intent:   ${JSON.stringify(b1.intent)}`);
-    const sug = (b1.advance_suggestions as Array<{ move: string; short_label: string }>) ?? [];
-    console.log(`  advance:  ${sug.length} suggestion(s)`);
+    const sug = (b1.moves as Array<{ move: string; short_label: string }>) ?? [];
+    console.log(`  moves:   ${sug.length} move(s)`);
     for (const s of sug) console.log(`            (${s.move}) ${s.short_label}`);
     if (r1.status !== 200) throw new Error("detect endpoint failed");
-    if (sug.length === 0) console.log("  NOTE: zero suggestions is a legal result, but on this input a move was expected.");
+    if (sug.length === 0) console.log("  NOTE: zero moves is a legal result, but on this input a move was expected.");
 
     // --- 2. self-contradiction with no sources ---------------------------
     console.log("\nCASE 2 — self-contradiction, no sources");
@@ -89,7 +89,7 @@ async function main() {
     if (!gaps2.every((g) => g.missing === "addressable_source")) throw new Error("unexpected gap kind");
     if (findings[0].owner !== "computed") throw new Error(`expected owner=computed, got ${findings[0].owner}`);
 
-    console.log("\nPASS — detector bank live, Track 2 runs without claims or sources.");
+    console.log("\nPASS — detector bank live, Act runs without claims or sources.");
   } finally {
     await revokeApiKey(issued.id, pool).catch(() => {});
     console.log("\nthrowaway api key revoked");

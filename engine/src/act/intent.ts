@@ -1,8 +1,8 @@
-// Intent inference — Track 2's first job.
+// Intent inference — Act's first job.
 //
 // WHY THIS IS OURS AND NOT CLAUDE'S. The obvious design is to add `task_mode`
 // to the MCP schema and let Claude label the task. That is asking Claude to do
-// Track 2's job, in an optional field it will often skip — and we already
+// Act's job, in an optional field it will often skip — and we already
 // measured that it skips optional fields 19% of the time on the one that
 // actually matters. Worse, it makes the classification unauditable: if Claude
 // says "research" we have no idea why, and no way to improve it.
@@ -14,9 +14,9 @@
 //
 // WHY IT MATTERS SO MUCH. Measured over 51 real transcripts, ~37% of
 // substantive answers have material for NO detector at all. On those turns
-// Track 1 has nothing and Track 2 is the entire product. Track 2's object is
+// Verify has nothing and Act is the entire product. Act's object is
 // the task — so with no task signal it has nothing, and would drift into
-// commenting on the answer, which is Track 1's object and not its own.
+// commenting on the answer, which is Verify's object and not its own.
 //
 // DETERMINISTIC FIRST, ON PURPOSE. This runs a lexical classifier before any
 // model call, and only escalates when the lexical pass is not confident. Most
@@ -37,7 +37,7 @@ export interface IntentResult {
   /**
    * True when nothing matched and we fell back to "general". The caller uses
    * this to decide whether the intent is worth ASKING about — a defaulted
-   * intent is exactly a gap Track 2 may want to close.
+   * intent is exactly a gap Act may want to close.
    */
   defaulted: boolean;
 }
@@ -102,7 +102,7 @@ const SIGNALS: Array<{ mode: TaskMode; patterns: RegExp[] }> = [
  *
  * Returns `general` when nothing matches — which is the honest answer, not a
  * failure. `general` resolves to the FULL four-move set in policy.ts, so a
- * defaulted intent never silently narrows what Track 2 may propose. Guessing a
+ * defaulted intent never silently narrows what Act may propose. Guessing a
  * specific mode would.
  */
 export function inferIntent(userRequest: string | undefined): IntentResult {

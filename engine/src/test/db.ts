@@ -61,21 +61,21 @@ export async function freshPool(): Promise<pg.Pool> {
 /**
  * Creates a throwaway organization and returns its id.
  *
- * `advance_enabled` defaults to false in the schema (migration 0014, "ship
+ * `act_moves_enabled` defaults to false in the schema (migration 0014, "ship
  * dark" for every new org), but test orgs turn it ON, because almost every
- * test that touches Advance is testing what Advance DOES — a default-off test
+ * test that touches Move is testing what Move DOES — a default-off test
  * org would make those tests pass vacuously by never running the feature at
  * all, which is the worst kind of green.
  *
- * Pass `{ advanceEnabled: false }` to test the gate itself.
+ * Pass `{ movesEnabled: false }` to test the gate itself.
  */
 export async function createOrganization(
   pool: pg.Pool,
-  opts: { advanceEnabled?: boolean } = {},
+  opts: { movesEnabled?: boolean } = {},
 ): Promise<string> {
   const result = await pool.query(
-    "INSERT INTO organization (name, advance_enabled) VALUES ('test-org', $1) RETURNING id",
-    [opts.advanceEnabled ?? true],
+    "INSERT INTO organization (name, act_moves_enabled) VALUES ('test-org', $1) RETURNING id",
+    [opts.movesEnabled ?? true],
   );
   return result.rows[0].id as string;
 }

@@ -9,7 +9,7 @@ import { verifyApiKey } from "../auth/apiKey.ts";
 import { checkEntitlement } from "../auth/entitlement.ts";
 import { runDetectors } from "../detect/registry.ts";
 import type { ClaimFields } from "../verification/applicability.ts";
-import { runAdvanceForInvocation } from "../advance/runForInvocation.ts";
+import { runMovesForInvocation } from "../act/runForInvocation.ts";
 import { logEvent } from "../observability/log.ts";
 import { runReview } from "../review/reviewFlow.ts";
 
@@ -34,10 +34,10 @@ const claimFieldsSchema = z.object({
   scope: z.string().optional(),
 });
 
-// POST /v1/reviews/:reviewId/detect — the detector bank plus Track 2, run
+// POST /v1/reviews/:reviewId/detect — the detector bank plus Act, run
 // ONCE per invocation rather than per claim.
 //
-// Why its own route rather than folding into /claims: Track 2 must run when
+// Why its own route rather than folding into /claims: Act must run when
 // there are NO claims at all (~37% of real turns, measured), and the claims
 // route by definition never fires then. Making detection a separate call also
 // keeps it additive — the existing verification path is untouched, so a fault
@@ -67,20 +67,20 @@ const detectSchema = z.object({
 });
 
 const createClaimSchema = z.object({
-  // Set by a caller that runs Advance once per invocation via
+  // Set by a caller that runs Move once per invocation via
   // POST /v1/reviews/:id/detect. Defaults false so a direct API caller that
-  // never calls detect still gets Advance, unchanged.
-  skip_claim_advance: z.boolean().default(false),
+  // never calls detect still gets Move, unchanged.
+  skip_claim_moves: z.boolean().default(false),
   text: z.string().min(1),
   ordinal: z.number().int(),
   materiality: z.boolean().optional(),
   decontextualized_form: z.string().optional(),
   claim_fields: claimFieldsSchema,
   evidence_ids: z.array(z.string().uuid()).default([]),
-  // ADVANCE — the user's own original request/question for this turn,
+  // MOVE — the user's own original request/question for this turn,
   // verbatim, when the caller (server/src/engineClient.ts) actually has it.
   // Optional and passed straight through to review/reviewFlow.ts's
-  // runReview(): absent or empty means Advance is skipped for this claim
+  // runReview(): absent or empty means Move is skipped for this claim
   // entirely (never a guess — see liveGenerate.ts's no_user_request
   // short-circuit), not a validation error.
   user_request: z.string().optional(),
@@ -477,7 +477,7 @@ export function reviewsRouter(database: pg.Pool): Router {
       return res.status(404).json({ error: "review not found for this organization" });
     }
 
-    const { text, ordinal, materiality, decontextualized_form, claim_fields, evidence_ids, user_request, skip_claim_advance } =
+    const { text, ordinal, materiality, decontextualized_form, claim_fields, evidence_ids, user_request, skip_claim_moves } =
       parsed.data;
     const result = await runReview(
       {
@@ -490,7 +490,7 @@ export function reviewsRouter(database: pg.Pool): Router {
         claimFields: claim_fields,
         evidenceIds: evidence_ids,
         userRequest: user_request,
-        skipClaimAdvance: skip_claim_advance,
+        skipClaimMoves: skip_claim_moves,
       },
       database,
     );
@@ -518,8 +518,8 @@ export function reviewsRouter(database: pg.Pool): Router {
       // can say WHICH source could not be inspected rather than only that one
       // could not be.
       evidence_statuses: result.evidenceStatuses,
-      // Track 2 / Challenge layer. Was previously omitted entirely from this
-      // response — runTrack2Challenge() generated and persisted challenge_item
+      // Act / Challenge layer. Was previously omitted entirely from this
+      // response — runActChallenge() generated and persisted challenge_item
       // rows correctly, but nothing carried them out over the wire, so the
       // MCP server's card could never render them regardless of the org
       // feature flag. Mapped to the locked wire contract's snake_case keys
@@ -532,14 +532,14 @@ export function reviewsRouter(database: pg.Pool): Router {
         why_it_matters: c.whyItMatters,
         action: c.action,
       })),
-      // ADVANCE — structurally SEPARATE from `challenges` above: a different
-      // system, a different authority level (a next-move suggestion about the
+      // MOVE — structurally SEPARATE from `challenges` above: a different
+      // system, a different authority level (a next-move move about the
       // user's broader task, not a question about this claim's finding), and
       // the UI renders the two differently (§ Part 11's icon-vs-pill design,
       // wired in ui/src/App.tsx). Never merged into one array. Empty
       // whenever no user_request was supplied, no legal move existed, the
       // kill switch was active, quota was exhausted, or the call failed.
-      advance_suggestions: result.advanceSuggestions.map((s) => ({
+      moves: result.moves.map((s) => ({
         id: s.id,
         short_label: s.short_label,
         move: s.move,
@@ -562,9 +562,9 @@ export function reviewsRouter(database: pg.Pool): Router {
     }
     const orgId = auth.organizationId;
 
-    // Same entitlement gate as /claims: Track 2 makes a billable model call.
+    // Same entitlement gate as /claims: Act makes a billable model call.
     // The detector bank itself is free (pure code), so a denied org still gets
-    // its findings — only the suggestion is withheld.
+    // its findings — only the move is withheld.
     const entitlement = await checkEntitlement(orgId, database);
 
     const parsed = detectSchema.safeParse(req.body);
@@ -593,14 +593,14 @@ export function reviewsRouter(database: pg.Pool): Router {
       hasResolvedEvidence: body.has_resolved_evidence,
     });
 
-    let advance: Awaited<ReturnType<typeof runAdvanceForInvocation>> | undefined;
+    let moveResult: Awaited<ReturnType<typeof runMovesForInvocation>> | undefined;
     if (entitlement.allowed) {
       // Org feature flag, read before any client work — a disabled org costs
-      // exactly zero model calls, same discipline as runAdvanceForClaim.
-      const flag = await database.query("SELECT advance_enabled FROM organization WHERE id = $1", [orgId]);
-      if (flag.rows[0]?.advance_enabled === true) {
+      // exactly zero model calls, same discipline as runMovesForClaim.
+      const flag = await database.query("SELECT act_moves_enabled FROM organization WHERE id = $1", [orgId]);
+      if (flag.rows[0]?.act_moves_enabled === true) {
         try {
-          advance = await runAdvanceForInvocation({
+          moveResult = await runMovesForInvocation({
             organizationId: orgId,
             reviewId,
             invocationId: reviewId,
@@ -609,9 +609,9 @@ export function reviewsRouter(database: pg.Pool): Router {
             gaps: detection.gaps,
           });
         } catch (err) {
-          // Track 2 failing must never fail the request — the findings are
+          // Act failing must never fail the request — the findings are
           // already computed and are the more important half.
-          logEvent({ event: "advance_invocation_failed", organization_id: orgId, error_cause: String(err) });
+          logEvent({ event: "move_invocation_failed", organization_id: orgId, error_cause: String(err) });
         }
       }
     }
@@ -622,16 +622,16 @@ export function reviewsRouter(database: pg.Pool): Router {
       review_id: reviewId,
       finding_count: detection.findings.length,
       gap_count: detection.gaps.length,
-      task_mode: advance?.intent.taskMode,
-      intent_defaulted: advance?.intent.defaulted,
+      task_mode: moveResult?.intent.taskMode,
+      intent_defaulted: moveResult?.intent.defaulted,
     });
 
     return res.status(200).json({
       findings: detection.findings,
       gaps: detection.gaps,
       outcomes: detection.outcomes,
-      advance_suggestions: advance?.suggestions ?? [],
-      intent: advance === undefined ? null : { task_mode: advance.intent.taskMode, defaulted: advance.intent.defaulted },
+      moves: moveResult?.moves ?? [],
+      intent: moveResult === undefined ? null : { task_mode: moveResult.intent.taskMode, defaulted: moveResult.intent.defaulted },
     });
   });
 

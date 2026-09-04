@@ -1,6 +1,6 @@
 > Status: snapshot
 > Owner: Hardyk
-> Last verified: 2026-09-04 (detector bank, Track 2 cut loose from the claim loop, widened ask, structured handoff; see the second 2026-09-04 section)
+> Last verified: 2026-09-04 (detector bank, Act cut loose from the claim loop, widened ask, structured handoff; see the second 2026-09-04 section)
 > Supersedes: —
 
 # Notary Check — Architecture and infrastructure progress
@@ -46,7 +46,7 @@ Practical consequence worth knowing before the next migration run: this is a sin
 
 No ORM — raw SQL migrations (`engine/migrations/0001`–`0015`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package.
 
-**Applied to production: `0001`–`0015`, all of them.** `0007`–`0013` ran on 2026-09-03; `0014`–`0015` ran later the same day (see the deploy record below). Migration `0013_advance.sql` adds `advance_invocation`/`advance_suggestion`/`advance_event` for the Advance (Track 2 v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
+**Applied to production: `0001`–`0015`, all of them.** `0007`–`0013` ran on 2026-09-03; `0014`–`0015` ran later the same day (see the deploy record below). Migration `0013_advance.sql` adds `act_invocation`/`act_move`/`act_move_event` for the Move (Act v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
 
 **Schema, as it stands** (all raw SQL, no schema file to point to instead):
 - `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007). Still has **no `created_at` column** — `GET /v1/organization` (below) returns `created_at: null` rather than inventing one.
@@ -57,7 +57,7 @@ No ORM — raw SQL migrations (`engine/migrations/0001`–`0015`) run by a minim
 - `claim`, `evidence_match` (0003); `claim` plus `created_at` and `claim_review_id_created_at_idx` on `(review_id, created_at)` (0008) — also backs `GET /v1/usage`'s "checks this calendar month" count.
 - `"user"` (0004) — minimal stub, just id + organization_id
 - `organization_api_key`, `usage_event` (0004); plus `usage_event.estimated_cost_millicents` (0015) — the *enforcing* cost unit, with `estimated_cost_cents` converted to a `GENERATED ALWAYS` column derived from it. Writing cents directly is now a hard Postgres error, which is what prevents a caller from silently under-metering by setting only the rounded value.
-- `organization.advance_enabled` (0014) — Advance's own feature flag, `DEFAULT false` (ship dark) with a backfill to `true` so orgs that already had Advance running keep it.
+- `organization.act_moves_enabled` (0014) — Move's own feature flag, `DEFAULT false` (ship dark) with a backfill to `true` so orgs that already had Move running keep it.
 
 Migration 0008 backfilled `claim.created_at` / `evidence.created_at` to `now()` (the migration's apply time) for every pre-existing row, since neither column ever existed before — an approximation, not a real historical timestamp, for anything created earlier.
 
@@ -113,16 +113,16 @@ Both live AWS Lightsail container services, region `us-east-2`, both currently `
 | `clerk.getnotary.ai` | Live `dig`, 2026-09-02 (CNAME resolves to Clerk's own frontend-api / Cloudflare) | **Confirmed live** — previously only described in `HANDOFF.md` prose, now independently verified. |
 | `notarycheck.ai` | `dashboard/src/app/account/page.tsx` (`sales@notarycheck.ai` mailto) | Does not resolve (`dig` returned nothing, 2026-09-02) — this mailto address's domain is not live. |
 
-## 2026-09-03 deploy — audit fixes, Clerk auth, and Advance now live
+## 2026-09-03 deploy — audit fixes, Clerk auth, and Move now live
 
 Both live Lightsail container services were redeployed with the current checkout's code:
 
-- **`notary-check-api`** (engine): new image `:notary-check-api.engine.11`, deployment version 5. Ships all 5 audit-P0 fixes, the entitlement gate, live-mode-ready billing lifecycle, ops groundwork (rate limiting, backup/restore, kill-switch runbook) — all previously committed but not yet deployed — plus the new Advance wiring (below). `INTERNAL_SERVICE_SECRET` added to its env (previously unset, meaning `/v1/internal/resolve-organization` was failing closed).
+- **`notary-check-api`** (engine): new image `:notary-check-api.engine.11`, deployment version 5. Ships all 5 audit-P0 fixes, the entitlement gate, live-mode-ready billing lifecycle, ops groundwork (rate limiting, backup/restore, kill-switch runbook) — all previously committed but not yet deployed — plus the new Move wiring (below). `INTERNAL_SERVICE_SECRET` added to its env (previously unset, meaning `/v1/internal/resolve-organization` was failing closed).
 - **`notary-check-mcp`** (server): new image `:notary-check-mcp.server.10`, deployment version 7. Clerk auth (`clerkMiddleware`, `mcpAuthClerk`) is now live-gating both MCP routes — confirmed via a real unauthenticated `POST /mcp` returning `401` with a working `WWW-Authenticate` challenge. `INTERNAL_SERVICE_SECRET` and live Clerk keys added to its env (previously absent).
 - **Production database**: a `pg_dump` backup was taken and verified restorable (`pg_restore --list` confirmed real table data) immediately before running migrations. Migrations `0007`–`0013` were then applied via `engine/src/migrate.ts` against the live DB — each runs in its own transaction, all applied cleanly.
-- **Advance (Track 2 v2) wired into the product for the first time**: previously an isolated, unwired module (`engine/src/advance/`). Now: new persistence tables (migration `0013`), the MCP tool schema accepts an optional `user_request` field (Advance is skipped, not guessed, when absent), Advance runs concurrently with Track 1 and Track 2/Challenge inside `reviewFlow.ts` — strictly after Track 1's result is committed, never gating or altering it — and is now kill-switch- and quota-gated (previously a known gap). The review response carries `advance_suggestions` separately from `challenges`; the UI renders it through the existing pill mechanism.
+- **Move (Act v2) wired into the product for the first time**: previously an isolated, unwired module (`engine/src/act/`). Now: new persistence tables (migration `0013`), the MCP tool schema accepts an optional `user_request` field (Move is skipped, not guessed, when absent), Move runs concurrently with Verify and Act/Challenge inside `reviewFlow.ts` — strictly after Verify's result is committed, never gating or altering it — and is now kill-switch- and quota-gated (previously a known gap). The review response carries `moves` separately from `challenges`; the UI renders it through the existing pill mechanism.
 - **Verified post-deploy**: `GET /.well-known/oauth-protected-resource/mcp` resolves real Clerk metadata; unauthenticated `POST /mcp` gets a real `401`; an authenticated `POST /v1/reviews` against the live engine successfully created a real review row, confirming DB connectivity and the entitlement check both work post-migration.
-- ~~**Not yet re-verified live**~~ — **done, same day.** A real Claude.ai session against the deployed connector produced a live end-to-end `tools/call` returning both a `CONTRADICTED` Track 1 finding and a real `advance_suggestions` payload. Advance is confirmed working through the deployed path, not only locally.
+- ~~**Not yet re-verified live**~~ — **done, same day.** A real Claude.ai session against the deployed connector produced a live end-to-end `tools/call` returning both a `CONTRADICTED` Verify finding and a real `moves` payload. Move is confirmed working through the deployed path, not only locally.
 
 **Update, same day — real live testing surfaced and fixed three more issues**: a real Claude.ai session was connected against the live connector, requiring a fresh Clerk OAuth Application to be registered (Clerk has no dynamic client registration — a manually-registered client id/secret is required, now set up; see `docs/build/tier-1-build-and-operating-plan.md` for the exact client). Live testing then found: (1) a real transient `could_not_check` result on one call, root-caused by directly reproducing the same request against the live engine twice (extraction succeeded both times — a one-off DeepSeek hiccup, not a systematic bug) — also surfaced that Claude's own chat summary can misreport a `could_not_check` failure as a confident finding, worth a closer look separately; (2) a real UI layout bug — hovering a pill's revealed preview text forced a sibling pill onto a new flex-wrap row, which could shift the sibling under the cursor and produce a visible flicker, and a body with no width constraint let the iframe's offered width paint a blank rectangle beyond the actual card; (3) following that, the whole card was redesigned to a quiet, disclaimer-style treatment (modeled on Claude's own "Claude is AI and can make mistakes" footer) and wired to the host's real theme via `useHostStyles()` (`@modelcontextprotocol/ext-apps/react`) instead of a hardcoded white background, which had been rendering as a stark white box on Claude's dark theme — an iframe's rendering canvas has no transparent backdrop to fall back to, so the fix is an explicit `background: var(--color-background-primary, ...)`, not simply omitting a background. Redeployed as `:notary-check-mcp.server.13`.
 
@@ -140,17 +140,17 @@ aws lightsail get-container-services --region us-east-2 \
   --query 'containerServices[?contains(containerServiceName,`notary`)].{name:containerServiceName,image:currentDeployment.containers.*.image,ver:currentDeployment.version}'
 ```
 
-## 2026-09-03, second deploy — Advance flag, sub-cent metering, and a self-inflicted outage
+## 2026-09-03, second deploy — Move flag, sub-cent metering, and a self-inflicted outage
 
-**What shipped:** migrations `0014` (Advance's org feature flag) and `0015` (millicent cost metering, with `estimated_cost_cents` converted to a `GENERATED ALWAYS` column), plus engine image `:notary-check-api.engine.15` — Lightsail deployment **version 6**, `notary-check-api`, RUNNING.
+**What shipped:** migrations `0014` (Move's org feature flag) and `0015` (millicent cost metering, with `estimated_cost_cents` converted to a `GENERATED ALWAYS` column), plus engine image `:notary-check-api.engine.15` — Lightsail deployment **version 6**, `notary-check-api`, RUNNING.
 
-**Backup, genuinely verified before touching anything:** `~/notary-backups/notary-prod-20260903-223614.dump` (71K, `pg_dump -Fc` via `postgres:16-alpine` matching the server's 16.15). Verification was not `pg_restore --list` alone — the dump was restored into a throwaway Postgres and every row count compared against production: organization 2, review 75, claim 85, evidence 70, evidence_match 21, usage_event 228, advance_invocation 25. All matched. Both migrations were then dry-run against that restored copy before production, which is how the `GENERATED ALWAYS` conversion and the `advance_enabled` backfill were confirmed non-destructive.
+**Backup, genuinely verified before touching anything:** `~/notary-backups/notary-prod-20260903-223614.dump` (71K, `pg_dump -Fc` via `postgres:16-alpine` matching the server's 16.15). Verification was not `pg_restore --list` alone — the dump was restored into a throwaway Postgres and every row count compared against production: organization 2, review 75, claim 85, evidence 70, evidence_match 21, usage_event 228, act_invocation 25. All matched. Both migrations were then dry-run against that restored copy before production, which is how the `GENERATED ALWAYS` conversion and the `act_moves_enabled` backfill were confirmed non-destructive.
 
 **Gotcha for anyone scripting a backup:** production's `DATABASE_URL` carries `uselibpqcompat=true`, a node-driver flag. `pg_dump` rejects it outright (`invalid URI query parameter`). Strip it; keep `sslmode=require`.
 
 **A real outage was caused and then closed — recorded because the reasoning error matters more than the fix.** Migrations were applied *before* the matching image was deployed. `0015` makes `estimated_cost_cents` unwritable, and the running image (`engine.11`) still wrote it, so every ledger insert raised a hard Postgres error. That was predicted as a harmless window on the reasoning that "quota gates already read zero, so nothing gets worse." **That reasoning was wrong**: `insertUsageEvent` is `await`ed bare inside `review/reviewFlow.ts`, not wrapped, so a rejected ledger write throws the whole review. For the duration, every judge-invoking review failed — not just its metering. The correct order is deploy-then-migrate, or split the migration so the destructive half lands after the new image. No users were affected (there are none yet).
 
-**Post-deploy verification — an actual round trip, not schema introspection.** `engine/scripts/prod-smoke.ts` issues a throwaway API key, runs the flagship contradiction (claim 17% vs evidence 12%) against the live engine, and revokes the key. Result: `CONTRADICTED` / `contradicting_applicable_relation`, lifecycle `completed`, 1 resolved match, **1 Advance suggestion** (confirming the `advance_enabled` backfill left the existing org enabled), and **+53 millicents across 2 new ledger rows** — the first real cost this system has ever recorded. `engine/scripts/prod-check.ts` separately confirmed the schema: `estimated_cost_cents generated=ALWAYS`, `estimated_cost_millicents bigint`, `advance_enabled` present defaulting false, and all row counts preserved through the column drop/re-add.
+**Post-deploy verification — an actual round trip, not schema introspection.** `engine/scripts/prod-smoke.ts` issues a throwaway API key, runs the flagship contradiction (claim 17% vs evidence 12%) against the live engine, and revokes the key. Result: `CONTRADICTED` / `contradicting_applicable_relation`, lifecycle `completed`, 1 resolved match, **1 Move move** (confirming the `act_moves_enabled` backfill left the existing org enabled), and **+53 millicents across 2 new ledger rows** — the first real cost this system has ever recorded. `engine/scripts/prod-check.ts` separately confirmed the schema: `estimated_cost_cents generated=ALWAYS`, `estimated_cost_millicents bigint`, `act_moves_enabled` present defaulting false, and all row counts preserved through the column drop/re-add.
 
 **Confirmed by the same run:** the pre-fix ledger was entirely fictional. All 228 historical `usage_event` rows sum to **0 cents** — every production call since launch metered as zero, so neither the per-org limit nor the global provider cap has ever had anything to sum.
 
@@ -168,11 +168,11 @@ Fixed with a new, deliberately asymmetric rule in `verification/normalization.ts
 
 **Release gate not met, recorded rather than glossed:** § Evaluator governance requires scoring a comparator change against the held-out labelled set for false-supported rate. That set is 20 unadjudicated drafts (B1), so the number cannot exist. Shipped on the owner's explicit instruction with prod having no users. Re-score when B1 lands.
 
-**Verified live** against `api.getnotary.ai` via `engine/scripts/prod-smoke.ts`, both cases returning `CONTRADICTED` with a resolved match and an Advance suggestion:
+**Verified live** against `api.getnotary.ai` via `engine/scripts/prod-smoke.ts`, both cases returning `CONTRADICTED` with a resolved match and a Move move:
 - `--case paraphrase` — "declined 12 percent in fiscal 2025" vs claim "grew 17% in FY25" (the case that was broken)
 - `--case exact` — "increased 12%" vs "grew 17%" (regression check on the path that already worked)
 
-**E2 — claim loop parallelised.** Claims were submitted one at a time, each round trip internally running a judge call and an Advance call, so a five-claim answer was five sequential waits while the MCP tool call blocked Claude's turn. Now bounded-concurrent at 4 in flight. Execution fans out; **accumulation stays in claim order**, because the challenge and Advance caps are first-come and accumulating by completion would let network timing decide which claim's suggestions survive.
+**E2 — claim loop parallelised.** Claims were submitted one at a time, each round trip internally running a judge call and a Move call, so a five-claim answer was five sequential waits while the MCP tool call blocked Claude's turn. Now bounded-concurrent at 4 in flight. Execution fans out; **accumulation stays in claim order**, because the challenge and Move caps are first-come and accumulating by completion would let network timing decide which claim's moves survive.
 
 **Also now live:** the `not_checked` card state (previously committed but undeployed), so an unsourced claim no longer reports as a Notary malfunction.
 
@@ -182,7 +182,7 @@ Fixed with a new, deliberately asymmetric rule in `verification/normalization.ts
 
 **Post-deploy verification, live:** `POST /mcp` unauthenticated returns `401`; OAuth discovery returns `200`; locked case 2 returns `CONTRADICTED` with a resolved match through `api.getnotary.ai`; the usage ledger is accruing real cost (264 millicents month-to-date, from a standing start of 0 before `0015`).
 
-## 2026-09-04, second session — the detector bank, Track 2 cut loose, and the widened ask
+## 2026-09-04, second session — the detector bank, Act cut loose, and the widened ask
 
 **Shipped:** `:notary-check-api.engine.23` and `:notary-check-mcp.server.24`. No migration — findings are returned in the response, not persisted, so this deploy is fully reversible by redeploying the previous image.
 
@@ -209,9 +209,9 @@ Two results contradicted decisions that had already been made. **Arithmetic is n
 
 A second dataset (`engine/eval/trace-shape.ts`, 665,453 rounds across 8,058 sessions, telemetry only — no message content) settled two further questions: **tool output is present on 85.7% of rounds**, and **87.3% of rounds carry no user message at all** (median session 16 rounds, p90 150). The second is why `user_request` cannot be assumed to be same-turn in agentic work.
 
-### Track 1 — the detector bank
+### Verify — the detector bank
 
-`engine/src/detect/`. Track 1 had exactly one detector, so its output could *be* the claim's verification state. With several that stops working: source-verify can say `SUPPORTED` while another detector says the answer contradicts itself, and both are right about different things.
+`engine/src/detect/`. Verify had exactly one detector, so its output could *be* the claim's verification state. With several that stops working: source-verify can say `SUPPORTED` while another detector says the answer contradicts itself, and both are right about different things.
 
 So detectors emit **findings beside the claim**, and exactly one — source-verify — still writes `claim.state`. `Finding` deliberately has no `state`, `verdict`, `confidence` or `score` field; a test asserts this rather than trusting the convention.
 
@@ -220,7 +220,7 @@ Two outputs, both facts:
 - **Finding** — something is blatantly wrong.
 - **Gap** — a detector could have run but an input was missing.
 
-Turning a gap into an ask is Track 2's job; nothing in the bank expresses an action.
+Turning a gap into an ask is Act's job; nothing in the bank expresses an action.
 
 **Three outcomes, not two:** `ran` / `not_applicable` / `missing_input`. Without the third we could not tell "this task has no code, so there is no test output to want" from "this task has code and the output is missing", and would ask a literature-review user to paste a test run.
 
@@ -233,23 +233,23 @@ Turning a gap into an ask is Track 2's job; nothing in the bank expresses an act
 
 **Isolation:** a detector that throws contributes nothing and cannot affect any other detector or the verification result. Several detectors means several new ways to break the one thing that already works, and none of them may.
 
-### Track 2 — cut loose from the claim loop
+### Act — cut loose from the claim loop
 
-`runAdvanceForClaim` fired inside the per-claim path, and the connector returned early when a review had no material claims. **No claims meant Advance never ran at all** — and ~37% of substantive answers have material for no detector, exactly the turns where Track 1 has nothing and Track 2 is the entire product. It was silent precisely when it was most needed.
+`runMovesForClaim` fired inside the per-claim path, and the connector returned early when a review had no material claims. **No claims meant Move never ran at all** — and ~37% of substantive answers have material for no detector, exactly the turns where Verify has nothing and Act is the entire product. It was silent precisely when it was most needed.
 
-`engine/src/advance/runForInvocation.ts` runs it once per invocation. **Independence stated precisely:** not gated on Track 1's *decisions*, only on its *outputs*. `findings = []` and `claims = []` are valid inputs and it still runs.
+`engine/src/act/runForInvocation.ts` runs it once per invocation. **Independence stated precisely:** not gated on Verify's *decisions*, only on its *outputs*. `findings = []` and `claims = []` are valid inputs and it still runs.
 
-**Intent inference** (`engine/src/advance/intent.ts`) is Track 2's own first job, and deliberately ours rather than Claude's. Adding `task_mode` to the schema would ask Claude to do Track 2's job in an optional field it skips 19% of the time, and would make the classification unauditable. A deterministic lexical classifier runs before any model call. Signals are narrow: a *wrong* task mode narrows the allowed move set and silently removes options that should have stayed available, so an unmatched request or a genuine tie returns `general`, which resolves to the **full** four-move set. Abstaining never narrows anything.
+**Intent inference** (`engine/src/act/intent.ts`) is Act's own first job, and deliberately ours rather than Claude's. Adding `task_mode` to the schema would ask Claude to do Act's job in an optional field it skips 19% of the time, and would make the classification unauditable. A deterministic lexical classifier runs before any model call. Signals are narrow: a *wrong* task mode narrows the allowed move set and silently removes options that should have stayed available, so an unmatched request or a genuine tie returns `general`, which resolves to the **full** four-move set. Abstaining never narrows anything.
 
-**What Track 2 still is, stated plainly:** one model call with four moves (`clarify`, `test`, `compare`, `repair`). There is no Track 2 detector bank, no per-move logic, no eligibility rules. Intent is used for exactly one thing — deciding which moves are legal. Everything else about intent-driven behaviour is unbuilt.
+**What Act still is, stated plainly:** one model call with four moves (`clarify`, `test`, `compare`, `repair`). There is no Act detector bank, no per-move logic, no eligibility rules. Intent is used for exactly one thing — deciding which moves are legal. Everything else about intent-driven behaviour is unbuilt.
 
 ### The handoff — structured, not a sentence
 
-Track 2 received one sentence ("The answer states 17% and the filing says 12%") and had to guess whether it was looking at a wrong period, a wrong entity, or a right entity with a wrong number. Three different repairs, which is why its suggestions read as generic.
+Act received one sentence ("The answer states 17% and the filing says 12%") and had to guess whether it was looking at a wrong period, a wrong entity, or a right entity with a wrong number. Three different repairs, which is why its moves read as generic.
 
 The field-level detail already existed — every `Finding` carries `fieldDeltas`, computed and then discarded at exactly this boundary. The sealed constraint now carries them, rendered as a short table in the prompt.
 
-**The boundary is unchanged in kind:** still one-directional, still sealed, still no evidence corpus and no rejected-candidate pool. A test asserts the passage excerpt never crosses even when the finding carries one. Handing Track 2 enough raw material to disagree with Track 1 would make it a second verifier, and then two things would be entitled to an opinion about the same evidence.
+**The boundary is unchanged in kind:** still one-directional, still sealed, still no evidence corpus and no rejected-candidate pool. A test asserts the passage excerpt never crosses even when the finding carries one. Handing Act enough raw material to disagree with Verify would make it a second verifier, and then two things would be entitled to an opinion about the same evidence.
 
 ### The widened ask
 
@@ -307,13 +307,13 @@ this was tested, not of any one mistake:
    scopes to agree before comparing. Both correct alone; together they
    cancelled, and the detector fired zero times on 161 real answers including a
    deliberately planted contradiction.
-3. **Suggestions discarded by the renderer.** The card read
-   `advance_suggestions` after the early returns for `no_issue` and
-   `not_checked` — the exact states where Track 2 is the only thing that ran.
+3. **Moves discarded by the renderer.** The card read
+   `moves` after the early returns for `no_issue` and
+   `not_checked` — the exact states where Act is the only thing that ran.
 4. **An instruction in the tool result.** Claude identified it as prompt
    injection across three consecutive calls and disregarded it, correctly.
-5. **Advance running on the wrong path.** Per-claim and invocation-level
-   Advance were both wired; the per-claim path won, so intent inference, the
+5. **Move running on the wrong path.** Per-claim and invocation-level
+   Move were both wired; the per-claim path won, so intent inference, the
    pre-ranking and the structured handoff shipped and never executed. Six model
    calls per review instead of one.
 
@@ -328,7 +328,7 @@ lessons:
   MECHANISM — that the ceiling reaches the client, that no model call is paid
   for — because no realistic fixture reproduces it.
 - **"Deployed" is not "running."** Four of the five were live and inert. The
-  check that caught the Advance double-run was reading `advance_invocation`
+  check that caught the Move double-run was reading `act_invocation`
   rows in production, not reading the card.
 - **Two individually correct components can cancel.** Nothing was wrong with
   the extractor's scope handling or the detector's scope rule in isolation, and
@@ -352,7 +352,7 @@ But it lives in the review flow, writes `claim.state`, and has no path into
 
 Closed by registering `sourceGap` — the REPORTING half of source verification,
 never the checking half. It checks nothing, produces no Finding, and reports
-one fact in the shape Track 2 can turn into an ask. `source_verify` keeps its
+one fact in the shape Act can turn into an ask. `source_verify` keeps its
 status as the only detector that assigns a verification state.
 
 **Still not built:** the ask ledger. Nothing suppresses a repeat, so a gap
@@ -378,7 +378,7 @@ Engine **391/391** against real Postgres with all 15 migrations (up from 356); s
 
 ### What is NOT built, stated so it is not mistaken for done
 
-- **Track 2 detectors do not exist.** Track 2 is one model call with four moves.
+- **Act detectors do not exist.** Act is one model call with four moves.
 - **Findings are not persisted.** No `finding` table — they are returned and discarded, so nothing measures which detectors fire in production.
 - **The card cannot render the new output.** Findings map onto the existing four-state shape as best they can; a claim with no source *and* a self-contradiction has no representation.
 - **No ask ledger.** A gap can be reported on every invocation; nothing suppresses a repeat.
@@ -403,7 +403,7 @@ Everything in this repo's earlier snapshots about `server/`'s live status was in
 ## Honest status summary
 
 **Actually live, verified**:
-- Engine on AWS Lightsail (live domain + working API key format), running the current build as of 2026-09-03 (all audit-P0 fixes, entitlement, billing lifecycle, Advance) with all 13 migrations applied to production.
+- Engine on AWS Lightsail (live domain + working API key format), running the current build as of 2026-09-03 (all audit-P0 fixes, entitlement, billing lifecycle, Move) with all 13 migrations applied to production.
 - `server/` MCP endpoint at `mcp.getnotary.ai` — live, real protocol responses, real judge + Tier A.5 normalization confirmed firing (see "Live verification" below). **As of 2026-09-03, running the current build with Clerk OAuth actually gating both MCP routes** — confirmed via a real `401`/`WWW-Authenticate` response to an unauthenticated call.
 - `clerk.getnotary.ai` custom domain — confirmed via live `dig`, no longer just prose.
 - `getnotary.ai` — a live marketing site, but a separate/unreconciled asset from this checkout's `dashboard/`; flagged by the product owner as stale, needs a refresh.

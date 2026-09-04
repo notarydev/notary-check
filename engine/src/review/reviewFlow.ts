@@ -17,17 +17,17 @@
 //      then assignState (no_source / CONTRADICTED / SUPPORTED / UNSUPPORTED /
 //      INDETERMINATE);
 //   8. persist claim + evidence_match rows in a single transaction;
-//   9. TRACK 2 / CHALLENGE — org-flag-gated, material-claims-only, quota-gated:
+//   9. ACT / CHALLENGE — org-flag-gated, material-claims-only, quota-gated:
 //      0-2 typed QUESTIONS about the finding step 7 already resolved, written
 //      to challenge_item and to no other table.
 //
 // Step 9 is a second OUTPUT of this invocation, never a second WRITER
-// (§ Track 2 / Challenge layer, authority invariant). It runs on values that
+// (§ Act / Challenge layer, authority invariant). It runs on values that
 // were computed and committed before it starts, it cannot reach assignState —
-// runTrack2Challenge and judge/challengeGeneration.ts neither import nor
+// runActChallenge and judge/challengeGeneration.ts neither import nor
 // reference the state machine, asserted statically in
 // judge/challengeIsolation.test.ts — and any failure inside it degrades to zero
-// challenge items over an intact Track 1 finding.
+// challenge items over an intact Verify finding.
 //
 // The judge never decides the final state: it only extracts per-field values
 // from the residue, and the deterministic layer compares them
@@ -82,11 +82,11 @@ import { DEFAULT_JUDGE_MODEL } from "../judge/judgeClient.ts";
 import { PROMPT_VERSION } from "../judge/promptTemplates.ts";
 import { logEvent } from "../observability/log.ts";
 import { checkQuota } from "../quotas/quotaCheck.ts";
-import { insertUsageEvent, usageEventFromAdvanceCall, usageEventFromChallengeCall, usageEventFromJudgeCall } from "../quotas/usage.ts";
-import { getAllowedMoves } from "../advance/policy.ts";
-import { generateAdvanceSuggestions } from "../advance/liveGenerate.ts";
-import { persistAdvanceInvocation } from "../advance/persist.ts";
-import type { AdvanceSuggestion, InvocationContext, Track2EvidenceConstraint } from "../advance/types.ts";
+import { insertUsageEvent, usageEventFromMoveCall, usageEventFromChallengeCall, usageEventFromJudgeCall } from "../quotas/usage.ts";
+import { getAllowedMoves } from "../act/policy.ts";
+import { generateMoves } from "../act/liveGenerate.ts";
+import { persistMoveInvocation } from "../act/persist.ts";
+import type { Move, InvocationContext, ActEvidenceConstraint } from "../act/types.ts";
 import type { ApplicabilityField, ClaimFields, EvidenceFields } from "../verification/applicability.ts";
 import { assessApplicability } from "../verification/applicability.ts";
 import type { EvidenceRelation } from "../verification/stateMachine.ts";
@@ -105,29 +105,29 @@ export interface RunReviewInput {
   /** Evidence rows already bound to this review. */
   evidenceIds: string[];
   /**
-   * Skip the PER-CLAIM Advance call because the caller runs Advance once per
+   * Skip the PER-CLAIM Move call because the caller runs Move once per
    * invocation instead (POST /v1/reviews/:id/detect ->
-   * runAdvanceForInvocation).
+   * runMovesForInvocation).
    *
    * WHY THIS EXISTS. Both paths were wired at once and both ran. Observed live
-   * 2026-09-04 on a five-claim answer: six per-claim Advance calls fired, the
+   * 2026-09-04 on a five-claim answer: six per-claim Move calls fired, the
    * invocation-level call fired too, and the connector then discarded the
    * per-claim results in favour of the invocation-level ones. So the engine
    * paid for six model calls to produce output that was thrown away, and the
-   * "0-2 suggestions per invocation" cardinality contract was bypassed —
-   * ten suggestions were generated across five invocations, mostly
+   * "0-2 moves per invocation" cardinality contract was bypassed —
+   * ten moves were generated across five invocations, mostly
    * near-duplicates of each other, before the connector trimmed to two.
    *
    * Defaults to FALSE so a caller hitting this route directly (without the
-   * detect call) still gets Advance, exactly as before. The connector sets it
+   * detect call) still gets Move, exactly as before. The connector sets it
    * true because it always calls detect.
    */
-  skipClaimAdvance?: boolean;
+  skipClaimMoves?: boolean;
   /**
-   * ADVANCE — the user's own original request/question for this turn,
+   * MOVE — the user's own original request/question for this turn,
    * verbatim, when the caller actually has it (server/src/server.ts's MCP
    * tool field is optional: "pass this whenever you have it"). Absent or
-   * empty means Advance is skipped entirely for this claim — never a guess,
+   * empty means Move is skipped entirely for this claim — never a guess,
    * see liveGenerate.ts's no_user_request short-circuit. Deliberately NOT
    * part of ClaimFields or claimText: this is about the USER's turn, not
    * about the claim being verified.
@@ -209,29 +209,29 @@ export interface RunReviewResult {
   checksCompleted: boolean;
   evidenceStatuses: RunReviewEvidenceStatus[];
   /**
-   * TRACK 2 / CHALLENGE — the "What to pressure-test" register (§ Track 2 /
+   * ACT / CHALLENGE — the "What to pressure-test" register (§ Act /
    * Challenge layer). Deliberately LAST in this shape, and deliberately a
    * separate field from everything above it: these are non-authoritative
    * QUESTIONS about the finding, never part of it. Empty whenever the org's
    * flag is off, the claim is not material, the invocation budget is spent, or
    * the call failed — and an empty list degrades nothing, because the evidence
-   * record above is the authoritative output and Track 2 is subordinate to it.
+   * record above is the authoritative output and Act is subordinate to it.
    */
   challenges: ChallengeItem[];
   /**
-   * ADVANCE — 0-2 next-move suggestions (§ docs/guide/proposals/
-   * system-definition-synthesis.md Part 11), run CONCURRENTLY with Track 2/
-   * Challenge, both strictly AFTER Track 1's claim + evidence_match rows are
+   * MOVE — 0-2 next moves (§ docs/guide/proposals/
+   * system-definition-synthesis.md Part 11), run CONCURRENTLY with Act/
+   * Challenge, both strictly AFTER Verify's claim + evidence_match rows are
    * already committed (step 8, above). Structurally separate from
-   * `challenges`: different system, different authority level (Advance
+   * `challenges`: different system, different authority level (Move
    * proposes a next HUMAN move about the broader task; Challenge questions
    * THIS claim's already-resolved finding), never merged into one array.
    * Empty whenever no user_request was supplied, no legal move exists for
    * this claim's state, the kill switch is active, quota is exhausted, or
    * the call failed — an empty list degrades nothing, same subordination
-   * Track 1/Track 2 already hold.
+   * Verify/Act already hold.
    */
-  advanceSuggestions: AdvanceSuggestion[];
+  moves: Move[];
 }
 
 /**
@@ -240,10 +240,10 @@ export interface RunReviewResult {
  * no business being expressible there.
  */
 export interface RunReviewOptions {
-  /** Injected Track 2 judge client; defaults to a real DeepSeek client. */
+  /** Injected Act judge client; defaults to a real DeepSeek client. */
   challengeClient?: JudgeClient;
-  /** Injected Advance judge client; defaults to a real DeepSeek client. */
-  advanceClient?: JudgeClient;
+  /** Injected Move judge client; defaults to a real DeepSeek client. */
+  moveClient?: JudgeClient;
 }
 
 const STRING_FIELDS: Exclude<ApplicabilityField, "valueUnit">[] = [
@@ -525,7 +525,7 @@ export async function runReview(
     fieldLocators: Array<{ field: ApplicabilityField; source: "deterministic" | "judge"; locator: Locator }>;
     resolvedTextHash: string;
     applicabilityJson: string;
-    /** The fields applicability actually matched — Track 2 read-only context. */
+    /** The fields applicability actually matched — Act read-only context. */
     matchedFields: string[];
     relation: EvidenceRelation["relation"];
     method: "quoted_or_computed" | "entailed";
@@ -913,28 +913,28 @@ export async function runReview(
     client.release();
   }
 
-  // ── STEP 9 — TRACK 2 / CHALLENGE, and ADVANCE ────────────────────────────
+  // ── STEP 9 — ACT / CHALLENGE, and MOVE ────────────────────────────
   //
   // Both run AFTER step 8, and the ordering is a correctness property, not a
-  // convenience. Track 2/Challenge's entire input is the RESOLVED finding —
+  // convenience. Act/Challenge's entire input is the RESOLVED finding —
   // the state assignState() just produced, the applicability comparison, and
   // the passages that survived re-dereference. Running it earlier would mean
   // generating questions about a finding that did not exist yet. The plan
   // permits "concurrently with (or immediately after)"; immediately after is
-  // the honest reading of "reads the SAME claim/evidence boundary Track 1
-  // already resolved", and it also means Track 2 can never race the claim row
+  // the honest reading of "reads the SAME claim/evidence boundary Verify
+  // already resolved", and it also means Act can never race the claim row
   // it must reference.
   //
-  // Advance is run CONCURRENTLY WITH Track 2/Challenge (Promise.all, not
+  // Move is run CONCURRENTLY WITH Act/Challenge (Promise.all, not
   // sequential awaits) rather than gated behind it — the two are independent
-  // outputs of the same already-committed Track 1 result, and neither can
-  // block or alter it: Track 1's claim + evidence_match rows are already
-  // committed above, and both runTrack2Challenge and runAdvanceForClaim take
+  // outputs of the same already-committed Verify result, and neither can
+  // block or alter it: Verify's claim + evidence_match rows are already
+  // committed above, and both runActChallenge and runMovesForClaim take
   // their inputs BY VALUE and never touch claim or evidence_match again. A
   // failure or slowness in either one cannot delay or change what the other
-  // produces, or what was already returned as this claim's Track 1 finding.
-  const [challenges, advanceSuggestions] = await Promise.all([
-    runTrack2Challenge(
+  // produces, or what was already returned as this claim's Verify finding.
+  const [challenges, moves] = await Promise.all([
+    runActChallenge(
       {
         organizationId,
         reviewId,
@@ -956,12 +956,12 @@ export async function runReview(
       db,
       options.challengeClient,
     ),
-    // Skipped entirely when the caller runs Advance once per invocation — see
-    // RunReviewInput.skipClaimAdvance. Resolving to [] rather than gating the
+    // Skipped entirely when the caller runs Move once per invocation — see
+    // RunReviewInput.skipClaimMoves. Resolving to [] rather than gating the
     // Promise.all keeps the tuple shape and the concurrency story unchanged.
-    input.skipClaimAdvance === true
-      ? Promise.resolve([] as AdvanceSuggestion[])
-      : runAdvanceForClaim(
+    input.skipClaimMoves === true
+      ? Promise.resolve([] as Move[])
+      : runMovesForClaim(
           {
             organizationId,
             reviewId,
@@ -974,7 +974,7 @@ export async function runReview(
             userRequest,
           },
           db,
-          options.advanceClient,
+          options.moveClient,
         ),
   ]);
 
@@ -995,12 +995,12 @@ export async function runReview(
     checksCompleted,
     evidenceStatuses,
     challenges,
-    advanceSuggestions,
+    moves,
   };
 }
 
-/** Everything Track 2 is allowed to see about a finished finding, by value. */
-interface Track2Input {
+/** Everything Act is allowed to see about a finished finding, by value. */
+interface ActInput {
   organizationId: string;
   reviewId: string;
   claimId: string;
@@ -1016,7 +1016,7 @@ interface Track2Input {
 }
 
 /**
- * The Track 2 stage: gate, budget, quota, generate, persist.
+ * The Act stage: gate, budget, quota, generate, persist.
  *
  * THE GATE ORDER IS THE COST CONTRACT, and each step is ordered by what it
  * costs to evaluate:
@@ -1033,22 +1033,22 @@ interface Track2Input {
  *      IS the invocation's spend so far; a review whose budget is gone makes no
  *      call either.
  *   4. checkQuota — the same gate the field judge and claim extraction use.
- *      Track 2 is a real DeepSeek call and must never become an unmetered path.
+ *      Act is a real DeepSeek call and must never become an unmetered path.
  *
- * NEVER THROWS. Track 2 is subordinate by construction, so any failure in it
+ * NEVER THROWS. Act is subordinate by construction, so any failure in it
  * degrades to zero challenge items and an already-committed, fully valid Track
  * 1 finding. A question layer must not be able to fail a verification.
  */
-async function runTrack2Challenge(
-  input: Track2Input,
+async function runActChallenge(
+  input: ActInput,
   db: pg.Pool,
   client?: JudgeClient,
 ): Promise<ChallengeItem[]> {
   try {
     if (!input.materiality) return [];
 
-    const flag = await db.query("SELECT track2_enabled FROM organization WHERE id = $1", [input.organizationId]);
-    if (flag.rows[0]?.track2_enabled !== true) return [];
+    const flag = await db.query("SELECT act_challenge_enabled FROM organization WHERE id = $1", [input.organizationId]);
+    if (flag.rows[0]?.act_challenge_enabled !== true) return [];
 
     // The per-invocation cap, counted across every claim already written for
     // this review — including by earlier requests, since one review's claims
@@ -1140,13 +1140,13 @@ async function runTrack2Challenge(
 
       // Persisted on the SAME locked connection/transaction, into
       // challenge_item and nothing else. Note what is absent: the claim row
-      // is never touched, nor is evidence_match. A Track 2 write cannot reach
+      // is never touched, nor is evidence_match. A Act write cannot reach
       // either table from here.
       for (const [ordinal, item] of generated.items.entries()) {
         await conn.query(
           `INSERT INTO challenge_item
              (claim_id, ordinal, challenge_type, action, prompt, why_it_matters,
-              model, prompt_version, track1_state, track1_state_reason)
+              model, prompt_version, verify_state, verify_state_reason)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             input.claimId,
@@ -1171,8 +1171,8 @@ async function runTrack2Challenge(
       conn.release();
     }
   } catch (err) {
-    // Subordinate by construction: a Track 2 failure is logged and swallowed,
-    // never propagated into a committed Track 1 result.
+    // Subordinate by construction: a Act failure is logged and swallowed,
+    // never propagated into a committed Verify result.
     logEvent({
       event: "challenge_failed",
       error_cause: (err as Error)?.message ?? "unknown",
@@ -1183,8 +1183,8 @@ async function runTrack2Challenge(
   }
 }
 
-/** Everything Advance is allowed to see about this claim, by value. */
-interface AdvanceInput {
+/** Everything Move is allowed to see about this claim, by value. */
+interface MoveInput {
   organizationId: string;
   reviewId: string;
   claimId: string;
@@ -1198,15 +1198,15 @@ interface AdvanceInput {
 }
 
 /**
- * The ADVANCE stage: build the bounded InvocationContext, compute the allowed
+ * The MOVE stage: build the bounded InvocationContext, compute the allowed
  * move set, generate (quota/kill-switch gated inside liveGenerate.ts),
  * persist, return. NEVER THROWS — same subordination discipline as
- * runTrack2Challenge: Advance is a suggestion layer, and any failure inside it
- * degrades to zero suggestions over an intact, already-committed Track 1
+ * runActChallenge: Move is a move layer, and any failure inside it
+ * degrades to zero moves over an intact, already-committed Verify
  * finding, never a failed verification.
  *
- * GATE ORDER, cheapest-first, same shape as Track 2/Challenge's own gate:
- *   1. userRequest — absent/empty means Advance has nothing to recommend a
+ * GATE ORDER, cheapest-first, same shape as Act/Challenge's own gate:
+ *   1. userRequest — absent/empty means Move has nothing to recommend a
  *      next move ABOUT (types.ts's InvocationContext doc comment); skip
  *      before building anything. Free: already in memory.
  *   2. allowedMoves — policy.ts's getAllowedMoves is pure and always
@@ -1214,73 +1214,73 @@ interface AdvanceInput {
  *      short-circuits on an empty set defensively regardless, so this is not
  *      a gate this function needs to duplicate.
  *   3. liveGenerate.ts's own kill-switch and quota gates, consulted inside
- *      generateAdvanceSuggestions() itself (organizationId + db passed
+ *      generateMoves() itself (organizationId + db passed
  *      through) — the same DeepSeek call site every other judge-involved path
  *      in this codebase gates the same way.
  *
- * Not held under the same advisory lock / per-invocation budget Track 2/
- * Challenge uses: Advance's own cardinality cap (0-2 suggestions) is entirely
+ * Not held under the same advisory lock / per-invocation budget Act/
+ * Challenge uses: Move's own cardinality cap (0-2 moves) is entirely
  * WITHIN one call (validator.ts's MAX_SUGGESTIONS), never a cross-claim
  * invocation budget — there is no sibling-row count to serialize against.
  */
-async function runAdvanceForClaim(
-  input: AdvanceInput,
+async function runMovesForClaim(
+  input: MoveInput,
   db: pg.Pool,
   client?: JudgeClient,
-): Promise<AdvanceSuggestion[]> {
+): Promise<Move[]> {
   try {
     // Org feature flag (migration 0014), checked FIRST — before the
     // user_request short-circuit, before any budget query, and before any
-    // client is constructed. Same ordering discipline as Track 2/Challenge's
+    // client is constructed. Same ordering discipline as Act/Challenge's
     // own flag read: a disabled org must cost exactly zero extra DeepSeek
     // calls, not one whose result is then discarded.
     //
-    // Deliberately writes no advance_invocation row. A 'skipped' row means
-    // "Advance was eligible to run and short-circuited on its own policy" —
+    // Deliberately writes no act_invocation row. A 'skipped' row means
+    // "Move was eligible to run and short-circuited on its own policy" —
     // an org that has the feature turned off was never eligible at all, and
     // recording one row per claim per disabled org would bury the real
     // policy short-circuits in noise.
-    const flag = await db.query("SELECT advance_enabled FROM organization WHERE id = $1", [input.organizationId]);
-    if (flag.rows[0]?.advance_enabled !== true) return [];
+    const flag = await db.query("SELECT act_moves_enabled FROM organization WHERE id = $1", [input.organizationId]);
+    if (flag.rows[0]?.act_moves_enabled !== true) return [];
 
     const userRequest = input.userRequest?.trim() ?? "";
     if (userRequest.length === 0) {
-      // Recorded as a 'skipped' row (not silence) so "Advance never ran for
+      // Recorded as a 'skipped' row (not silence) so "Move never ran for
       // this claim because there was no user_request" is distinguishable
-      // later from "Advance ran and found nothing" or "Advance's call
+      // later from "Move ran and found nothing" or "Move's call
       // failed" — see persist.ts's status derivation and
-      // migration 0013's advance_invocation.status doc comment.
-      await persistAdvanceInvocation(db, {
+      // migration 0013's act_invocation.status doc comment.
+      await persistMoveInvocation(db, {
         organizationId: input.organizationId,
         reviewId: input.reviewId,
         claimId: input.claimId,
         invocationContextId: input.claimId,
         hasEvidenceConstraint: false,
         allowedMoves: [],
-        // Neither `suggestions` nor `record` set — persist.ts's own status
+        // Neither `moves` nor `record` set — persist.ts's own status
         // derivation reads this as 'skipped' (no call was attempted at all),
-        // distinct from the 'ok' zero-suggestions case liveGenerate.ts's
-        // in-call short-circuits produce (which DO set `suggestions: []`).
+        // distinct from the 'ok' zero-moves case liveGenerate.ts's
+        // in-call short-circuits produce (which DO set `moves: []`).
         result: { error: "no_user_request" },
       });
       return [];
     }
 
-    // Case 2 (§ Part 11): a sealed Track 1 boundary exists whenever this
+    // Case 2 (§ Part 11): a sealed Verify boundary exists whenever this
     // claim is material, its lifecycle actually completed (never surface an
-    // incomplete check as a "finding" Advance can react to), and the
+    // incomplete check as a "finding" Move can react to), and the
     // resolved state is not SUPPORTED — i.e. exactly the cases in which
     // server/src/engineClient.ts's own findingFor() would render a finding
     // to the user. boundary_text is built from the same two fields the card
-    // already treats as the stable, displayable record of what Track 1
+    // already treats as the stable, displayable record of what Verify
     // established (state + state_reason) — never a paraphrase of anything
-    // Track 1 did not itself assert.
+    // Verify did not itself assert.
     const hasEvidenceConstraint = input.materiality && input.lifecycle === "completed" && input.state !== "SUPPORTED";
-    const constraint: Track2EvidenceConstraint | undefined = hasEvidenceConstraint
+    const constraint: ActEvidenceConstraint | undefined = hasEvidenceConstraint
       ? {
           invocation_id: input.claimId,
           material: true,
-          boundary_text: `Notary's Track 1 check resolved the claim "${input.claimText}" to ${input.state} (${input.stateReason}).`,
+          boundary_text: `Notary's Verify check resolved the claim "${input.claimText}" to ${input.state} (${input.stateReason}).`,
         }
       : undefined;
 
@@ -1298,7 +1298,7 @@ async function runAdvanceForClaim(
       created_at: new Date().toISOString(),
     };
 
-    const generated = await generateAdvanceSuggestions(context, allowedMoves, constraint, {
+    const generated = await generateMoves(context, allowedMoves, constraint, {
       client,
       organizationId: input.organizationId,
       db,
@@ -1310,11 +1310,11 @@ async function runAdvanceForClaim(
     if (generated.record?.inputTokens !== undefined) {
       await insertUsageEvent(
         db,
-        usageEventFromAdvanceCall(generated.record, { organizationId: input.organizationId, reviewId: input.reviewId }),
+        usageEventFromMoveCall(generated.record, { organizationId: input.organizationId, reviewId: input.reviewId }),
       );
     }
 
-    const persisted = await persistAdvanceInvocation(db, {
+    const persisted = await persistMoveInvocation(db, {
       organizationId: input.organizationId,
       reviewId: input.reviewId,
       claimId: input.claimId,
@@ -1324,13 +1324,13 @@ async function runAdvanceForClaim(
       result: generated,
     });
 
-    return [...persisted.suggestions];
+    return [...persisted.moves];
   } catch (err) {
-    // Subordinate by construction, same as Track 2/Challenge: an Advance
+    // Subordinate by construction, same as Act/Challenge: a Move
     // failure is logged and swallowed, never propagated into a committed
-    // Track 1 result.
+    // Verify result.
     logEvent({
-      event: "advance_failed",
+      event: "move_failed",
       error_cause: (err as Error)?.message ?? "unknown",
       organization_id: input.organizationId,
       review_id: input.reviewId,

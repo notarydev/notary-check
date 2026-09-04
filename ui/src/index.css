@@ -238,14 +238,14 @@ body {
    task, not a question about the finding on this card. Same subordinate
    treatment, its own top margin so the two registers never visually blend
    into one list. */
-.notary-advance {
+.notary-move {
   margin-top: 10px;
 }
 
 /* Side by side, wrapping when they do not fit. Stacking two short labels put
    them on separate lines and made a 0-2 item list read like a menu; inline
    keeps the whole card to one or two lines at rest, which is the point. */
-.notary-advance-pills {
+.notary-move-pills {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;

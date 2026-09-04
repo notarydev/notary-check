@@ -1,5 +1,5 @@
-// Track 2 / Challenge generation (§ Track 2 / Challenge layer). One function,
-// `generateChallenges`, takes an ALREADY-RESOLVED Track 1 finding and returns
+// Act / Challenge generation (§ Act / Challenge layer). One function,
+// `generateChallenges`, takes an ALREADY-RESOLVED Verify finding and returns
 // 0-2 typed, bounded questions about it.
 //
 // THE AUTHORITY BOUNDARY, in code rather than in prose:
@@ -56,11 +56,11 @@ import {
 import { isJudgeDisabled } from "./killSwitch.ts";
 
 /**
- * The read-only view of a finished Track 1 finding, as a CALLER supplies it —
+ * The read-only view of a finished Verify finding, as a CALLER supplies it —
  * with RAW evidence quotes. Delimiting is done here, not by the caller, so it
- * is structurally impossible to reach the Track 2 prompt with undelimited
+ * is structurally impossible to reach the Act prompt with undelimited
  * evidence text (locked test case 17's data-vs-instructions guard). This is the
- * same discipline extractField applies for Track 1, moved one layer in.
+ * same discipline extractField applies for Verify, moved one layer in.
  */
 export interface ChallengeFindingContext extends Omit<FindingContext, "excerpts"> {
   excerpts: readonly { relation: string; locatorDisplay: string; quote: string }[];
@@ -70,10 +70,10 @@ export type ChallengeType = (typeof CHALLENGE_TYPES)[number];
 export type ChallengeAction = (typeof CHALLENGE_ACTIONS)[number];
 
 /**
- * ONE challenge item — the exact output contract from § Track 2 output
+ * ONE challenge item — the exact output contract from § Act output
  * contract, and deliberately nothing more. There is no field here in which a
  * verdict, a confidence figure, a score, an answer, or a transcript could be
- * expressed, which is what makes "Track 2 never produces a verdict" a property
+ * expressed, which is what makes "Act never produces a verdict" a property
  * of the type rather than a rule someone has to remember.
  */
 export interface ChallengeItem {
@@ -116,7 +116,7 @@ export interface GenerateChallengesOptions {
  *
  * Never throws: a transport failure, an unparseable answer, or an output that
  * smuggled a forbidden field all resolve to zero items with the reason on the
- * record. Zero items is always a safe result — Track 2 is subordinate to the
+ * record. Zero items is always a safe result — Act is subordinate to the
  * evidence record by construction, so its absence degrades nothing.
  */
 export async function generateChallenges(
@@ -151,7 +151,7 @@ export async function generateChallenges(
   }
 
   // The judge kill switch governs every DeepSeek call in this system, and
-  // Track 2 is one. When it is active there is no network call at all.
+  // Act is one. When it is active there is no network call at all.
   if (isJudgeDisabled()) {
     logEvent({
       event: "challenge_generation",
@@ -295,7 +295,7 @@ export function extractChallengeJson(text: string): unknown {
   }
 }
 
-/** Validates raw model output against the exact Track 2 contract. */
+/** Validates raw model output against the exact Act contract. */
 export function parseChallengeOutput(rawAnswer: string): ChallengeParseResult {
   const json = extractChallengeJson(rawAnswer);
   if (json === undefined) {

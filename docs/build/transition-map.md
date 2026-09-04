@@ -63,9 +63,9 @@ not a refactor.**
 | `payload_revoked_at` and the revocation purge | `0011` | Honest deletion: after purge a record must become *unable to re-resolve*, never quietly keep rendering. Canonical § 8. |
 | `policy_version`, `evaluator_version`, `prompt_version` on stored rows | `0003`, `0012`, `0013` | Controlled re-evaluation needs to know which procedure generation produced a result. Without it, re-running a check later measures nothing. |
 | `claim.state` CHECK deliberately excludes `CONFLICTED` / `ATTESTED` | `0003` | With a comment saying a later migration extends it when CAPTURE is built. This is designed-for, not an oversight — do not "fix" it by widening the constraint early. |
-| Non-authoritative output lives in its own tables, never on `claim` | `0012`, `0013` | `challenge_item` and `advance_suggestion` have **no** verdict, confidence, or score column, so a smuggled field has nowhere to land even if it passed validation. The separation makes one class of mistake require a deliberate JOIN rather than a forgotten WHERE. |
-| The four-move `CHECK` constraint on `advance_suggestion.move` | `0013` | The closed vocabulary is enforced in the database independently of the validator, so a future caller that bypasses the validator still cannot invent a fifth move. |
-| `advance_enabled` read before any client construction | `0014`, `reviewFlow.ts` | Per-customer rollout, and a disabled org costs exactly zero model calls — not a call whose result is discarded. |
+| Non-authoritative output lives in its own tables, never on `claim` | `0012`, `0013` | `challenge_item` and `act_move` have **no** verdict, confidence, or score column, so a smuggled field has nowhere to land even if it passed validation. The separation makes one class of mistake require a deliberate JOIN rather than a forgotten WHERE. |
+| The four-move `CHECK` constraint on `act_move.move` | `0013` | The closed vocabulary is enforced in the database independently of the validator, so a future caller that bypasses the validator still cannot invent a fifth move. |
+| `act_moves_enabled` read before any client construction | `0014`, `reviewFlow.ts` | Per-customer rollout, and a disabled org costs exactly zero model calls — not a call whose result is discarded. |
 
 **The pattern worth naming, because it is the thing to preserve:** every
 one of these puts a rule in *schema or code structure* rather than in
@@ -151,7 +151,7 @@ gap is that nothing enforces it, and the failure is silent.
 | Deploy target, image tag, env var, or service | `architecture-and-progress.md` deploy + domains sections. **Verify the deploy actually landed** — `aws lightsail get-container-service-deployments` — a `.14` was once built, pushed, and never deployed while the docs implied otherwise |
 | The MCP tool schema or description | `tier-1-build-and-operating-plan.md` § Tool and UI contract |
 | Card states, finding types, or what surfaces | `tier-1-build-and-operating-plan.md` § Engine state → finding type → card state |
-| A new detector, move, or model call site | § Track 2 / Advance build order, plus this file's section 2 if it adds a structural rule |
+| A new detector, move, or model call site | § Act / Move build order, plus this file's section 2 if it adds a structural rule |
 | Judge prompt, model, or version | § Evaluator governance and rollback — **and re-run the pre-pilot gate**, which is a stated release requirement, not a suggestion |
 | Anything that finishes, blocks, or reorders work | `whats-left.md` |
 | Anything that changes what Notary *is* or may claim | A **proposal** in `guide/proposals/`. Never a direct edit to the canonical definition — see `CLAUDE.md` |
@@ -198,8 +198,8 @@ error at the time:
   "X is still wrong" sentence in a doc is a claim with a shelf life —
   verify it by reading the file, not by trusting the sentence.
 - **A rule that owes something, where the debt is never collected.**
-  "Advance gets its own flag once it has persisted state" sat true and
-  unactioned for a day while Advance ran ungated in production. Any doc
+  "Move gets its own flag once it has persisted state" sat true and
+  unactioned for a day while Move ran ungated in production. Any doc
   sentence of the form *"X once Y"* is a scheduled obligation — when Y
   happens, X is now overdue. Grep for `once ` in the plan periodically.
 

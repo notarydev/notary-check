@@ -29,16 +29,16 @@ Added 2026-09-03 because the vocabulary has repeatedly outrun the code, and desi
 
 | Word | What it actually is | State |
 |---|---|---|
-| **Track 1**, **Verify** | Takes a claim and a source, finds the exact spot, decides whether it holds. Four outcomes plus the `no_source` flag. | **Live** |
-| **Track 2**, **Advance** | After a check, proposes up to two next moves from a closed set of four: `clarify`, `test`, `compare`, `repair`. | **Live** |
-| **"Detector"** | Informal word for a kind of thing Notary can notice and act on. **Today there are exactly four of them and they are the four Advance moves.** | — |
+| **Verify**, **Verify** | Takes a claim and a source, finds the exact spot, decides whether it holds. Four outcomes plus the `no_source` flag. | **Live** |
+| **Act**, **Move** | After a check, proposes up to two next moves from a closed set of four: `clarify`, `test`, `compare`, `repair`. | **Live** |
+| **"Detector"** | Informal word for a kind of thing Notary can notice and act on. **Today there are exactly four of them and they are the four moves.** | — |
 | **"Repair"**, **"Inspect/Test"** | Renames of the `repair` and `test` moves. Not separate features, not things to build. | **Already live** |
-| **Challenge** (Track 2 v1) | An earlier, separate suggestion register. Superseded by Advance. | **Built, frozen, permanent** |
+| **Challenge** (Act v1) | An earlier, separate move register. Superseded by Move. | **Built, frozen, permanent** |
 | **Reconcile** | Compares the current answer against something established **earlier in the same conversation** — a decision, number, or constraint — with no external source involved. The one genuinely new detector proposed. | **Not built.** Not a move, not in the policy table, no `prior_context` field. A proposal only |
 | **Exploratory review** | Open-ended transcript between Claude and the judge. | **Designed, deliberately deferred** — § Do not build yet |
 | **WATCH** | Deterministic interception of every response. The only mechanism that can support a coverage claim. | **Later tier**, not CHECK |
 
-**Where the AI is, precisely.** Two model calls in Track 1, both ours, both DeepSeek: claim extraction reads Claude's answer; the judge reads the resolved evidence passage and answers narrow per-field questions *blind*, without being shown what the claim asserted. Everything that **decides** is code with no model in it — locator resolution, applicability comparison, and `verification/stateMachine.ts`, which has zero imports. Claude only supplies; it never reads evidence for us and never assigns a state.
+**Where the AI is, precisely.** Two model calls in Verify, both ours, both DeepSeek: claim extraction reads Claude's answer; the judge reads the resolved evidence passage and answers narrow per-field questions *blind*, without being shown what the claim asserted. Everything that **decides** is code with no model in it — locator resolution, applicability comparison, and `verification/stateMachine.ts`, which has zero imports. Claude only supplies; it never reads evidence for us and never assigns a state.
 
 ## Build decision
 
@@ -117,7 +117,7 @@ The general notification-design literature gives the sharpest, most directly cit
 
 ### The experience
 
-**Superseded 2026-09-03 for presentation, unchanged for substance — read this before the button-row examples below.** The `[Open evidence] [Qualify] [Dismiss] [Recheck]`-style button rows in this section describe what's actually deployed today (Phase 0's shipped card), not the target design. The locked replacement (full rationale: `docs/guide/proposals/system-definition-synthesis.md` Part 11 § UI interaction model) is: Track 1 renders as a small icon (not a text pill, not a button row) — hover for the one-line reason, click expands inline to show the finding AND its evidence together, no separate "Open evidence" step. "Qualify"/"Replace" stop being Track 1's own buttons and become Advance-generated suggestions instead (Track 1's own template is deliberately unable to write a good sentence; Track 2 can). "Recheck" is dropped as a manual button — it happens for free when Claude naturally re-invokes the tool on its next answer. The only thing that stays purely local to Track 1's expanded view is **Dismiss**. Every rule below this note about *when* a card states what (quiet-by-default, no severity, exact claim/passage, the three states) is unchanged — only how those states are drawn on screen changed.
+**Superseded 2026-09-03 for presentation, unchanged for substance — read this before the button-row examples below.** The `[Open evidence] [Qualify] [Dismiss] [Recheck]`-style button rows in this section describe what's actually deployed today (Phase 0's shipped card), not the target design. The locked replacement (full rationale: `docs/guide/proposals/system-definition-synthesis.md` Part 11 § UI interaction model) is: Verify renders as a small icon (not a text pill, not a button row) — hover for the one-line reason, click expands inline to show the finding AND its evidence together, no separate "Open evidence" step. "Qualify"/"Replace" stop being Verify's own buttons and become Move-generated moves instead (Verify's own template is deliberately unable to write a good sentence; Act can). "Recheck" is dropped as a manual button — it happens for free when Claude naturally re-invokes the tool on its next answer. The only thing that stays purely local to Verify's expanded view is **Dismiss**. Every rule below this note about *when* a card states what (quiet-by-default, no severity, exact claim/passage, the three states) is unchanged — only how those states are drawn on screen changed.
 
 The card is quiet when no material issue is found. It does not display a green “truth” badge. It states exactly one of:
 
@@ -211,22 +211,22 @@ Three separate rules force this state to exist rather than reusing an existing o
 
 The "Finding type" column above is exactly what `Claim.state_reason` already exists to hold (§ Core data model) — this table is that field's enumeration, made explicit rather than left as an implicit "some string." It's what lets § Monitoring segment telemetry by actual cause (a broken source is a different problem from an out-of-class document, which is a different problem from a judge abstention) instead of averaging them into one undifferentiated rate. The card's own copy can stay quiet and undifferentiated between the `could_not_check` causes if that's the right UX call — the requirement is that `state_reason` isn't lossy, not that the UI must expose every distinction.
 
-### Track 2 / Challenge layer — frozen, archived
+### Act / Challenge layer — frozen, archived
 
-Track 2 v1 ("Challenge") is built, tested, isolation-verified, and
-**frozen** as of 2026-09-03. `track2_enabled` stays off and is not reused
-for Advance. Do not extend it. Its full design is retained in
+Act v1 ("Challenge") is built, tested, isolation-verified, and
+**frozen** as of 2026-09-03. `act_challenge_enabled` stays off and is not reused
+for Move. Do not extend it. Its full design is retained in
 [`phase-0-and-challenge-archive.md`](phase-0-and-challenge-archive.md)
 because the code still exists and § Locked test suite still references it
 — not because it is current guidance.
 
-**"Track 2" now means Advance**, below.
+**"Act" now means Move**, below.
 
-### Track 2 / Advance — the current build target (decided 2026-09-03)
+### Act / Move — the current build target (decided 2026-09-03)
 
 **Status: in scope for the current build.** This supersedes the Challenge layer above. Full design and rationale: `docs/guide/proposals/system-definition-synthesis.md` Part 11. This section is the build spec, kept in sync with what's actually implemented — Part 11 is the design history, this is the executable contract.
 
-**The one-sentence version**: Track 1 tells you what you can rely on; Track 2 helps you decide what to do about it. **Precise property, not just "independent"**: Track 2 has independent authority, execution, and inputs, with exactly one controlled information channel from Track 1 — Track 2 never waits for Track 1 to produce its initial move, and Track 1 never controls Track 2's execution. That one channel is one-directional: if Track 1 establishes something materially important, it sends Track 2 one sealed statement (`boundary_text`), and Track 2 may revise its recommendation. Track 2 never verifies evidence, never invents facts, has no tools (no browser/retrieval/APIs/agents in alpha), and never acts for the user.
+**The one-sentence version**: Verify tells you what you can rely on; Act helps you decide what to do about it. **Precise property, not just "independent"**: Act has independent authority, execution, and inputs, with exactly one controlled information channel from Verify — Act never waits for Verify to produce its initial move, and Verify never controls Act's execution. That one channel is one-directional: if Verify establishes something materially important, it sends Act one sealed statement (`boundary_text`), and Act may revise its recommendation. Act never verifies evidence, never invents facts, has no tools (no browser/retrieval/APIs/agents in alpha), and never acts for the user.
 
 **The core principle, the one sentence to keep if nothing else survives**: *The model proposes. Policy constrains. Validator rejects. Code never repairs. The user acts.*
 
@@ -239,12 +239,12 @@ repair   — something in the current work needs fixing; fix it without
            carrying the bad premise forward
 ```
 
-**Cardinality — locked 2026-09-03, corrected from an earlier "always exactly one move" spec**: each round produces **0, 1, or 2 suggestions**, not always exactly 1. `0` is a legitimate result ("no useful intervention"), not a failure — the UI must render it as "Advance looked and found nothing," distinct from an error state. A second item is legal only when the model judges it a materially distinct next move, never padding to fill the cap; code enforces the structural cap (≤2, unique ids, no duplicate `(move, normalized short_label)`) but does not and cannot judge semantic distinctness — that is the model's contract obligation, checked empirically by the adversarial eval below, not by code. Output contract:
+**Cardinality — locked 2026-09-03, corrected from an earlier "always exactly one move" spec**: each round produces **0, 1, or 2 moves**, not always exactly 1. `0` is a legitimate result ("no useful intervention"), not a failure — the UI must render it as "Move looked and found nothing," distinct from an error state. A second item is legal only when the model judges it a materially distinct next move, never padding to fill the cap; code enforces the structural cap (≤2, unique ids, no duplicate `(move, normalized short_label)`) but does not and cannot judge semantic distinctness — that is the model's contract obligation, checked empirically by the adversarial eval below, not by code. Output contract:
 ```ts
-interface AdvanceSuggestion { id: string; short_label: string; move: AdvanceMove; prompt: string; }
-interface AdvanceModelResponse { suggestions: AdvanceSuggestion[]; }  // 0 <= length <= 2
+interface Move { id: string; short_label: string; move: MoveKind; prompt: string; }
+interface MoveModelResponse { moves: Move[]; }  // 0 <= length <= 2
 ```
-`short_label` is a short, scannable headline shown by default; `prompt` (the full actionable ask) is generated in the SAME call but only revealed in the UI on click — eager generation, lazy display, not lazy generation (a second call at click-time would risk the clicked item no longer matching the live conversation state). Full design, the six guardrail layers, and the required adversarial test suite: `docs/guide/proposals/system-definition-synthesis.md` Part 11 § Suggestion cardinality and the six-layer guardrail architecture.
+`short_label` is a short, scannable headline shown by default; `prompt` (the full actionable ask) is generated in the SAME call but only revealed in the UI on click — eager generation, lazy display, not lazy generation (a second call at click-time would risk the clicked item no longer matching the live conversation state). Full design, the six guardrail layers, and the required adversarial test suite: `docs/guide/proposals/system-definition-synthesis.md` Part 11 § Move cardinality and the six-layer guardrail architecture.
 
 **Build order for the v1 slice — corrected 2026-09-03: schema/policy/validator/fixtures BEFORE any live model call, not after.** A live model call must never become the de facto specification before fidelity has been tested against real examples — so the isolated unit below has to exist and be exercised against frozen, rights-cleared example cases before a real model is wired in, not the other way around.
 ```
@@ -256,11 +256,11 @@ interface AdvanceModelResponse { suggestions: AdvanceSuggestion[]; }  // 0 <= le
    allowed move set, as versioned data, with fixture coverage — before
    any model exists to consume it.
 3. Define the strict output parser/validator against the ARRAY contract:
-   `{ suggestions: [{id, short_label, move, prompt}] }`, 0-2 items, move
+   `{ moves: [{id, short_label, move, prompt}] }`, 0-2 items, move
    restricted to clarify | test | compare | repair, no verdict/confidence/
    score/extra key at the item or collection level, same discipline as
    fieldExtraction.ts and challengeGeneration.ts already use. Implement all
-   six guardrail layers from Part 11 § Suggestion cardinality — layers 1/2/
+   six guardrail layers from Part 11 § Move cardinality — layers 1/2/
    3/5 are deterministic and must be airtight; layers 4/6 are heuristic and
    must be documented as such, not oversold. Write this against
    HAND-WRITTEN example outputs first (valid and invalid, one case per
@@ -277,23 +277,23 @@ interface AdvanceModelResponse { suggestions: AdvanceSuggestion[]; }  // 0 <= le
    The model is the last piece added, not the first.
 6. Code validates before anything reaches the user. Rejection is
    WHOLE-RESPONSE: if any item fails any layer (structural OR content/
-   authority), the entire response produces NO suggestions — never salvage
+   authority), the entire response produces NO moves — never salvage
    a clean item alongside a rejected one, never a fallback guess for any
    layer.
 7. Run the required adversarial evaluation (Part 11's 7 cases) before this
-   is considered validated — report the observed 0/1/2 suggestion-count
+   is considered validated — report the observed 0/1/2 move-count
    distribution explicitly, not just pass/fail on structural checks. A
    model that always emits 2 has failed "only when it makes sense" even
    while passing every structural test.
-8. User sees each suggestion as a short label by default; clicking reveals
+8. User sees each move as a short label by default; clicking reveals
    the already-generated, editable, sendable prompt — never auto-sent.
-9. A later sealed Track 1 boundary revises EACH currently-untouched item
+9. A later sealed Verify boundary revises EACH currently-untouched item
    independently, in one revision call covering all of them — "touched"
    meaning shown edited, copied, sent, OR dismissed for THAT item;
    merely having been shown does not count. A touched item is never
    mutated; its update becomes a separate, additional item. An untouched
    item is replaced in place (new version, prior version stays in the row,
-   never shown). Locked design — see Part 11 § Suggestion cardinality for
+   never shown). Locked design — see Part 11 § Move cardinality for
    the full rule, including the two-rounds-not-two-calls cap clarification.
 ```
 
@@ -302,53 +302,53 @@ interface AdvanceModelResponse { suggestions: AdvanceSuggestion[]; }  // 0 <= le
 | Step | State |
 |---|---|
 | 1–6 (schema, policy, validator, fixtures, live call, whole-response rejection) | **Built and live** |
-| 7 — the 7 adversarial cases + reported 0/1/2 distribution | **RUN 2026-09-03**, after Advance had already been deployed — the ordering was wrong, and that is recorded rather than tidied away. Harness: `engine/eval/advance-adversarial.ts`. Result against live DeepSeek: **21 case-runs, 0 violations**; distribution **0:14% / 1:43% / 2:43%**; the "no useful move exists" case returned 0 on all three runs, which is the behaviour this step exists to protect. Not the always-emits-2 failure this build order warns about. Re-run on any Advance prompt or model change: `npx tsx eval/advance-adversarial.ts --repeat 3`. Layers 4 and 6 are heuristic, so a green run is evidence, not proof. |
+| 7 — the 7 adversarial cases + reported 0/1/2 distribution | **RUN 2026-09-03**, after Move had already been deployed — the ordering was wrong, and that is recorded rather than tidied away. Harness: `engine/eval/moves-adversarial.ts`. Result against live DeepSeek: **21 case-runs, 0 violations**; distribution **0:14% / 1:43% / 2:43%**; the "no useful move exists" case returned 0 on all three runs, which is the behaviour this step exists to protect. Not the always-emits-2 failure this build order warns about. Re-run on any Move prompt or model change: `npx tsx eval/moves-adversarial.ts --repeat 3`. Layers 4 and 6 are heuristic, so a green run is evidence, not proof. |
 | 8 — label by default, full prompt on click | **Built and live** |
-| 9 — item-level conditional replace on a later Track 1 boundary | **Still deferred**, correctly |
+| 9 — item-level conditional replace on a later Verify boundary | **Still deferred**, correctly |
 
-**No longer deferred — both shipped 2026-09-03**, and are struck from the deferral list they used to sit on: the persisted lifecycle tables (now `advance_invocation` / `advance_suggestion` / `advance_event`, migration `0013`) and the connector change passing a real `user_request` through.
+**No longer deferred — both shipped 2026-09-03**, and are struck from the deferral list they used to sit on: the persisted lifecycle tables (now `act_invocation` / `act_move` / `act_move_event`, migration `0013`) and the connector change passing a real `user_request` through.
 
 **Still deferred:** step 9's conditional-replace logic, and the authenticated status-polling channel for the embedded UI.
 
-**Known gap in what shipped, still open:** `advance_event` exists as a table but is **written by nothing in production** — it is referenced only by tests. There is zero interaction telemetry for Advance. Closing it needs an authenticated ingress path from the sandboxed card iframe, which this plan lists as deliberately deferred; `shown`/`revealed`/`committed`/`dismissed` are UI facts the server cannot infer, and recording "returned" as "shown" would be a lie. Tracked as `whats-left.md` O2.
+**Known gap in what shipped, still open:** `act_move_event` exists as a table but is **written by nothing in production** — it is referenced only by tests. There is zero interaction telemetry for Move. Closing it needs an authenticated ingress path from the sandboxed card iframe, which this plan lists as deliberately deferred; `shown`/`revealed`/`committed`/`dismissed` are UI facts the server cannot infer, and recording "returned" as "shown" would be a lie. Tracked as `whats-left.md` O2.
 
 The frozen example cases used in step 4 are the same real, rights-cleared coding-agent transcripts (plus the user's own historical non-coding transcripts) that Part 11's offline evaluation describes — building the fixture set and running the schema/policy/validator against it (step 4) IS the first phase of that evaluation, not a separate later task.
 
-### One suggestion register, not two — decided 2026-09-03
+### One move register, not two — decided 2026-09-03
 
-Challenge and Advance were compared directly rather than left in their accidental state (Challenge switched off in the morning because we moved on, never because it lost a comparison). The decision:
+Challenge and Move were compared directly rather than left in their accidental state (Challenge switched off in the morning because we moved on, never because it lost a comparison). The decision:
 
-**Challenge stays frozen permanently. Advance is the only suggestion register.** Its prompt file is retained as a design reference, not as a code path to revive.
+**Challenge stays frozen permanently. Move is the only move register.** Its prompt file is retained as a design reference, not as a code path to revive.
 
-**Why Advance wins on vocabulary.** Challenge's six actions collapse almost entirely into Advance's four moves — `clarify_claim`/`add_source`/`ask_host` → `clarify`, `draft_test` → `test`, `leave_unchanged` → zero suggestions. The only one without an Advance equivalent is `open_evidence`, which was never a next move at all; it is a card interaction. Advance's set is smaller, closed, `CHECK`-enforced in the database, and adversarially validated (2026-09-03). Challenge's is none of those.
+**Why Move wins on vocabulary.** Challenge's six actions collapse almost entirely into Move's four moves — `clarify_claim`/`add_source`/`ask_host` → `clarify`, `draft_test` → `test`, `leave_unchanged` → zero moves. The only one without a Move equivalent is `open_evidence`, which was never a next move at all; it is a card interaction. Move's set is smaller, closed, `CHECK`-enforced in the database, and adversarially validated (2026-09-03). Challenge's is none of those.
 
-**Why not run both.** Challenge caps at 4 per invocation and Advance at 2, so one card could carry **six** items. That breaks the interrupt budget outright. It also means two prompts, two caps, two flags, and two vocabularies to keep honest — and under any broadening of invocation, Challenge produces nothing at all on turns without a resolved claim, leaving a register that is dark most of the time.
+**Why not run both.** Challenge caps at 4 per invocation and Move at 2, so one card could carry **six** items. That breaks the interrupt budget outright. It also means two prompts, two caps, two flags, and two vocabularies to keep honest — and under any broadening of invocation, Challenge produces nothing at all on turns without a resolved claim, leaving a register that is dark most of the time.
 
-**What Challenge had that Advance does not, and which should be taken from it:**
+**What Challenge had that Move does not, and which should be taken from it:**
 
-1. **A real view of the finding.** Challenge is shown the claim, the assigned state, the per-field applicability outcome, and the resolved excerpts. Advance is shown **one sealed sentence** (`boundary_text`). For a suggestion about a finding, that is a large and unnecessary handicap — Advance currently has to infer what kind of mismatch occurred. Widen `Track2EvidenceConstraint`, or add a sibling read-only view, so Advance can see which fields matched and which did not.
-2. **Per-state guidance.** "For CONTRADICTED, help separate a genuinely wrong claim from a wrong scope, period, or incomplete evidence set. For UNSUPPORTED, identify what evidence is missing or how the claim could be qualified — never invent a replacement fact. For INDETERMINATE, help obtain the missing source pointer." That is specific and earned; Advance's prompt has no equivalent.
+1. **A real view of the finding.** Challenge is shown the claim, the assigned state, the per-field applicability outcome, and the resolved excerpts. Move is shown **one sealed sentence** (`boundary_text`). For a move about a finding, that is a large and unnecessary handicap — Move currently has to infer what kind of mismatch occurred. Widen `ActEvidenceConstraint`, or add a sibling read-only view, so Move can see which fields matched and which did not.
+2. **Per-state guidance.** "For CONTRADICTED, help separate a genuinely wrong claim from a wrong scope, period, or incomplete evidence set. For UNSUPPORTED, identify what evidence is missing or how the claim could be qualified — never invent a replacement fact. For INDETERMINATE, help obtain the missing source pointer." That is specific and earned; Move's prompt has no equivalent.
 
-**Deliberately NOT taken: Challenge's `SUPPORTED` branch.** It instructs the model to pressure-test a finding that came back *correct* — which qualifier or alternative reading could still matter. Its own prompt has to caution "do not imply the finding is unsafe just to have something to say," which is the tell. Asking a model to manufacture doubt about a right answer is the most likely source of noise in the whole design, and Advance already handles the case better by construction: with nothing useful to propose, the correct output is zero suggestions — which production data shows it actually produces (4 of 21 invocations, 2026-09-03).
+**Deliberately NOT taken: Challenge's `SUPPORTED` branch.** It instructs the model to pressure-test a finding that came back *correct* — which qualifier or alternative reading could still matter. Its own prompt has to caution "do not imply the finding is unsafe just to have something to say," which is the tell. Asking a model to manufacture doubt about a right answer is the most likely source of noise in the whole design, and Move already handles the case better by construction: with nothing useful to propose, the correct output is zero moves — which production data shows it actually produces (4 of 21 invocations, 2026-09-03).
 
 ### Running the two tracks genuinely in parallel — what it costs
 
-The independence property at the top of this section ("Track 2 never waits for Track 1 to produce its initial move") is **not what ships today.** Today Advance runs per claim submission, strictly after Track 1's rows commit, and does not run at all when there are no material claims. Track 2 is currently a passenger on Track 1.
+The independence property at the top of this section ("Act never waits for Verify to produce its initial move") is **not what ships today.** Today Move runs per claim submission, strictly after Verify's rows commit, and does not run at all when there are no material claims. Act is currently a passenger on Verify.
 
 Making it real depends on two things that are **specified and deferred**, and neither is optional:
 
-1. **The revision step** (build-order step 9) — Track 2 emits immediately, then revises when Track 1's sealed boundary lands. Untouched items are replaced in place; anything the user has engaged with is never mutated.
+1. **The revision step** (build-order step 9) — Act emits immediately, then revises when Verify's sealed boundary lands. Untouched items are replaced in place; anything the user has engaged with is never mutated.
 2. **A channel to update the card after first render.** Without it there is nothing for a revision to land in — the card is drawn once and cannot hear from the server again. This is the deferred authenticated status-polling channel.
 
-**Cheaper interim, if latency is the goal rather than independence:** start both from the same payload and hold the response until both finish. Total latency becomes `max(track1, track2)` rather than `track1 + track2`, with no revision step and no update channel. The trade is that Track 2 sees no finding at all that turn.
+**Cheaper interim, if latency is the goal rather than independence:** start both from the same payload and hold the response until both finish. Total latency becomes `max(verify, act)` rather than `verify + act`, with no revision step and no update channel. The trade is that Act sees no finding at all that turn.
 
-**Do the arithmetic before optimising either way.** Claims are processed in a serial loop, each iteration performing a judge call and an Advance call. A five-claim answer is five sequential round trips. Parallelising *within* one claim saves a fraction of one claim's time; parallelising *across* claims saves most of the total, and claims are fully independent with no ordering between them. Fix the loop first.
+**Do the arithmetic before optimising either way.** Claims are processed in a serial loop, each iteration performing a judge call and a Move call. A five-claim answer is five sequential round trips. Parallelising *within* one claim saves a fraction of one claim's time; parallelising *across* claims saves most of the total, and claims are fully independent with no ordering between them. Fix the loop first.
 
-**Feature flag — the debt, and how it was settled.** Track 2 v1 (Challenge)'s org flag (`track2_enabled`, migration `0012`) stays off and is not reused for Advance; the two features are not variants of the same flag. The rule here has always been that *Advance gets its own flag once it has its own persisted state to gate*. Migration `0013` gave it persisted state on 2026-09-03 and no flag was added, so Advance shipped ungated — by omission, not by decision.
+**Feature flag — the debt, and how it was settled.** Act v1 (Challenge)'s org flag (`act_challenge_enabled`, migration `0012`) stays off and is not reused for Move; the two features are not variants of the same flag. The rule here has always been that *Move gets its own flag once it has its own persisted state to gate*. Migration `0013` gave it persisted state on 2026-09-03 and no flag was added, so Move shipped ungated — by omission, not by decision.
 
-**Settled by migration `0014_advance_flag.sql`**: `organization.advance_enabled`, `DEFAULT false` (ship dark for every new org, since Advance is an additional DeepSeek call per material claim) with a one-time backfill to `true`, so organizations that already had Advance running keep it. Adding governance must not be a silent feature removal for a live user. It is read in `reviewFlow.ts` **before any client construction or budget query**, so a disabled org costs exactly zero model calls — not a call whose result is discarded.
+**Settled by migration `0014_advance_flag.sql`**: `organization.act_moves_enabled`, `DEFAULT false` (ship dark for every new org, since Move is an additional DeepSeek call per material claim) with a one-time backfill to `true`, so organizations that already had Move running keep it. Adding governance must not be a silent feature removal for a live user. It is read in `reviewFlow.ts` **before any client construction or budget query**, so a disabled org costs exactly zero model calls — not a call whose result is discarded.
 
-**Still outstanding:** `0014` is not applied to production, so Advance remains ungated on the live deployment until it is (`whats-left.md` F3).
+**Still outstanding:** `0014` is not applied to production, so Move remains ungated on the live deployment until it is (`whats-left.md` F3).
 
 ### Promise and non-promise
 
@@ -384,7 +384,7 @@ Written down 2026-09-03 because it gets re-proposed in every design conversation
 
 **Everything Notary will ever know about a turn arrives in one payload, at the start.** That single constraint decides more of this product's design than any other, so state its consequences plainly:
 
-- There is no "gather context, *then* run Track 2." There is only what arrived.
+- There is no "gather context, *then* run Act." There is only what arrived.
 - A "checklist of what a good conversation should contain" cannot be filled in by interrogating Claude. It can only be (a) requested in the tool's input schema up front, or (b) noted as missing and requested for *next* time.
 - The evidence-binding round-trip (§ Verification pipeline, step 6) is therefore **not one synchronous question**, whatever its own wording implies. It is asynchronous across two invocations, and the second one may never come.
 
@@ -392,7 +392,7 @@ Written down 2026-09-03 because it gets re-proposed in every design conversation
 
 | | Mechanism | Who decides | Reliability |
 |---|---|---|---|
-| **Up front** | The tool's input schema and description request it, so Claude sends it in the first call | Claude, at call time | Probabilistic — Claude may omit any optional field, and does (19% of Advance invocations arrived with no `user_request`, measured in production 2026-09-03) |
+| **Up front** | The tool's input schema and description request it, so Claude sends it in the first call | Claude, at call time | Probabilistic — Claude may omit any optional field, and does (19% of Move invocations arrived with no `user_request`, measured in production 2026-09-03) |
 | **Afterwards** | The model-visible response text names what we could not do and what would fix it; Claude may re-invoke | Claude, next turn | Probabilistic and weaker — an invitation, not a question |
 | **Afterwards, by the user** | A card button calling `app.sendMessage()`, which lands editable text in the user's own input box | **The user** | The only one that does not depend on model behaviour |
 
@@ -407,7 +407,7 @@ Follows directly from the constraint above. § Verification pipeline step 6 spec
 **Two triggers, deliberately both, because they fail differently:**
 
 1. **In the response text**, once per claim: *"Claim 3 could not be checked — no inspectable source. If you used a document or URL for it, call again with it. Point to the source; do not paste what it says."* Claude may act on its own. Free — it rides in a field already sent.
-2. **A card button** on any claim Track 1 could not finish: `[Ask Claude for the source]`, which calls `sendMessage()` and fills the user's input box with that request, unsent and editable. Confirmed on Claude Desktop 2026-09-03 that `sendMessage()` does not auto-send.
+2. **A card button** on any claim Verify could not finish: `[Ask Claude for the source]`, which calls `sendMessage()` and fills the user's input box with that request, unsent and editable. Confirmed on Claude Desktop 2026-09-03 that `sendMessage()` does not auto-send.
 
 **Hard rule on what comes back — this is the load-bearing half.** Asking a model to produce a source creates exactly the pressure under which it invents one. So on this path:
 
@@ -426,7 +426,7 @@ Evidence questions may be put to Claude. Clarification questions may not, and th
 - **"What source did you use?"** is a question about Claude's own process, and the answer is **independently verified** — we fetch the artifact. Claude's description of the source is never trusted; the source is.
 - **"Is 'revenue' gross or net?"** has no independent verification. Worse, the canonical definition (§ 5.2) forbids it outright: claim-side ambiguity may be resolved *only* by explicit context already in the answer, a declared deterministic rule, or a **user-confirmed** revision. A model guessing the likelier reading is specifically ruled out, because evidence-led reinterpretation resolves the check in the direction the available evidence happens to point — deciding the question the procedure exists to answer.
 
-So clarification goes to the **user**, as a suggestion. It is Advance's `clarify` move. It is not, and cannot become, a background question to Claude.
+So clarification goes to the **user**, as a move. It is Move's `clarify` move. It is not, and cannot become, a background question to Claude.
 
 ### There is no persistent, always-visible Notary button — what's actually possible instead
 
@@ -513,7 +513,7 @@ review_source_backed_answer({
     source_role: "answer_citation" | "user_added" | "workspace_collection";
   }>;
   user_request?: string;               // the user's own ask, verbatim.
-                                       // Advance's ONLY input — it is skipped
+                                       // Move's ONLY input — it is skipped
                                        // entirely when this is absent.
 }) => {
   content: [{ type: "text", text: string }];   // model-visible summary
@@ -524,8 +524,8 @@ review_source_backed_answer({
 
 Three gaps between this and what the product needs, all open — see [`whats-left.md`](whats-left.md):
 
-- **`user_request` is optional and its description tells the model it may be omitted.** Advance short-circuits to `status: 'skipped'` without it, so the entire second track hangs on an optional field with an explicit escape hatch.
-- **There is no `task_mode` field**, so `advance/policy.ts`'s task-mode × has-finding move policy resolves to `undefined` → the full four-move set on every call. The policy table currently constrains nothing in production.
+- **`user_request` is optional and its description tells the model it may be omitted.** Move short-circuits to `status: 'skipped'` without it, so the entire second track hangs on an optional field with an explicit escape hatch.
+- **There is no `task_mode` field**, so `act/policy.ts`'s task-mode × has-finding move policy resolves to `undefined` → the full four-move set on every call. The policy table currently constrains nothing in production.
 - **There is no `prior_context` field**, which any claim-independent detector would need.
 
 The tool description instructs Claude to pass verbatim draft text and only sources it can identify as available. Claude must never invent citations or imply that private context was delivered. **This guard gets stricter, not looser, if the evidence request is ever broadened** — a fabricated source that then resolves to a "supported" state is worse than no source at all.

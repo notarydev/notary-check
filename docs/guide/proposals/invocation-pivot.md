@@ -14,17 +14,17 @@ discussion. Parts of it are actively undecided and marked as such.
 
 Today Verify is the gate. Claude is instructed to call Notary only when
 its answer makes a checkable claim **and** it has an identifiable source.
-Track 2 rides along behind an already-resolved claim.
+Act rides along behind an already-resolved claim.
 
 Proposed: call Notary broadly, request evidence every time, let Verify
-speak only when there are real claims, and run Track 2 unconditionally.
+speak only when there are real claims, and run Act unconditionally.
 
 | | Today | Proposed |
 |---|---|---|
 | Trigger | claim **and** source | broad; evidence requested every time |
 | Verify | gates everything | speaks only when claims exist |
-| Track 2 | fires per resolved claim | runs unconditionally |
-| No source | card reports a failure | Verify silent, Track 2 still delivers |
+| Act | fires per resolved claim | runs unconditionally |
+| No source | card reports a failure | Verify silent, Act still delivers |
 | Presence | silent on most turns | present on most turns, loud on few |
 
 The governing idea: **the scarce resource is the invocation, not the
@@ -119,12 +119,12 @@ about layers 1 and 2.
 
 ## The structural blocker
 
-`runAdvanceForClaim` fires per claim submission, and `reviewAnswer`
+`runMovesForClaim` fires per claim submission, and `reviewAnswer`
 returns early when `materialClaims.length === 0` — before any submission,
-therefore before any Advance call. **"No claims → Verify silent, Track 2
+therefore before any Move call. **"No claims → Verify silent, Act
 still runs" is structurally impossible today.**
 
-This is not a description change. Advance must be decoupled from the claim
+This is not a description change. Move must be decoupled from the claim
 loop and given its own invocation path. That is also exactly what any
 claim-independent detector needs, so the two collapse into one job.
 
@@ -142,7 +142,7 @@ biggest authority shift the pivot causes, and it happens with **no code
 change**, which is why it is easy to miss. Extraction agreement has never
 been measured against human judgment.
 
-**b. Every detector needs its own drawn line.** Advance models the
+**b. Every detector needs its own drawn line.** Move models the
 discipline correctly and is the template: code supplies a closed
 four-move vocabulary, the model only chooses and phrases within it, a
 `CHECK` constraint enforces it independently of the validator, and there
@@ -162,7 +162,7 @@ survive contact with a detector pool.
 **Concretely reorganised:** extraction gains gating responsibility and
 needs a calibration set it does not have; `reviewFlow` restructures from a
 serial per-claim pipeline into a bounded fan-out with a claim-independent
-Advance path; a detector registry replaces the hardcoded two-track flow;
+Move path; a detector registry replaces the hardcoded two-track flow;
 `policy.ts` extends from move-selection to detector-selection (and needs
 `task_mode` to actually arrive first); persistence generalises to one
 invocation row plus N detector results.
@@ -217,8 +217,8 @@ Four cases the test does not settle:
    depends on it, and by case 3 above, coding claims are excluded — so
    Verify would be near-permanently silent for coding users.
 2. **It exposes the commoditizable half.** If Verify speaks rarely and
-   Track 2 speaks always, most of what users see is suggested next moves —
-   which a host platform could ship natively. Track 1 is the part a better
+   Act speaks always, most of what users see is suggested next moves —
+   which a host platform could ship natively. Verify is the part a better
    prompt cannot replicate. The pivot makes the product more present and
    less differentiated at once.
 3. **Cost is plausibly 5–10× per user**, and the source gate is currently
@@ -240,7 +240,7 @@ Four cases the test does not settle:
 - Whether to build an ambient marker, and what its copy claims.
 - Whether `user_request` becomes required or stays optional with a fixed
   description — **measure the production skipped-vs-ok ratio first**;
-  `advance_invocation` already records it.
+  `act_invocation` already records it.
 - The retention policy, which B4 requires regardless of this proposal.
 - Whether the async-fetch path for slow detectors is even possible. The
   card iframe is cross-origin and cannot reach the host document; its

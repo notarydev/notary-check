@@ -1,53 +1,53 @@
-// Advance — persistence, into advance_invocation / advance_suggestion only
+// Move — persistence, into act_invocation / act_move only
 // (migration 0013_advance.sql). This is the ONE place a caller writes what
-// generateAdvanceSuggestions() (liveGenerate.ts) returned; that module itself
+// generateMoves() (liveGenerate.ts) returned; that module itself
 // stays DB-free, same discipline as ../judge/challengeGeneration.ts being
 // separate from ../review/reviewFlow.ts's persistence of challenge_item.
 //
-// Writes to advance_invocation and advance_suggestion and to nothing else —
+// Writes to act_invocation and act_move and to nothing else —
 // in particular, never claim, never evidence_match. Same authority boundary
 // challenge_item's own persistence in reviewFlow.ts already holds: a
-// suggestion register cannot reach either table from here because this
+// move register cannot reach either table from here because this
 // module has no reference to either.
 
 import type pg from "pg";
 import { estimateDeepSeekCostMillicents } from "../quotas/usage.ts";
 import { POLICY_VERSION } from "./policy.ts";
-import type { GenerateAdvanceMoveResult } from "./liveGenerate.ts";
-import type { AdvanceMove, AdvanceSuggestion } from "./types.ts";
+import type { GenerateMoveResult } from "./liveGenerate.ts";
+import type { MoveKind, Move } from "./types.ts";
 
-export interface PersistAdvanceInput {
+export interface PersistMoveInput {
   organizationId: string;
   reviewId?: string;
   claimId?: string;
   invocationContextId: string;
   taskMode?: string;
   hasEvidenceConstraint: boolean;
-  allowedMoves: readonly AdvanceMove[];
-  result: GenerateAdvanceMoveResult;
+  allowedMoves: readonly MoveKind[];
+  result: GenerateMoveResult;
 }
 
-export interface PersistedAdvance {
+export interface PersistedMove {
   invocationId: string;
-  suggestions: readonly AdvanceSuggestion[];
+  moves: readonly Move[];
 }
 
 /**
- * Persists one Advance call's outcome: exactly one advance_invocation row,
- * plus one advance_suggestion row per returned suggestion (0-2, ordinal 0/1 —
+ * Persists one Move call's outcome: exactly one act_invocation row,
+ * plus one act_move row per returned move (0-2, ordinal 0/1 —
  * the UNIQUE (invocation_id, ordinal) index is the DB-visible half of the
  * cardinality cap validator.ts already enforced app-side).
  *
- * `status` is derived from the SAME distinction GenerateAdvanceMoveResult's
- * own doc comment draws: `suggestions` set (even empty) means the call
- * resolved and validated -> 'ok'; `record` set with no `suggestions` means a
+ * `status` is derived from the SAME distinction GenerateMoveResult's
+ * own doc comment draws: `moves` set (even empty) means the call
+ * resolved and validated -> 'ok'; `record` set with no `moves` means a
  * call was attempted and failed (transport, validation, quota, kill switch)
  * -> 'error'; neither set (the allowedMoves===0 / no_user_request
  * short-circuits) -> 'skipped', no network, still a real, queryable row.
  */
-export async function persistAdvanceInvocation(db: pg.Pool, input: PersistAdvanceInput): Promise<PersistedAdvance> {
+export async function persistMoveInvocation(db: pg.Pool, input: PersistMoveInput): Promise<PersistedMove> {
   const { result } = input;
-  const status: "ok" | "error" | "skipped" = result.suggestions !== undefined ? "ok" : result.record !== undefined ? "error" : "skipped";
+  const status: "ok" | "error" | "skipped" = result.moves !== undefined ? "ok" : result.record !== undefined ? "error" : "skipped";
   const model = result.record?.model ?? "none";
   const promptVersion = result.record?.promptVersion ?? "none";
   const error = result.error ?? null;
@@ -59,7 +59,7 @@ export async function persistAdvanceInvocation(db: pg.Pool, input: PersistAdvanc
     inputTokens !== null && outputTokens !== null ? estimateDeepSeekCostMillicents(inputTokens, outputTokens) : null;
 
   const inserted = await db.query(
-    `INSERT INTO advance_invocation
+    `INSERT INTO act_invocation
        (organization_id, review_id, claim_id, invocation_context_id, task_mode,
         has_evidence_constraint, allowed_moves, policy_version, model, prompt_version,
         status, error, input_tokens, output_tokens, estimated_cost_millicents)
@@ -85,14 +85,14 @@ export async function persistAdvanceInvocation(db: pg.Pool, input: PersistAdvanc
   );
   const invocationId = inserted.rows[0].id as string;
 
-  const suggestions = result.suggestions ?? [];
-  for (const [ordinal, s] of suggestions.entries()) {
+  const moves = result.moves ?? [];
+  for (const [ordinal, s] of moves.entries()) {
     await db.query(
-      `INSERT INTO advance_suggestion (invocation_id, model_suggestion_id, ordinal, move, short_label, prompt)
+      `INSERT INTO act_move (invocation_id, model_move_id, ordinal, move, short_label, prompt)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [invocationId, s.id, ordinal, s.move, s.short_label, s.prompt],
     );
   }
 
-  return { invocationId, suggestions };
+  return { invocationId, moves };
 }

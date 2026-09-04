@@ -1,10 +1,10 @@
-// Track 2 / Advance — the deterministic move-policy layer
-// (§ Track 2 / Advance build order step 2; Part 11 § "AI's role here").
+// Act / Move — the deterministic move-policy layer
+// (§ Act / Move build order step 2; Part 11 § "AI's role here").
 //
 // Part 2's rule — AI parses, code judges — doesn't map cleanly onto
 // move-selection, because picking one of four labeled actions is closer to a
 // judgment than a parse. The compromise the design locks in: CODE supplies
-// the allowed move set (by task_mode and by whether a sealed Track 1 finding
+// the allowed move set (by task_mode and by whether a sealed Verify finding
 // exists), and the model only ever chooses and phrases WITHIN that closed
 // set — it never invents the action space. This file is that policy layer.
 // It is pure, versioned DATA plus one pure function; it does not call a
@@ -16,15 +16,15 @@
 // started allowing `repair`. A change to POLICY_TABLE below is a diff in a
 // versioned, reviewed file, and POLICY_VERSION exists so any downstream
 // record (once persistence exists, in step 8+) can pin exactly which policy
-// generation a stored suggestion was drafted under.
+// generation a stored move was drafted under.
 
-import type { AdvanceMove, TaskMode } from "./types.ts";
+import type { MoveKind, TaskMode } from "./types.ts";
 
-/** Bumped whenever POLICY_TABLE's mappings change. Not read by this module — exists so callers persisting a suggestion can record which policy generation produced it. */
+/** Bumped whenever POLICY_TABLE's mappings change. Not read by this module — exists so callers persisting a move can record which policy generation produced it. */
 export const POLICY_VERSION = "2026-09-03.1";
 
 /**
- * task_mode (or "general" for undefined) x whether a sealed Track 1 finding
+ * task_mode (or "general" for undefined) x whether a sealed Verify finding
  * is attached -> the allowed move set for that combination.
  *
  * The starting rows below are the exact example mappings from Part 11 / the
@@ -33,19 +33,19 @@ export const POLICY_VERSION = "2026-09-03.1";
  *     nothing has been independently found broken yet, so "fix it" would be
  *     the model inventing a defect rather than responding to one)
  *   - research + update       -> {clarify, compare, repair} (an applicability
- *     boundary from Track 1 makes "repair the premise" and "compare against
+ *     boundary from Verify makes "repair the premise" and "compare against
  *     the boundary" live; "test" drops out because there is no code/artifact
  *     to run — this is a case-2 example whose task_mode is research)
  *   - writing + update        -> {repair, clarify}          (a contradicted
  *     claim needs fixing or clarifying, not testing or comparing options)
  *
  * Every other cell is filled in below on the same reasoning: what does a
- * sealed Track 1 boundary make newly relevant or newly irrelevant for this
+ * sealed Verify boundary make newly relevant or newly irrelevant for this
  * kind of task. "general"/undefined always gets the full four-move set
  * (see getAllowedMoves) — an unrecognized task shape is not grounds to
  * narrow what the model may propose, so it is intentionally NOT a row here.
  */
-const POLICY_TABLE: Readonly<Record<Exclude<TaskMode, "general">, { noConstraint: readonly AdvanceMove[]; withConstraint: readonly AdvanceMove[] }>> = {
+const POLICY_TABLE: Readonly<Record<Exclude<TaskMode, "general">, { noConstraint: readonly MoveKind[]; withConstraint: readonly MoveKind[] }>> = {
   coding: {
     // No independent finding yet: don't assume something is broken (no
     // repair) or that competing options exist (compare is still allowed,
@@ -64,11 +64,11 @@ const POLICY_TABLE: Readonly<Record<Exclude<TaskMode, "general">, { noConstraint
     // live explanations holds (compare). Repair excluded — there's no
     // established defect yet to fix.
     noConstraint: ["clarify", "test", "compare"],
-    // An applicability boundary from Track 1: distinguishing explanations
+    // An applicability boundary from Verify: distinguishing explanations
     // against the sealed fact (compare), fixing a premise the boundary
     // broke (repair), or asking what's still missing given the new fact
     // (clarify) are all live. Test drops — there's no artifact to run,
-    // the finding already came from Track 1's own verification.
+    // the finding already came from Verify's own verification.
     withConstraint: ["clarify", "compare", "repair"],
   },
   writing: {
@@ -102,7 +102,7 @@ const POLICY_TABLE: Readonly<Record<Exclude<TaskMode, "general">, { noConstraint
     // or which of several readings of the data holds (compare). No
     // established defect yet, so repair is excluded.
     noConstraint: ["clarify", "test", "compare"],
-    // A sealed boundary from Track 1 plays the same role it does for
+    // A sealed boundary from Verify plays the same role it does for
     // research: it already adjudicated between explanations, so what's left
     // is fixing a premise the boundary broke (repair), distinguishing
     // remaining live readings against it (compare), or asking what's still
@@ -127,16 +127,16 @@ const POLICY_TABLE: Readonly<Record<Exclude<TaskMode, "general">, { noConstraint
 };
 
 /** The full four-move set — the default for "general" and for an undefined task_mode. */
-const FULL_MOVE_SET: readonly AdvanceMove[] = ["clarify", "test", "compare", "repair"];
+const FULL_MOVE_SET: readonly MoveKind[] = ["clarify", "test", "compare", "repair"];
 
 /**
  * Returns the allowed move set for a given task_mode and whether a sealed
- * Track 2 evidence constraint (Track 1 finding) is attached to this
+ * Act evidence constraint (Verify finding) is attached to this
  * invocation. Pure and total: every TaskMode value, "general", and undefined
  * all resolve to a defined result — there is no combination this function
  * can be called with that falls through without a documented answer.
  */
-export function getAllowedMoves(taskMode: TaskMode | undefined, hasEvidenceConstraint: boolean): readonly AdvanceMove[] {
+export function getAllowedMoves(taskMode: TaskMode | undefined, hasEvidenceConstraint: boolean): readonly MoveKind[] {
   if (taskMode === undefined || taskMode === "general") {
     return FULL_MOVE_SET;
   }

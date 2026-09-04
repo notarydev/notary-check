@@ -16,7 +16,7 @@ import type {
   CardRejectedCandidate,
   CardEvidenceOrigin,
   ChallengeItem,
-  AdvanceSuggestion,
+  Move,
 } from "./mocks/scenarios.js";
 
 // Read lazily, not as module-level constants: ES module imports are hoisted
@@ -96,30 +96,30 @@ interface ClaimResult {
   };
   matches: EngineMatch[];
   rejectedCandidates: EngineRejectedCandidate[];
-  // Track 2 / Challenge layer (docs/build/tier-1-build-and-operating-plan.md's
-  // "Track 2 / Challenge layer" section). PRESENT in the engine's response —
+  // Act / Challenge layer (docs/build/tier-1-build-and-operating-plan.md's
+  // "Act / Challenge layer" section). PRESENT in the engine's response —
   // engine/src/routes/reviews.ts maps its internal ChallengeItem[] to this
   // wire shape. Still typed `unknown` and parsed strictly (parseChallengeItems
-  // below), same discipline as the Track 1 judge output: a caller must never
+  // below), same discipline as the Verify judge output: a caller must never
   // trust the wire shape just because a field exists, and an org with the
-  // track2_enabled flag off (or a review with no material claims) legitimately
+  // act_challenge_enabled flag off (or a review with no material claims) legitimately
   // sends no challenges at all, which must render as "none" rather than error.
   challenges?: unknown;
-  // Advance (Track 2 v2) — PRESENT in the engine's response
-  // (engine/src/routes/reviews.ts maps its internal AdvanceSuggestion[] to
+  // Move (Act v2) — PRESENT in the engine's response
+  // (engine/src/routes/reviews.ts maps its internal Move[] to
   // this wire shape). Structurally separate from `challenges` above: a
   // different system, a different authority level. Typed `unknown` and
-  // parsed strictly (parseAdvanceSuggestions below), same discipline as
+  // parsed strictly (parseMoves below), same discipline as
   // every other model-sourced wire field this client trusts nothing about
   // just because it's present — absent user_request, an exhausted quota, an
   // active kill switch, or a validation rejection all legitimately produce
-  // no suggestions at all, which must render as "none", never an error.
-  advance_suggestions?: unknown;
+  // no moves at all, which must render as "none", never an error.
+  moves?: unknown;
 }
 
 // Locked output contract, quoted from the plan doc — see ChallengeItem in
 // scenarios.ts. Strict-parsing discipline mirrors
-// engine/src/judge/fieldExtraction.ts's rule for the Track 1 judge: a sneaked-in
+// engine/src/judge/fieldExtraction.ts's rule for the Verify judge: a sneaked-in
 // field (verdict/confidence/answer/anything else) rejects the whole item
 // rather than being silently accepted.
 const CHALLENGE_TYPES = new Set([
@@ -156,38 +156,38 @@ function parseChallengeItems(raw: unknown): ChallengeItem[] {
   return out;
 }
 
-// Advance's closed four-move vocabulary (engine/src/advance/types.ts's
-// AdvanceMove) and exact key set (engine/src/advance/types.ts's
-// AdvanceSuggestion: id, short_label, move, prompt — nothing else). Same
+// Move's closed four-move vocabulary (engine/src/act/types.ts's
+// MoveKind) and exact key set (engine/src/act/types.ts's
+// Move: id, short_label, move, prompt — nothing else). Same
 // strict-parsing discipline as parseChallengeItems above: a sneaked-in field
 // (confidence/verdict/anything else) rejects that item outright rather than
-// being silently accepted, mirroring what engine/src/advance/validator.ts
+// being silently accepted, mirroring what engine/src/act/validator.ts
 // already enforces server-side — this is the SECOND, independent guard at the
 // wire boundary, not a substitute for it.
-const ADVANCE_MOVES = new Set(["clarify", "test", "compare", "repair"]);
-const ADVANCE_KEYS = ["id", "short_label", "move", "prompt"];
+const MOVE_KINDS = new Set(["clarify", "test", "compare", "repair"]);
+const MOVE_KEYS = ["id", "short_label", "move", "prompt"];
 
-// At most MAX_ADVANCE_SUGGESTIONS per review (Part 11: "0, 1, or 2
-// suggestions" is per-invocation — the engine's own call is per-claim today,
-// see review/reviewFlow.ts's runAdvanceForClaim, so this cap is what keeps a
+// At most MAX_MOVES per review (Part 11: "0, 1, or 2
+// moves" is per-invocation — the engine's own call is per-claim today,
+// see review/reviewFlow.ts's runMovesForClaim, so this cap is what keeps a
 // multi-claim answer from surfacing more than the per-invocation cardinality
 // the design actually specifies).
-const MAX_ADVANCE_SUGGESTIONS = 2;
+const MAX_MOVES = 2;
 
-function parseAdvanceSuggestions(raw: unknown): AdvanceSuggestion[] {
+function parseMoves(raw: unknown): Move[] {
   if (!Array.isArray(raw)) return [];
-  const out: AdvanceSuggestion[] = [];
+  const out: Move[] = [];
   for (const item of raw) {
     if (typeof item !== "object" || item === null) continue;
     const keys = Object.keys(item);
-    if (keys.length !== ADVANCE_KEYS.length || !ADVANCE_KEYS.every((k) => keys.includes(k))) continue;
+    if (keys.length !== MOVE_KEYS.length || !MOVE_KEYS.every((k) => keys.includes(k))) continue;
     const { id, short_label, move, prompt } = item as Record<string, unknown>;
     if (typeof id !== "string" || id.length === 0) continue;
     if (typeof short_label !== "string" || short_label.length === 0) continue;
-    if (typeof move !== "string" || !ADVANCE_MOVES.has(move)) continue;
+    if (typeof move !== "string" || !MOVE_KINDS.has(move)) continue;
     if (typeof prompt !== "string" || prompt.length === 0) continue;
-    out.push({ id, short_label, move: move as AdvanceSuggestion["move"], prompt });
-    if (out.length === MAX_ADVANCE_SUGGESTIONS) break;
+    out.push({ id, short_label, move: move as Move["move"], prompt });
+    if (out.length === MAX_MOVES) break;
   }
   return out;
 }
@@ -288,21 +288,21 @@ async function submitClaim(
           materiality: claim.materiality,
           claim_fields: claim.claimFields,
           evidence_ids: evidenceIds,
-          // Advance needs the user's own original ask — passed straight
+          // Move needs the user's own original ask — passed straight
           // through, verbatim, never invented here. Omitted from the body
           // entirely when absent (undefined is dropped by JSON.stringify),
           // which the engine's own schema already treats as "optional, skip
-          // Advance for this claim" rather than a validation error.
+          // Move for this claim" rather than a validation error.
           user_request: userRequest,
           // This connector ALWAYS calls /detect after the claim loop, which
-          // runs Advance once per invocation. Without this flag both paths run:
-          // observed live on a five-claim answer, six per-claim Advance calls
+          // runs Move once per invocation. Without this flag both paths run:
+          // observed live on a five-claim answer, six per-claim Move calls
           // fired and were then discarded in favour of the invocation-level
           // result. Six model calls paid for, output thrown away, and the
           // "0-2 per invocation" cardinality contract bypassed — ten
-          // near-duplicate suggestions generated before the connector trimmed
+          // near-duplicate moves generated before the connector trimmed
           // to two.
-          skip_claim_advance: true,
+          skip_claim_moves: true,
         }),
       },
       apiKey,
@@ -487,13 +487,13 @@ function findingFor(
 // testing without Clerk. The real Clerk-authenticated path (server.ts) always
 // passes the caller's own per-user resolved key explicitly.
 /**
- * Everything Claude sends beyond the answer and its sources — Track 2's
- * material plus the execution output Track 1's self-report detector checks
+ * Everything Claude sends beyond the answer and its sources — Act's
+ * material plus the execution output Verify's self-report detector checks
  * against.
  *
  * Every field is optional and none may be invented by us. An absent field is
  * a correct, expected state; fabricating one would silently corrupt the task
- * model Track 2 reasons from.
+ * model Act reasons from.
  */
 export interface InvocationExtras {
   userRequest?: string;
@@ -516,7 +516,7 @@ export interface CardGap {
 interface DetectResponse {
   findings?: unknown[];
   gaps?: unknown[];
-  advance_suggestions?: unknown;
+  moves?: unknown;
   intent?: { task_mode?: string; defaulted?: boolean } | null;
 }
 
@@ -525,7 +525,7 @@ interface DetectResponse {
  *
  * Capped at 2. Each gap potentially triggers a full re-invocation — Claude
  * fetching a source, then calling again — and ten of those is ten round trips
- * the user waits through. Two is the same interrupt budget the suggestions use.
+ * the user waits through. Two is the same interrupt budget the moves use.
  */
 function parseGaps(raw: unknown): CardGap[] {
   if (!Array.isArray(raw)) return [];
@@ -541,7 +541,7 @@ function parseGaps(raw: unknown): CardGap[] {
   return out;
 }
 
-/** See parseGaps — the same interrupt budget the suggestions use. */
+/** See parseGaps — the same interrupt budget the moves use. */
 const MAX_GAPS = 2;
 
 /**
@@ -551,7 +551,7 @@ const MAX_GAPS = 2;
  * rather than failing the review.
  *
  * Findings are NOT capped. They are computed facts, and facts do not compete
- * for attention the way suggestions do — the cap belongs on actions, which are
+ * for attention the way moves do — the cap belongs on actions, which are
  * an interrupt budget. The card decides how many to show at rest.
  */
 function parseBankFindings(raw: unknown): NonNullable<ReviewCardData["bank_findings"]> {
@@ -588,15 +588,15 @@ function parseBankFindings(raw: unknown): NonNullable<ReviewCardData["bank_findi
 }
 
 /**
- * Runs the detector bank and invocation-level Track 2.
+ * Runs the detector bank and invocation-level Act.
  *
  * Called on EVERY review, including one with zero material claims — that is
- * the ~37% of turns where Track 1 has nothing and Track 2 is the whole
- * product, and where Advance used to be silent because it rode on the claim
+ * the ~37% of turns where Verify has nothing and Act is the whole
+ * product, and where Move used to be silent because it rode on the claim
  * loop.
  *
  * Never throws: detection is additive, so a failure here loses findings and
- * suggestions but must never turn a completed verification into an error.
+ * moves but must never turn a completed verification into an error.
  */
 async function runDetection(
   reviewId: string,
@@ -661,10 +661,10 @@ export async function reviewAnswer(
   const materialClaims = extraction.claims.filter((c) => c.materiality);
 
   if (materialClaims.length === 0) {
-    // THE 37% CASE. No material claims means Track 1 has nothing — but the
+    // THE 37% CASE. No material claims means Verify has nothing — but the
     // answer can still contradict itself, still claim work succeeded that the
-    // output disproves, and the user still has a task Track 2 can act on.
-    // This path used to return here blind, which is why Advance produced
+    // output disproves, and the user still has a task Act can act on.
+    // This path used to return here blind, which is why Move produced
     // nothing on the majority of real turns.
     //
     // A review is created purely to carry the invocation; no claims are
@@ -672,7 +672,7 @@ export async function reviewAnswer(
     try {
       const reviewId = await createReview(apiKey);
       const det = await runDetection(reviewId, answerText, extraction.claims, new Map(), false, apiKey, extras);
-      const suggestions = parseAdvanceSuggestions(det.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
+      const moves = parseMoves(det.moves).slice(0, MAX_MOVES);
       const zeroClaimGaps = parseGaps(det.gaps);
       const zeroBank = parseBankFindings(det.findings);
       const zeroIntent = det.intent != null && typeof det.intent.task_mode === "string"
@@ -689,7 +689,7 @@ export async function reviewAnswer(
             why: "internal_conflict",
           })),
           actions: ["Dismiss"],
-          advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
+          moves: moves.length > 0 ? moves : undefined,
           gaps: zeroClaimGaps.length > 0 ? zeroClaimGaps : undefined,
           bank_findings: zeroBank.length > 0 ? zeroBank : undefined,
           intent: zeroIntent,
@@ -700,7 +700,7 @@ export async function reviewAnswer(
         status: "no_issue",
         scope: "No material factual claims found to review.",
         actions: [],
-        advance_suggestions: suggestions.length > 0 ? suggestions : undefined,
+        moves: moves.length > 0 ? moves : undefined,
         gaps: zeroClaimGaps.length > 0 ? zeroClaimGaps : undefined,
         bank_findings: zeroBank.length > 0 ? zeroBank : undefined,
         intent: zeroIntent,
@@ -742,22 +742,22 @@ export async function reviewAnswer(
     // Collected, never rendered — see findingFor()'s no_source branch.
     const noSourceFindings: Finding[] = [];
     const challenges: ChallengeItem[] = [];
-    const advanceSuggestions: AdvanceSuggestion[] = [];
+    const moves: Move[] = [];
 
     // Claims are submitted CONCURRENTLY but accumulated IN ORDER, and the
     // split matters.
     //
     // Concurrency: each submitClaim is a network round trip that internally
-    // runs a judge call and an Advance call, and claims are fully independent
+    // runs a judge call and a Move call, and claims are fully independent
     // — nothing about claim 2 depends on claim 1. Serially, a five-claim
     // answer was five sequential round trips while the MCP tool call blocked
     // Claude's turn, so the user watched a spinner for the sum rather than
     // the max. Bounded rather than unbounded so a 10-claim review (the § Cost
     // control rules cap) cannot open ten simultaneous judge conversations.
     //
-    // Order: the caps below (4 challenges, 2 Advance suggestions per
+    // Order: the caps below (4 challenges, 2 moves per
     // invocation) are FIRST-COME. Accumulating them as promises resolve would
-    // let network timing decide which claim's suggestions survive — the same
+    // let network timing decide which claim's moves survive — the same
     // answer would produce different cards on different runs, and a
     // reproduction would stop being a reproduction. So the fan-out only
     // gathers results; the loop that fills the caps runs afterwards, strictly
@@ -800,22 +800,22 @@ export async function reviewAnswer(
       if (challenges.length < 4) {
         challenges.push(...parseChallengeItems(outcome.result.challenges).slice(0, 4 - challenges.length));
       }
-      // Advance — capped at MAX_ADVANCE_SUGGESTIONS (2) for the whole review,
+      // Move — capped at MAX_MOVES (2) for the whole review,
       // same first-come discipline as challenges' own cap above: the engine
-      // calls Advance per claim submission today (review/reviewFlow.ts's
-      // runAdvanceForClaim), but Part 11's cardinality contract is per
+      // calls Move per claim submission today (review/reviewFlow.ts's
+      // runMovesForClaim), but Part 11's cardinality contract is per
       // INVOCATION (0-2 total), so this is the client-side enforcement of
       // that invariant until/unless the engine grows a single per-review
-      // Advance call.
-      if (advanceSuggestions.length < MAX_ADVANCE_SUGGESTIONS) {
-        advanceSuggestions.push(
-          ...parseAdvanceSuggestions(outcome.result.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS - advanceSuggestions.length),
+      // Move call.
+      if (moves.length < MAX_MOVES) {
+        moves.push(
+          ...parseMoves(outcome.result.moves).slice(0, MAX_MOVES - moves.length),
         );
       }
     }
 
     // Detection runs AFTER the claim loop so findings can reference real claim
-    // ids, and its own Track 2 call supersedes the per-claim one — the
+    // ids, and its own Act call supersedes the per-claim one — the
     // cardinality contract is per INVOCATION, and the per-claim path could
     // only ever approximate that with a first-come cap.
     const claimIds = new Map<number, string>();
@@ -837,17 +837,17 @@ export async function reviewAnswer(
     //
     // They used to be, and it produced a genuinely misleading card: a bank
     // finding has no evidence BY NATURE — self-contradiction compares the
-    // answer against itself — so rendering it through Track 1's evidence-backed
+    // answer against itself — so rendering it through Verify's evidence-backed
     // UI printed "No resolved evidence is on record for this finding" in
     // warning styling, as though something had gone wrong. Nothing had. It also
-    // duplicated the finding text (once in Track 1's list, once in the record)
+    // duplicated the finding text (once in Verify's list, once in the record)
     // and surfaced the raw `internal_conflict` code as the user-facing label.
     //
     // They are a different kind of thing and get their own rendering. What
     // still holds is the reason they were merged: a claim can be SUPPORTED by
     // its source AND the answer still contradict itself, so the card's status
     // is computed from EITHER source below.
-    // Invocation-level Advance replaces whatever the per-claim calls produced.
+    // Invocation-level Move replaces whatever the per-claim calls produced.
     const invocationGaps = parseGaps(detection.gaps);
     const bankFindingsDetail = parseBankFindings(detection.findings);
     const invocationIntent = detection.intent != null && typeof detection.intent.task_mode === "string"
@@ -862,19 +862,19 @@ export async function reviewAnswer(
       checkable: checkableCount,
       sources: evidenceIds.length,
     };
-    const invocationAdvance = parseAdvanceSuggestions(detection.advance_suggestions).slice(0, MAX_ADVANCE_SUGGESTIONS);
-    if (invocationAdvance.length > 0) {
-      advanceSuggestions.length = 0;
-      advanceSuggestions.push(...invocationAdvance);
+    const invocationMoves = parseMoves(detection.moves).slice(0, MAX_MOVES);
+    if (invocationMoves.length > 0) {
+      moves.length = 0;
+      moves.push(...invocationMoves);
     }
 
     const scope = `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;
     const challengesField = challenges.length > 0 ? challenges : undefined;
-    const advanceSuggestionsField = advanceSuggestions.length > 0 ? advanceSuggestions : undefined;
+    const movesField = moves.length > 0 ? moves : undefined;
 
     // "Is there a problem?" is no longer readable off claim.state alone: a
     // claim can be SUPPORTED by its source while the answer contradicts
-    // itself. Either source raises the status; only Track 1's own findings go
+    // itself. Either source raises the status; only Verify's own findings go
     // in `findings`, which is the evidence-backed list.
     if (issueFindings.length > 0 || bankFindingsDetail.length > 0) {
       return {
@@ -883,7 +883,7 @@ export async function reviewAnswer(
         findings: issueFindings.length > 0 ? issueFindings : undefined,
         actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
         challenges: challengesField,
-        advance_suggestions: advanceSuggestionsField,
+        moves: movesField,
         gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
         bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
         intent: invocationIntent,
@@ -912,15 +912,15 @@ export async function reviewAnswer(
     // Nothing failed and nothing was contradicted. If every material claim
     // simply had no source to check against, say that plainly rather than
     // reusing the "reviewed against N sources" scope, which reads as though a
-    // comparison happened. Advance still rides along either way — that is the
+    // comparison happened. Move still rides along either way — that is the
     // whole point of splitting no_source out: an unsourced answer is exactly
-    // the case where the next-move suggestion is the only useful output.
+    // the case where the next-move move is the only useful output.
     if (noSourceFindings.length > 0 && noSourceFindings.length === materialClaims.length) {
       return {
         status: "not_checked",
         scope: `No inspectable source was supplied for ${materialClaims.length === 1 ? "this claim" : `these ${materialClaims.length} claims`}.`,
         actions: [],
-        advance_suggestions: advanceSuggestionsField,
+        moves: movesField,
         gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
         bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
         intent: invocationIntent,
@@ -931,7 +931,7 @@ export async function reviewAnswer(
       status: "no_issue",
       scope,
       actions: [],
-      advance_suggestions: advanceSuggestionsField,
+      moves: movesField,
       gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
         bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
         intent: invocationIntent,

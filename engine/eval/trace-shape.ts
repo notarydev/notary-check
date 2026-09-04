@@ -10,7 +10,7 @@
 //   1. How often is there tool output at all? That is the self-report
 //      detector's precondition, and the number I previously took from a
 //      31-transcript coding sample.
-//   2. How much does the user actually say? `user_request` is Track 2's whole
+//   2. How much does the user actually say? `user_request` is Act's whole
 //      object, and a two-character message carries no intent.
 //   3. How many rounds does a session run? The back-and-forth loop needs room
 //      to happen.
@@ -104,7 +104,7 @@ async function main() {
   console.log(`  any round:            ${pct(withToolResult)}`);
   console.log(`  substantive answers:  ${pct(substantiveWithTool, substantiveOutput)}  (of ${substantiveOutput.toLocaleString()})\n`);
 
-  console.log("USER MESSAGE LENGTH — Track 2's whole object");
+  console.log("USER MESSAGE LENGTH — Act's whole object");
   for (let i = 0; i < MSG_LABELS.length; i++) {
     const bar = "█".repeat(Math.round((msgHist[i] / rounds) * 40));
     console.log(`  ${MSG_LABELS[i].padEnd(10)} ${pct(msgHist[i]).padStart(6)}  ${bar}`);

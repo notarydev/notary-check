@@ -50,9 +50,9 @@ blatantly wrong, and suggesting a next move. Full explanation in
 `architecture-and-progress.md`. What matters for *this* doc is the honest
 delta:
 
-**Closed.** E3 (the widened ask). Track 2 running without claims or sources —
+**Closed.** E3 (the widened ask). Act running without claims or sources —
 previously it never ran at all on ~37% of real turns. The one-sentence
-Track 1 → Track 2 handoff, now carrying field-level detail. Gaps reaching the
+Verify → Act handoff, now carrying field-level detail. Gaps reaching the
 caller. An ambiguous field no longer ending a check when every reading
 conflicts anyway.
 
@@ -67,7 +67,7 @@ conflicts anyway.
   suppressing a repeat — the anti-nagging design exists on paper only.
 - **No `responds_to`.** No way to tell whether an ask ever led to a repair, so
   the back-and-forth cannot be evaluated at all.
-- **Track 2 has no detectors** and is still one model call with four moves.
+- **Act has no detectors** and is still one model call with four moves.
   Intent is inferred and used for exactly one thing: deciding which moves are
   legal. Every other intent-driven behaviour discussed is unbuilt.
 
@@ -86,9 +86,9 @@ honestly make.
 | # | Item | Why it blocks |
 |---|---|---|
 | **B1** | **Held-out eval set is 20 unadjudicated drafts.** `engine/eval/SCHEMA.md` says in bold it is not the gating set. | § Pre-pilot engine gate requires real numbers for false-supported rate, wrong-source acceptance, and contradiction precision. X and Y in that gate are still blank because no labeled data exists to set them from. Nothing can be called validated, and public signup stays gated, until this is annotated. Needs human annotators — no engineering path around it. |
-| **B2a** | **Two-block contradiction card returns a single finding live.** The flagship Acme 17%/12% case returned "1 thing to check" against the live connector, not the two stacked findings the card contract describes. Found 2026-09-03, not diagnosed — unknown whether it is an older deployed build or a current bug. | Blocks trusting live Track 1 output for further UI work. Related to but distinct from B2. |
+| **B2a** | **Two-block contradiction card returns a single finding live.** The flagship Acme 17%/12% case returned "1 thing to check" against the live connector, not the two stacked findings the card contract describes. Found 2026-09-03, not diagnosed — unknown whether it is an older deployed build or a current bug. | Blocks trusting live Verify output for further UI work. Related to but distinct from B2. |
 | ~~**B2**~~ | ~~Locked case 2 fails live.~~ **FIXED 2026-09-04 (E1).** Root cause was **not** the judge — it read "declined" as `decrease` correctly on every run. The claim said `Acme`, the passage said `Acme Corp`, and `normalizeEntity` canonicalised suffix *spelling* but not *presence*, so entity mismatched, the candidate was ruled inapplicable, and it was dropped before the state machine saw it. Fixed with an asymmetric optional-suffix rule. **Verified live**: `CONTRADICTED` on both the paraphrase and exact cases against `api.getnotary.ai`. | Release gate for a comparator change (§ Evaluator governance) could not be met — the held-out set is B1. Shipped on the owner's explicit call; re-score when B1 lands. |
-| ~~**B3**~~ | ~~Advance shipped without its adversarial eval.~~ **RESOLVED 2026-09-03.** Harness built at `engine/eval/advance-adversarial.ts` and run against live DeepSeek: **21 case-runs, 0 violations**, distribution 0:14% / 1:43% / 2:43%. Case 5 ("no useful move exists") returned 0 on all three runs — the behaviour that mattered most. Not the "always emits 2" failure Part 11 warned about. | Re-run this gate on any Advance prompt or model change (`npx tsx eval/advance-adversarial.ts --repeat 3`). Layers 4 and 6 are heuristic, so a green run is evidence, not proof. |
+| ~~**B3**~~ | ~~Move shipped without its adversarial eval.~~ **RESOLVED 2026-09-03.** Harness built at `engine/eval/moves-adversarial.ts` and run against live DeepSeek: **21 case-runs, 0 violations**, distribution 0:14% / 1:43% / 2:43%. Case 5 ("no useful move exists") returned 0 on all three runs — the behaviour that mattered most. Not the "always emits 2" failure Part 11 warned about. | Re-run this gate on any Move prompt or model change (`npx tsx eval/moves-adversarial.ts --repeat 3`). Layers 4 and 6 are heuristic, so a green run is evidence, not proof. |
 | **B4** | **Retention violates the canonical rule.** `claim.text` and `evidence.resolved_text` are retained indefinitely, no consent, no TTL. | Directly contradicts § Security, privacy, and reliability requirements' first bullet. Also blocks the Privacy Policy in § Public-launch readiness, which has to describe a retention policy that currently doesn't exist. |
 
 ## Owed by a rule we already wrote
@@ -97,8 +97,8 @@ Small, and each one closes a gap between a stated rule and the code.
 
 | # | Item |
 |---|---|
-| ~~**O1**~~ | ~~Advance has no feature flag.~~ **RESOLVED 2026-09-03** — migration `0014_advance_flag.sql` adds `organization.advance_enabled`, `DEFAULT false` (ship dark for new orgs) with a backfill to `true` so existing orgs keep the working feature. Read in `reviewFlow.ts` before any client construction, so a disabled org costs zero model calls. Regression test asserts both no suggestions *and* zero model calls. **Applied to production 2026-09-03.** |
-| **O2** | **`advance_event` is written by nothing.** The table exists, tests reference it, production never writes a row. Zero interaction telemetry for Advance. |
+| ~~**O1**~~ | ~~Move has no feature flag.~~ **RESOLVED 2026-09-03** — migration `0014_advance_flag.sql` adds `organization.act_moves_enabled`, `DEFAULT false` (ship dark for new orgs) with a backfill to `true` so existing orgs keep the working feature. Read in `reviewFlow.ts` before any client construction, so a disabled org costs zero model calls. Regression test asserts both no moves *and* zero model calls. **Applied to production 2026-09-03.** |
+| **O2** | **`act_move_event` is written by nothing.** The table exists, tests reference it, production never writes a row. Zero interaction telemetry for Move. |
 | ~~**O3**~~ | ~~Cost meter rounds to whole cents, so both spend caps summed zeros and never fired.~~ **RESOLVED 2026-09-03** — migration `0015_cost_millicents.sql`. Cost is now metered in millicents; `estimated_cost_cents` became a `GENERATED ALWAYS` column derived from it, so a writer that sets only cents gets a hard Postgres error instead of silently under-metering. Regression test proves 1,000 realistic calls accrue ~134 cents where they previously accrued 0. **Applied to production 2026-09-03**; live ledger now accruing real cost (136 millicents and rising). |
 | **O4** | **Quota check is read-then-decide, not atomic** — two concurrent calls can both observe "under the cap." Already documented as a known limitation in § Locked test suite's Cost gate. Low risk at current volume. |
 | **O5** | **Clerk Restricted sign-up mode not confirmed enabled** — the hard, IdP-level half of the public-signup gate. Manual dashboard action, not verifiable from this repo. |
@@ -110,7 +110,7 @@ Small, and each one closes a gap between a stated rule and the code.
 |---|---|
 | **F1** | **`no_source` split → `not_checked`.** Committed in `29fc011`, **not yet deployed** — the MCP `server/` image still needs rebuilding and pushing. Separates "nothing to check" from "something failed" so an unsourced answer stops reporting as a Notary malfunction. Needs the fourth card state threaded through `ReviewCardData` and the UI, a regression test, and a commit. See the corrected state-mapping table in the plan. |
 | ~~**F2**~~ | ~~`.server.14` never deployed.~~ **NOT AN ISSUE — verified 2026-09-03 against the Lightsail API:** `notary-check-mcp` is running `:notary-check-mcp.server.14` (deployment version 11). The belief that `.13` was live came from session recollection, not the API. |
-| ~~**F3**~~ | ~~Migrations `0014`/`0015` not applied to production.~~ **DONE 2026-09-03** — verified backup taken and restore-tested, both migrations dry-run against a restored copy, then applied; engine redeployed as `:notary-check-api.engine.15` (deployment version 6). End-to-end smoke test passes against live prod: `CONTRADICTED`, 1 Advance suggestion, +53 millicents accrued. See `architecture-and-progress.md`. |
+| ~~**F3**~~ | ~~Migrations `0014`/`0015` not applied to production.~~ **DONE 2026-09-03** — verified backup taken and restore-tested, both migrations dry-run against a restored copy, then applied; engine redeployed as `:notary-check-api.engine.15` (deployment version 6). End-to-end smoke test passes against live prod: `CONTRADICTED`, 1 Move move, +53 millicents accrued. See `architecture-and-progress.md`. |
 
 ## Documentation debt
 
@@ -127,7 +127,7 @@ Small, and each one closes a gap between a stated rule and the code.
 The invocation pivot —
 [`../guide/proposals/invocation-pivot.md`](../guide/proposals/invocation-pivot.md).
 Call Notary broadly, request evidence every time, let Verify speak only
-when claims exist, run Track 2 unconditionally.
+when claims exist, run Act unconditionally.
 
 **It is a proposal.** Nothing below it is committed work. Per
 [`../README.md`](../README.md), it becomes canonical only when the owner
@@ -170,26 +170,26 @@ never mattered. Fixed in `verification/normalization.ts` with a deliberately
 asymmetric rule (see the build plan). Live-verified on both cases.
 
 **~~E2~~ — DONE 2026-09-04.** Parallelise the claim loop. `engineClient.ts` submits claims
-serially and each submission internally runs a judge call and an Advance
+serially and each submission internally runs a judge call and a Move
 call, so a five-claim answer is five sequential round trips while the tool
 call blocks Claude's turn. Claims are fully independent. Bounded
 `Promise.all`. **Biggest latency win available, and it is a precondition
 for anything that adds per-claim work.**
 
 **Outcome.** Bounded concurrency of 4. The subtlety worth keeping: execution
-fans out, accumulation stays in claim order, because the challenge/Advance
+fans out, accumulation stays in claim order, because the challenge/Move
 caps are first-come and accumulating by completion would let network timing
-decide which claim's suggestions survive. Regression test makes completion
+decide which claim's moves survive. Regression test makes completion
 order the exact reverse of claim order.
 
 **E3 — Fix the four invocation defects.** `user_request` is optional and
 its own description tells the model it may be omitted; the trailing
 reminder re-teaches the *narrow* trigger on every turn; the tool
-description never mentions Track 2 exists; there is no `task_mode` field,
+description never mentions Act exists; there is no `task_mode` field,
 so the six-mode policy table resolves to the full move set every time and
 constrains nothing in production. Measured baseline already exists:
-19% of Advance invocations arrived with no `user_request`
-(`scripts/advance-invocation-report.ts`). Re-measure after changing the
+19% of Move invocations arrived with no `user_request`
+(`scripts/move-invocation-report.ts`). Re-measure after changing the
 description, before deciding whether the field must become required —
 a validation error may prompt a corrected retry or may make Claude stop
 calling entirely, and that is not known.
@@ -201,12 +201,12 @@ the `(organization_id, hash(claim_text))` record for boundedness and a
 **hard refusal of pasted excerpts on this path**. Full design and the
 known weaknesses: § Asking for a missing source in the build plan.
 
-**E5 — Give Advance a real view of the finding.** It currently sees one
+**E5 — Give Move a real view of the finding.** It currently sees one
 sealed sentence and has to infer what kind of mismatch occurred. Widen the
 constraint so it can see state, reason, and per-field applicability, and
 port Challenge's per-state guidance for CONTRADICTED / UNSUPPORTED /
 INDETERMINATE. **Deliberately not porting the SUPPORTED branch** — see the
-build plan for why. Re-run `eval/advance-adversarial.ts --repeat 3`
+build plan for why. Re-run `eval/moves-adversarial.ts --repeat 3`
 afterwards and confirm the 0/1/2 distribution has not shifted toward
 padding; the pre-change production baseline is 19% / 67% / 14%.
 

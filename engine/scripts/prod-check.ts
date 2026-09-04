@@ -10,7 +10,7 @@
 
 import pg from "pg";
 
-const TABLES = ["organization", "review", "claim", "evidence", "evidence_match", "usage_event", "advance_invocation"];
+const TABLES = ["organization", "review", "claim", "evidence", "evidence_match", "usage_event", "act_invocation"];
 
 async function main() {
   const url = process.env.DATABASE_URL;
@@ -43,10 +43,10 @@ async function main() {
     // by introspection rather than by trusting the migration log, because a
     // migration row proves the file ran, not that the schema is what the file
     // intended.
-    console.log("\n0014 — organization.advance_enabled:");
+    console.log("\n0014 — organization.act_moves_enabled:");
     const flag = await c.query(
       `SELECT column_name, column_default FROM information_schema.columns
-       WHERE table_name = 'organization' AND column_name = 'advance_enabled'`,
+       WHERE table_name = 'organization' AND column_name = 'act_moves_enabled'`,
     );
     console.log(flag.rowCount ? `  present, default ${flag.rows[0].column_default}` : "  ABSENT");
 

@@ -20,8 +20,8 @@
 // WHAT IT DOES NOT DO. It does not judge whether the work was good, whether
 // the fix was correct, or whether the approach was right. It compares a
 // SUCCESS CLAIM against a FAILURE SIGNAL in the material the claim is about.
-// That is the only thing here blatant enough to be a Track 1 finding —
-// everything else about agent quality is judgment, and judgment is Track 2's.
+// That is the only thing here blatant enough to be a Verify finding —
+// everything else about agent quality is judgment, and judgment is Act's.
 
 import { randomUUID } from "node:crypto";
 import type { Detector, DetectorInput, DetectorOutcome, Finding } from "./types.ts";

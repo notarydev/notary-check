@@ -694,21 +694,21 @@ test(
   },
 );
 
-// ── ADVANCE — concurrent-not-blocking, and the no-user_request skip ────────
+// ── MOVE — concurrent-not-blocking, and the no-user_request skip ────────
 //
-// Advance runs alongside Track 2/Challenge (Promise.all), strictly AFTER
-// Track 1's claim + evidence_match rows are already committed. These tests
+// Move runs alongside Act/Challenge (Promise.all), strictly AFTER
+// Verify's claim + evidence_match rows are already committed. These tests
 // prove the two correctness properties the handoff explicitly calls for:
-// (1) Track 1's own result is identical whether or not a user_request (and
-// therefore Advance) was supplied, and identical even when Advance's own
-// call is slow or fails; (2) no user_request means Advance is skipped
-// entirely — no client invocation, a 'skipped' advance_invocation row, never
+// (1) Verify's own result is identical whether or not a user_request (and
+// therefore Move) was supplied, and identical even when Move's own
+// call is slow or fails; (2) no user_request means Move is skipped
+// entirely — no client invocation, a 'skipped' act_invocation row, never
 // a guess.
 
 /** A judge client that counts calls, delays briefly, and returns one legal
- * clarify suggestion — used to prove Advance can run without altering or
- * delaying the Track 1 result already computed above it. */
-function delayedAdvanceClient(delayMs: number): { client: JudgeClient; calls: () => number } {
+ * clarify move — used to prove Move can run without altering or
+ * delaying the Verify result already computed above it. */
+function delayedMoveClient(delayMs: number): { client: JudgeClient; calls: () => number } {
   let calls = 0;
   const client: JudgeClient = {
     async call(_input: JudgeCallInput): Promise<JudgeCallResult> {
@@ -721,7 +721,7 @@ function delayedAdvanceClient(delayMs: number): { client: JudgeClient; calls: ()
           promptVersion: "v",
           question: "q",
           answer: JSON.stringify({
-            suggestions: [{ id: "s1", short_label: "Confirm the FY period", move: "clarify", prompt: "Ask which fiscal period this figure covers." }],
+            moves: [{ id: "s1", short_label: "Confirm the FY period", move: "clarify", prompt: "Ask which fiscal period this figure covers." }],
           }),
           inputTokens: 50,
           outputTokens: 20,
@@ -732,18 +732,18 @@ function delayedAdvanceClient(delayMs: number): { client: JudgeClient; calls: ()
   return { client, calls: () => calls };
 }
 
-/** A judge client whose call always throws — proves an Advance transport
- * failure cannot propagate into or alter a committed Track 1 result. */
-function throwingAdvanceClient(): JudgeClient {
+/** A judge client whose call always throws — proves a Move transport
+ * failure cannot propagate into or alter a committed Verify result. */
+function throwingMoveClient(): JudgeClient {
   return {
     async call(_input: JudgeCallInput): Promise<JudgeCallResult> {
-      throw new Error("simulated advance transport failure");
+      throw new Error("simulated move transport failure");
     },
   };
 }
 
 test(
-  "Advance running alongside Track 2/Challenge does not delay or alter Track 1's own committed result",
+  "Move running alongside Act/Challenge does not delay or alter Verify's own committed result",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
@@ -752,7 +752,7 @@ test(
       const reviewId = await createReview(pool, orgId);
       const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
 
-      const { client: advanceClient, calls } = delayedAdvanceClient(50);
+      const { client: moveClient, calls } = delayedMoveClient(50);
       const started = performance.now();
       const result = await runReview(
         {
@@ -766,31 +766,31 @@ test(
           userRequest: "Can you double-check Acme's FY25 revenue growth figure for me?",
         },
         pool,
-        { advanceClient },
+        { moveClient },
       );
       const elapsedMs = performance.now() - started;
 
-      // Track 1's own finding — identical to the plain SUPPORTED test above,
-      // unaffected by Advance running concurrently alongside it.
+      // Verify's own finding — identical to the plain SUPPORTED test above,
+      // unaffected by Move running concurrently alongside it.
       assert.equal(result.state, "SUPPORTED");
       assert.equal(result.stateReason, "supporting_applicable_relation");
       assert.equal(result.matches.length, 1);
       assert.equal(result.lifecycle, "completed");
       assert.equal(result.checksCompleted, true);
 
-      // Advance actually ran (concurrently, not skipped) and returned its one
-      // suggestion, proving this isn't just "Advance never got invoked".
+      // Move actually ran (concurrently, not skipped) and returned its one
+      // move, proving this isn't just "Move never got invoked".
       assert.equal(calls(), 1);
-      assert.equal(result.advanceSuggestions.length, 1);
-      assert.equal(result.advanceSuggestions[0].move, "clarify");
+      assert.equal(result.moves.length, 1);
+      assert.equal(result.moves[0].move, "clarify");
 
       // The claim row was committed and is queryable with its real state —
-      // Advance's own concurrent run cannot have delayed that commit past
+      // Move's own concurrent run cannot have delayed that commit past
       // when this function returns, nor changed what was committed.
       const claim = (await pool.query("SELECT state FROM claim WHERE id = $1", [result.claimId])).rows[0] as Record<string, unknown>;
       assert.equal(claim.state, "SUPPORTED");
 
-      // Loose latency sanity check: Track 2/Challenge and Advance run via
+      // Loose latency sanity check: Act/Challenge and Move run via
       // Promise.all, not sequential awaits, so total added latency should be
       // roughly ONE 50ms delay's worth, not stacked — this is a smoke check,
       // not a precise timing assertion (CI/network jitter), so the bound is
@@ -803,7 +803,7 @@ test(
 );
 
 test(
-  "an Advance transport failure never propagates into or alters a committed Track 1 result",
+  "a Move transport failure never propagates into or alters a committed Verify result",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
@@ -824,23 +824,23 @@ test(
           userRequest: "Can you double-check Acme's FY25 revenue growth figure for me?",
         },
         pool,
-        { advanceClient: throwingAdvanceClient() },
+        { moveClient: throwingMoveClient() },
       );
 
-      // Track 1 unaffected by the thrown error inside Advance's own call.
+      // Verify unaffected by the thrown error inside Move's own call.
       assert.equal(result.state, "SUPPORTED");
       assert.equal(result.matches.length, 1);
       assert.equal(result.lifecycle, "completed");
-      // Advance degrades to zero suggestions rather than the failure
+      // Move degrades to zero moves rather than the failure
       // propagating out of runReview() entirely (never THROWS — same
-      // subordination discipline as Track 2/Challenge).
-      assert.deepEqual(result.advanceSuggestions, []);
+      // subordination discipline as Act/Challenge).
+      assert.deepEqual(result.moves, []);
 
       const invocationRow = (
-        await pool.query("SELECT status, error FROM advance_invocation WHERE claim_id = $1", [result.claimId])
+        await pool.query("SELECT status, error FROM act_invocation WHERE claim_id = $1", [result.claimId])
       ).rows[0] as Record<string, unknown>;
       assert.equal(invocationRow.status, "error");
-      assert.equal(invocationRow.error, "simulated advance transport failure");
+      assert.equal(invocationRow.error, "simulated move transport failure");
     } finally {
       await pool.end();
     }
@@ -848,7 +848,7 @@ test(
 );
 
 test(
-  "no user_request supplied: Advance is skipped entirely — no client call, zero suggestions, a 'skipped' advance_invocation row",
+  "no user_request supplied: Move is skipped entirely — no client call, zero moves, a 'skipped' act_invocation row",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
@@ -857,7 +857,7 @@ test(
       const reviewId = await createReview(pool, orgId);
       const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
 
-      const { client: advanceClient, calls } = delayedAdvanceClient(0);
+      const { client: moveClient, calls } = delayedMoveClient(0);
       const result = await runReview(
         {
           organizationId: orgId,
@@ -870,15 +870,15 @@ test(
           // userRequest intentionally omitted.
         },
         pool,
-        { advanceClient },
+        { moveClient },
       );
 
-      assert.equal(result.state, "SUPPORTED", "Track 1 is unaffected by the absence of a user_request");
-      assert.deepEqual(result.advanceSuggestions, []);
+      assert.equal(result.state, "SUPPORTED", "Verify is unaffected by the absence of a user_request");
+      assert.deepEqual(result.moves, []);
       assert.equal(calls(), 0, "the judge client must never be invoked with no user_request");
 
       const invocationRow = (
-        await pool.query("SELECT status, error FROM advance_invocation WHERE claim_id = $1", [result.claimId])
+        await pool.query("SELECT status, error FROM act_invocation WHERE claim_id = $1", [result.claimId])
       ).rows[0] as Record<string, unknown>;
       assert.equal(invocationRow.status, "skipped");
       assert.equal(invocationRow.error, "no_user_request");
@@ -898,7 +898,7 @@ test(
       const reviewId = await createReview(pool, orgId);
       const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
 
-      const { client: advanceClient, calls } = delayedAdvanceClient(0);
+      const { client: moveClient, calls } = delayedMoveClient(0);
       const result = await runReview(
         {
           organizationId: orgId,
@@ -911,10 +911,10 @@ test(
           userRequest: "   ",
         },
         pool,
-        { advanceClient },
+        { moveClient },
       );
 
-      assert.deepEqual(result.advanceSuggestions, []);
+      assert.deepEqual(result.moves, []);
       assert.equal(calls(), 0);
     } finally {
       await pool.end();
@@ -922,29 +922,29 @@ test(
   },
 );
 
-// Migration 0014: Advance's own org feature flag. The rule in
-// docs/build/tier-1-build-and-operating-plan.md § Track 2 / Advance has always
-// been that Advance gets its own flag once it has persisted state to gate;
-// 0013 gave it that state and the flag was never added, so Advance ran ungated
+// Migration 0014: Move's own org feature flag. The rule in
+// docs/build/tier-1-build-and-operating-plan.md § Act / Move has always
+// been that Move gets its own flag once it has persisted state to gate;
+// 0013 gave it that state and the flag was never added, so Move ran ungated
 // in production. This test is what keeps the flag honest — a flag nothing
 // verifies is a flag that silently stops working.
 //
 // Two things asserted together, because either alone is insufficient: that no
-// suggestions come back, AND that the client was never called. A gate that
+// moves come back, AND that the client was never called. A gate that
 // returns [] after paying for the call has not actually gated anything — the
 // whole reason the flag is read before any client construction or budget query
 // is that a disabled org must cost exactly zero extra DeepSeek calls.
 test(
-  "advance_enabled = false gates Advance entirely — no suggestions, and no model call is paid for",
+  "act_moves_enabled = false gates Move entirely — no moves, and no model call is paid for",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
     try {
-      const orgId = await createOrganization(pool, { advanceEnabled: false });
+      const orgId = await createOrganization(pool, { movesEnabled: false });
       const reviewId = await createReview(pool, orgId);
       const evidenceId = await seedRetrievedEvidence(pool, reviewId, SUPPORT_TEXT);
 
-      const { client: advanceClient, calls } = delayedAdvanceClient(50);
+      const { client: moveClient, calls } = delayedMoveClient(50);
       const result = await runReview(
         {
           organizationId: orgId,
@@ -959,59 +959,59 @@ test(
           userRequest: "Can you double-check Acme's FY25 revenue growth figure for me?",
         },
         pool,
-        { advanceClient },
+        { moveClient },
       );
 
-      assert.deepEqual(result.advanceSuggestions, [], "a disabled org must produce no Advance suggestions");
+      assert.deepEqual(result.moves, [], "a disabled org must produce no moves");
       assert.equal(calls(), 0, "a disabled org must not reach the model at all — the flag is read before any client work");
 
-      // Track 1 is completely unaffected: the flag gates Advance, never the
-      // evidence record. This is the same authority boundary Advance has
+      // Verify is completely unaffected: the flag gates Move, never the
+      // evidence record. This is the same authority boundary Move has
       // everywhere else, checked at the flag path specifically.
       assert.equal(result.state, "SUPPORTED");
       assert.equal(result.lifecycle, "completed");
 
-      // No advance_invocation row either. 'skipped' means "was eligible and
+      // No act_invocation row either. 'skipped' means "was eligible and
       // short-circuited on its own policy"; an org with the feature off was
       // never eligible, and a row per claim would bury the real skips.
-      const rows = await pool.query("SELECT count(*)::int AS n FROM advance_invocation WHERE organization_id = $1", [orgId]);
-      assert.equal(rows.rows[0].n, 0, "a disabled org writes no advance_invocation row");
+      const rows = await pool.query("SELECT count(*)::int AS n FROM act_invocation WHERE organization_id = $1", [orgId]);
+      assert.equal(rows.rows[0].n, 0, "a disabled org writes no act_invocation row");
     } finally {
       await pool.end();
     }
   },
 );
 
-// Regression guard for a live double-run (2026-09-04). Both Advance paths were
-// wired at once: the connector submitted claims (each firing per-claim Advance)
-// and then called /detect (firing invocation-level Advance), and then discarded
+// Regression guard for a live double-run (2026-09-04). Both Move paths were
+// wired at once: the connector submitted claims (each firing per-claim Move)
+// and then called /detect (firing invocation-level Move), and then discarded
 // the per-claim results. Observed on a real five-claim answer — six model calls
-// paid for, output thrown away, and the "0-2 suggestions per invocation"
-// cardinality contract bypassed by ten near-duplicate suggestions.
+// paid for, output thrown away, and the "0-2 moves per invocation"
+// cardinality contract bypassed by ten near-duplicate moves.
 //
-// These assert on the CLIENT CALL COUNT, not on empty suggestions: an empty
+// These assert on the CLIENT CALL COUNT, not on empty moves: an empty
 // result is also what a policy short-circuit produces, and the wasted spend is
 // the whole point.
 test(
-  "skipClaimAdvance suppresses the per-claim Advance call entirely — no model call, no row",
+  "skipClaimMoves suppresses the per-claim Move call entirely — no model call, no row",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
     try {
       const orgId = await createOrganization(pool);
-      await pool.query("UPDATE organization SET advance_enabled = true WHERE id = $1", [orgId]);
+      await pool.query("UPDATE organization SET act_moves_enabled = true WHERE id = $1", [orgId]);
       const reviewId = await createReview(pool, orgId);
 
-      let advanceCalls = 0;
+      let moveCalls = 0;
       const countingClient = {
         async call() {
-          advanceCalls++;
+          moveCalls++;
           return {
-            record: { model: "t", promptVersion: "t", question: "q", answer: '{"suggestions":[]}' },
-            parsed: { suggestions: [] },
+            record: { model: "t", promptVersion: "t", question: "q", answer: '{"moves":[]}' },
+            parsed: { moves: [] },
           };
         },
-      } as unknown as Parameters<typeof runReview>[2] extends { advanceClient?: infer C } ? C : never;
+      } as unknown as Parameters<typeof runReview>[2] extends { moveClient?: infer C } ? C : never;
 
       await runReview(
         {
@@ -1023,15 +1023,15 @@ test(
           claimFields: CLAIM_FIELDS,
           evidenceIds: [],
           userRequest: "check the revenue figure",
-          skipClaimAdvance: true,
+          skipClaimMoves: true,
         },
         pool,
-        { advanceClient: countingClient },
+        { moveClient: countingClient },
       );
 
-      assert.equal(advanceCalls, 0, "per-claim Advance must not be paid for when the caller handles it per invocation");
-      const rows = await pool.query("SELECT count(*)::int AS n FROM advance_invocation WHERE review_id = $1", [reviewId]);
-      assert.equal(rows.rows[0].n, 0, "and no advance_invocation row is written");
+      assert.equal(moveCalls, 0, "per-claim Move must not be paid for when the caller handles it per invocation");
+      const rows = await pool.query("SELECT count(*)::int AS n FROM act_invocation WHERE review_id = $1", [reviewId]);
+      assert.equal(rows.rows[0].n, 0, "and no act_invocation row is written");
     } finally {
       await pool.end();
     }
@@ -1039,25 +1039,25 @@ test(
 );
 
 test(
-  "without the flag, per-claim Advance still runs — a direct API caller is unaffected",
+  "without the flag, per-claim Move still runs — a direct API caller is unaffected",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
     try {
       const orgId = await createOrganization(pool);
-      await pool.query("UPDATE organization SET advance_enabled = true WHERE id = $1", [orgId]);
+      await pool.query("UPDATE organization SET act_moves_enabled = true WHERE id = $1", [orgId]);
       const reviewId = await createReview(pool, orgId);
 
-      let advanceCalls = 0;
+      let moveCalls = 0;
       const countingClient = {
         async call() {
-          advanceCalls++;
+          moveCalls++;
           return {
-            record: { model: "t", promptVersion: "t", question: "q", answer: '{"suggestions":[]}' },
-            parsed: { suggestions: [] },
+            record: { model: "t", promptVersion: "t", question: "q", answer: '{"moves":[]}' },
+            parsed: { moves: [] },
           };
         },
-      } as unknown as Parameters<typeof runReview>[2] extends { advanceClient?: infer C } ? C : never;
+      } as unknown as Parameters<typeof runReview>[2] extends { moveClient?: infer C } ? C : never;
 
       await runReview(
         {
@@ -1071,10 +1071,10 @@ test(
           userRequest: "check the revenue figure",
         },
         pool,
-        { advanceClient: countingClient },
+        { moveClient: countingClient },
       );
 
-      assert.equal(advanceCalls, 1, "the default preserves behaviour for a caller that never calls /detect");
+      assert.equal(moveCalls, 1, "the default preserves behaviour for a caller that never calls /detect");
     } finally {
       await pool.end();
     }

@@ -1,5 +1,5 @@
-// Track 2 / Advance — hand-written fixture suite (§ build order step 3-4;
-// Part 11 § Suggestion cardinality and the six-layer guardrail architecture).
+// Act / Move — hand-written fixture suite (§ build order step 3-4;
+// Part 11 § Move cardinality and the six-layer guardrail architecture).
 //
 // Exercises steps 1-3 (types, policy, validator) with NO model call, NO
 // network, and NO database — pure fixtures against hand-written example
@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getAllowedMoves, POLICY_VERSION } from "./policy.ts";
-import type { AdvanceMove } from "./types.ts";
+import type { MoveKind } from "./types.ts";
 import {
   boundaryPreserved,
   findAuthorityViolation,
@@ -19,10 +19,10 @@ import {
   MAX_PROMPT_CHARS,
   MAX_SHORT_LABEL_CHARS,
   MAX_SUGGESTIONS,
-  validateAdvanceOutput,
+  validateMoveOutput,
 } from "./validator.ts";
 
-const ALL_MOVES: readonly AdvanceMove[] = ["clarify", "test", "compare", "repair"];
+const ALL_MOVES: readonly MoveKind[] = ["clarify", "test", "compare", "repair"];
 
 function item(overrides: Partial<{ id: string; short_label: string; move: string; prompt: string }> = {}) {
   return {
@@ -33,31 +33,31 @@ function item(overrides: Partial<{ id: string; short_label: string; move: string
   };
 }
 
-// --- basic shape: 0, 1, 2 suggestions ---------------------------------
+// --- basic shape: 0, 1, 2 moves ---------------------------------
 
-test("zero suggestions is a valid, non-error result", () => {
-  const result = validateAdvanceOutput({ suggestions: [] }, { allowedMoves: ALL_MOVES });
+test("zero moves is a valid, non-error result", () => {
+  const result = validateMoveOutput({ moves: [] }, { allowedMoves: ALL_MOVES });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.suggestions.length, 0);
+  if (result.ok) assert.equal(result.moves.length, 0);
 });
 
-test("one valid suggestion passes for each of the four moves", () => {
+test("one valid move passes for each of the four moves", () => {
   for (const move of ALL_MOVES) {
-    const result = validateAdvanceOutput(
-      { suggestions: [item({ move, prompt: `Test whether the ${move} case still holds.` })] },
+    const result = validateMoveOutput(
+      { moves: [item({ move, prompt: `Test whether the ${move} case still holds.` })] },
       { allowedMoves: ALL_MOVES },
     );
     assert.equal(result.ok, true, `expected ${move} to pass`);
     if (result.ok) {
-      assert.equal(result.suggestions[0].move, move);
+      assert.equal(result.moves[0].move, move);
     }
   }
 });
 
-test("two distinct valid suggestions pass together", () => {
-  const result = validateAdvanceOutput(
+test("two distinct valid moves pass together", () => {
+  const result = validateMoveOutput(
     {
-      suggestions: [
+      moves: [
         item({ id: "a", short_label: "Ambiguous architecture choice", move: "clarify", prompt: "Ask which deployment target this needs to support." }),
         item({ id: "b", short_label: "Failure mode untested", move: "test", prompt: "Run the failure-mode test before shipping this." }),
       ],
@@ -65,13 +65,13 @@ test("two distinct valid suggestions pass together", () => {
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.suggestions.length, 2);
+  if (result.ok) assert.equal(result.moves.length, 2);
 });
 
 test("more than MAX_SUGGESTIONS items is rejected", () => {
-  const result = validateAdvanceOutput(
+  const result = validateMoveOutput(
     {
-      suggestions: [
+      moves: [
         item({ id: "a" }),
         item({ id: "b", short_label: "Second thing" }),
         item({ id: "c", short_label: "Third thing" }),
@@ -86,8 +86,8 @@ test("more than MAX_SUGGESTIONS items is rejected", () => {
 // --- layer 2: policy-set enforcement -------------------------------------
 
 test("a structurally valid move outside the allowed set is rejected", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ move: "repair", prompt: "Fix the broken premise now." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ move: "repair", prompt: "Fix the broken premise now." })] },
     { allowedMoves: ["clarify", "test", "compare"] }, // repair intentionally excluded
   );
   assert.equal(result.ok, false);
@@ -96,8 +96,8 @@ test("a structurally valid move outside the allowed set is rejected", () => {
 
 test("a move outside the four-move vocabulary entirely is rejected", () => {
   for (const badMove of ["answer", "summarize", "research"]) {
-    const result = validateAdvanceOutput(
-      { suggestions: [item({ move: badMove, prompt: "Please look into it further." })] },
+    const result = validateMoveOutput(
+      { moves: [item({ move: badMove, prompt: "Please look into it further." })] },
       { allowedMoves: ALL_MOVES },
     );
     assert.equal(result.ok, false, `expected "${badMove}" to be rejected`);
@@ -107,37 +107,37 @@ test("a move outside the four-move vocabulary entirely is rejected", () => {
 // --- layer 3: cardinality / structural bounds --------------------------
 
 test("an empty prompt is rejected", () => {
-  const result = validateAdvanceOutput({ suggestions: [item({ prompt: "" })] }, { allowedMoves: ALL_MOVES });
+  const result = validateMoveOutput({ moves: [item({ prompt: "" })] }, { allowedMoves: ALL_MOVES });
   assert.equal(result.ok, false);
 });
 
 test("an empty short_label is rejected", () => {
-  const result = validateAdvanceOutput({ suggestions: [item({ short_label: "" })] }, { allowedMoves: ALL_MOVES });
+  const result = validateMoveOutput({ moves: [item({ short_label: "" })] }, { allowedMoves: ALL_MOVES });
   assert.equal(result.ok, false);
 });
 
 test("a prompt over MAX_PROMPT_CHARS is rejected; exactly at the limit passes", () => {
   const tooLong = "Test whether " + "x".repeat(MAX_PROMPT_CHARS);
-  const result = validateAdvanceOutput({ suggestions: [item({ prompt: tooLong })] }, { allowedMoves: ALL_MOVES });
+  const result = validateMoveOutput({ moves: [item({ prompt: tooLong })] }, { allowedMoves: ALL_MOVES });
   assert.equal(result.ok, false);
 
   const exactly = "Test " + "x".repeat(MAX_PROMPT_CHARS - 5);
   assert.equal(exactly.length, MAX_PROMPT_CHARS);
-  const okResult = validateAdvanceOutput({ suggestions: [item({ prompt: exactly })] }, { allowedMoves: ALL_MOVES });
+  const okResult = validateMoveOutput({ moves: [item({ prompt: exactly })] }, { allowedMoves: ALL_MOVES });
   assert.equal(okResult.ok, true);
 });
 
 test("a short_label over MAX_SHORT_LABEL_CHARS is rejected — its own, tighter limit than prompt", () => {
   assert.ok(MAX_SHORT_LABEL_CHARS < MAX_PROMPT_CHARS, "short_label limit must be tighter than prompt's");
   const tooLong = "x".repeat(MAX_SHORT_LABEL_CHARS + 1);
-  const result = validateAdvanceOutput({ suggestions: [item({ short_label: tooLong })] }, { allowedMoves: ALL_MOVES });
+  const result = validateMoveOutput({ moves: [item({ short_label: tooLong })] }, { allowedMoves: ALL_MOVES });
   assert.equal(result.ok, false);
 });
 
-test("duplicate suggestion ids are rejected", () => {
-  const result = validateAdvanceOutput(
+test("duplicate move ids are rejected", () => {
+  const result = validateMoveOutput(
     {
-      suggestions: [
+      moves: [
         item({ id: "dup", short_label: "First framing" }),
         item({ id: "dup", short_label: "Second framing" }),
       ],
@@ -145,13 +145,13 @@ test("duplicate suggestion ids are rejected", () => {
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.error, /duplicate suggestion id/);
+  if (!result.ok) assert.match(result.error, /duplicate move id/);
 });
 
 test("duplicate (move, short_label) pairs are rejected — code checks structural dedup, not semantic distinctness", () => {
-  const result = validateAdvanceOutput(
+  const result = validateMoveOutput(
     {
-      suggestions: [
+      moves: [
         item({ id: "a", move: "test", short_label: "Check the failure mode" }),
         item({ id: "b", move: "test", short_label: "check the FAILURE mode" }), // same after normalization
       ],
@@ -163,9 +163,9 @@ test("duplicate (move, short_label) pairs are rejected — code checks structura
 });
 
 test("two items with the SAME move but genuinely different labels are both allowed — code does not forbid same-move pairs", () => {
-  const result = validateAdvanceOutput(
+  const result = validateMoveOutput(
     {
-      suggestions: [
+      moves: [
         item({ id: "a", move: "test", short_label: "Test the auth path" }),
         item({ id: "b", move: "test", short_label: "Test the rate limiter" }),
       ],
@@ -178,8 +178,8 @@ test("two items with the SAME move but genuinely different labels are both allow
 // --- strict schema: extra key rejects the WHOLE response, not just the item ---
 
 test("an extra key (confidence) on an item rejects the whole response", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [{ ...item(), confidence: 0.9 }] },
+  const result = validateMoveOutput(
+    { moves: [{ ...item(), confidence: 0.9 }] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
@@ -187,16 +187,16 @@ test("an extra key (confidence) on an item rejects the whole response", () => {
 });
 
 test("an extra key (verdict) on an item rejects the whole response", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [{ ...item(), verdict: "supported" }] },
+  const result = validateMoveOutput(
+    { moves: [{ ...item(), verdict: "supported" }] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
 });
 
 test("an extra top-level key on the response envelope rejects the whole response", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item()], reasoning: "I think this is the best move" },
+  const result = validateMoveOutput(
+    { moves: [item()], reasoning: "I think this is the best move" },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
@@ -206,32 +206,32 @@ test("an extra top-level key on the response envelope rejects the whole response
 
 test("non-JSON input is rejected cleanly, never throws", () => {
   assert.doesNotThrow(() => {
-    const result = validateAdvanceOutput("this is not json at all {{{", { allowedMoves: ALL_MOVES });
+    const result = validateMoveOutput("this is not json at all {{{", { allowedMoves: ALL_MOVES });
     assert.equal(result.ok, false);
   });
 });
 
 test("null and undefined input are rejected cleanly, never throw", () => {
   assert.doesNotThrow(() => {
-    assert.equal(validateAdvanceOutput(null, { allowedMoves: ALL_MOVES }).ok, false);
-    assert.equal(validateAdvanceOutput(undefined, { allowedMoves: ALL_MOVES }).ok, false);
+    assert.equal(validateMoveOutput(null, { allowedMoves: ALL_MOVES }).ok, false);
+    assert.equal(validateMoveOutput(undefined, { allowedMoves: ALL_MOVES }).ok, false);
   });
 });
 
-// --- fenced JSON tolerance (parity with Track 1's extractChallengeJson) ---
+// --- fenced JSON tolerance (parity with Verify's extractChallengeJson) ---
 
 test("a ```json-fenced valid response is still accepted", () => {
-  const fenced = "```json\n" + JSON.stringify({ suggestions: [item({ move: "test", prompt: "Run the smaller test case first." })] }) + "\n```";
-  const result = validateAdvanceOutput(fenced, { allowedMoves: ALL_MOVES });
+  const fenced = "```json\n" + JSON.stringify({ moves: [item({ move: "test", prompt: "Run the smaller test case first." })] }) + "\n```";
+  const result = validateMoveOutput(fenced, { allowedMoves: ALL_MOVES });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.suggestions[0].move, "test");
+  if (result.ok) assert.equal(result.moves[0].move, "test");
 });
 
 // --- layer 4: content safety / authority (adversarial-style cases) --------
 
 test("layer 4: a stated verification claim is rejected", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ prompt: "Compare the totals, since the evidence proves the figure is wrong." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ prompt: "Compare the totals, since the evidence proves the figure is wrong." })] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
@@ -239,8 +239,8 @@ test("layer 4: a stated verification claim is rejected", () => {
 });
 
 test("layer 4: a confidence figure is rejected", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ prompt: "Compare these two — I'm 87% confident option A is better." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ prompt: "Compare these two — I'm 87% confident option A is better." })] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
@@ -248,8 +248,8 @@ test("layer 4: a confidence figure is rejected", () => {
 });
 
 test("layer 4: a completed-action claim is rejected", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ prompt: "I already checked the logs, so just confirm the fix works." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ prompt: "I already checked the logs, so just confirm the fix works." })] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
@@ -257,8 +257,8 @@ test("layer 4: a completed-action claim is rejected", () => {
 });
 
 test("layer 4: an autonomous-action instruction is rejected", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ prompt: "Search for the latest pricing and send this to the team." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ prompt: "Search for the latest pricing and send this to the team." })] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
@@ -273,8 +273,8 @@ test("findAuthorityViolation is directly testable and returns undefined for clea
 // --- layer 6: action-language (adversarial-style cases) -------------------
 
 test("layer 6: a stated conclusion instead of a request is rejected (replacement-answer)", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ prompt: "The correct architecture is the event-driven one, not the polling one." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ prompt: "The correct architecture is the event-driven one, not the polling one." })] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);
@@ -307,8 +307,8 @@ test("boundaryPreserved: false when the boundary text is entirely absent — thi
   assert.equal(boundaryPreserved(prompt, boundary), false);
   // The validator deliberately does NOT reject on this alone -- confirmed by
   // the fact that a real item omitting the boundary still validates:
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ prompt: "Ask whether the current draft still needs revision." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ prompt: "Ask whether the current draft still needs revision." })] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, true);
@@ -371,9 +371,9 @@ test("POLICY_VERSION is a non-empty string", () => {
 // --- adversarial-style structural cases from Part 11, checkable without a model ---
 
 test("adversarial: an item using a move outside a single-move allowed set (allowedMoves={test}) is rejected, even paired with a valid item", () => {
-  const result = validateAdvanceOutput(
+  const result = validateMoveOutput(
     {
-      suggestions: [
+      moves: [
         item({ id: "a", move: "test", prompt: "Test the failure mode directly." }),
         item({ id: "b", move: "repair", prompt: "Fix the premise now.", short_label: "Sneaks in repair" }),
       ],
@@ -384,8 +384,8 @@ test("adversarial: an item using a move outside a single-move allowed set (allow
 });
 
 test("adversarial: a 'fifth move' the model might invent for an out-of-scope request is rejected", () => {
-  const result = validateAdvanceOutput(
-    { suggestions: [item({ move: "escalate", prompt: "Escalate this to a human reviewer." })] },
+  const result = validateMoveOutput(
+    { moves: [item({ move: "escalate", prompt: "Escalate this to a human reviewer." })] },
     { allowedMoves: ALL_MOVES },
   );
   assert.equal(result.ok, false);

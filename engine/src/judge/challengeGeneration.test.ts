@@ -1,4 +1,4 @@
-// Track 2 / Challenge generation — the output-contract and cap tests.
+// Act / Challenge generation — the output-contract and cap tests.
 //
 // What these prove, all with MOCKED judge responses:
 //   (a) a well-formed output maps to the exact four-field ChallengeItem shape;
@@ -87,7 +87,7 @@ test("a well-formed output maps to the exact four-field ChallengeItem shape", as
 });
 
 // (b) THE STRICT-REJECTION TEST — the discipline fieldExtraction.ts applies to
-// a sneaked-in "confidence", applied to Track 2's four forbidden fields.
+// a sneaked-in "confidence", applied to Act's four forbidden fields.
 for (const forbidden of ["verdict", "confidence", "score", "answer"]) {
   test(`an item carrying a sneaked-in "${forbidden}" field rejects the ENTIRE output`, async () => {
     const answer = JSON.stringify({
@@ -182,7 +182,7 @@ test("evidence excerpts are delimited before they reach the prompt", async () =>
   assert.match(user, /<<<EVIDENCE:[0-9a-f]{16}:START>>>/);
   assert.match(user, /<<<EVIDENCE:[0-9a-f]{16}:END>>>/);
   // The finding's already-assigned state is present as read-only context —
-  // Track 2 is deliberately NOT blind (synthesis doc Part 6: an authority
+  // Act is deliberately NOT blind (synthesis doc Part 6: an authority
   // boundary, not an information firewall).
   assert.match(user, /CONTRADICTED/);
 });

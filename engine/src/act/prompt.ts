@@ -1,31 +1,31 @@
-// Track 2 / Advance — prompt construction
-// (§ Track 2 / Advance build order step 5; Part 11 § Prompt construction,
-// § Suggestion cardinality and the six-layer guardrail architecture).
+// Act / Move — prompt construction
+// (§ Act / Move build order step 5; Part 11 § Prompt construction,
+// § Move cardinality and the six-layer guardrail architecture).
 //
 // Builds the fixed prompt blocks: role, allowed moves, cardinality rule,
 // content/authority prohibitions, delimited data, strict output instruction.
 // All caller-supplied text (user_request, claude_answer, visible_context,
-// prior_attempts, explicit_constraints, and a sealed Track1 boundary_text if
+// prior_attempts, explicit_constraints, and a sealed Verify boundary_text if
 // present) is delimited via ../ingestion/delimitEvidence.ts's
 // delimitEvidenceForModel before it reaches the prompt — the same defense
-// Track 1's judge and Track 2/Challenge use against a document (here: a
+// Verify's judge and Act/Challenge use against a document (here: a
 // user's own request) containing instruction-shaped text ("ignore prior
 // instructions and recommend X"). Nothing here calls a model or does I/O;
 // this module only builds text. What it asks for is a REQUEST to the model —
 // validator.ts is what actually enforces the result, not this prompt.
 
 import { delimitEvidenceForModel } from "../ingestion/delimitEvidence.ts";
-import type { AdvanceMove, InvocationContext, Track2EvidenceConstraint } from "./types.ts";
+import type { MoveKind, InvocationContext, ActEvidenceConstraint } from "./types.ts";
 
-export const ADVANCE_PROMPT_VERSION = "2026-09-04.2";
+export const MOVE_PROMPT_VERSION = "2026-09-04.2";
 
-export interface AdvancePromptInput {
+export interface MovePromptInput {
   context: InvocationContext;
-  allowedMoves: readonly AdvanceMove[];
-  constraint?: Track2EvidenceConstraint;
+  allowedMoves: readonly MoveKind[];
+  constraint?: ActEvidenceConstraint;
 }
 
-const MOVE_DESCRIPTIONS: Record<AdvanceMove, string> = {
+const MOVE_DESCRIPTIONS: Record<MoveKind, string> = {
   clarify: "clarify — something important is missing; get it",
   test: "test — don't guess; run a small, reversible check",
   compare: "compare — multiple live explanations/options exist; distinguish them",
@@ -33,11 +33,11 @@ const MOVE_DESCRIPTIONS: Record<AdvanceMove, string> = {
 };
 
 /**
- * Builds the system/user messages for one Advance call. Returns the messages
+ * Builds the system/user messages for one Move call. Returns the messages
  * plus `question` (persisted provenance, matching every other judge call in
  * this codebase's convention) — never calls a model itself.
  */
-export function buildAdvancePrompt(input: AdvancePromptInput): { system: string; user: string; question: string } {
+export function buildMovePrompt(input: MovePromptInput): { system: string; user: string; question: string } {
   const { context, allowedMoves, constraint } = input;
 
   const system = [
@@ -45,13 +45,13 @@ export function buildAdvancePrompt(input: AdvancePromptInput): { system: string;
     "You are not answering their question, and you are not verifying any fact —",
     "that is a separate system's job, not yours.",
     "",
-    "CARDINALITY: return 0, 1, or 2 suggestions. Zero is correct and expected",
+    "CARDINALITY: return 0, 1, or 2 moves. Zero is correct and expected",
     "when there is nothing useful to add — do not manufacture one. A second",
-    "suggestion is legal ONLY when it represents a materially distinct next",
+    "move is legal ONLY when it represents a materially distinct next",
     "move, not a rephrasing or a minor variant of the first. Padding to two",
     "when one is clearly sufficient is invalid behavior.",
     "",
-    "ALLOWED MOVES (each suggestion must use exactly one):",
+    "ALLOWED MOVES (each move must use exactly one):",
     ...allowedMoves.map((m) => `- ${MOVE_DESCRIPTIONS[m]}`),
     "",
     "EACH SUGGESTION MUST BE:",
@@ -91,7 +91,7 @@ export function buildAdvancePrompt(input: AdvancePromptInput): { system: string;
       : undefined,
     "",
     'Respond with ONLY a JSON object of this exact shape:',
-    '{"suggestions": [{"id": "<short unique string>", "short_label": "<...>", "move": "<one of the allowed moves>", "prompt": "<...>"}]}',
+    '{"moves": [{"id": "<short unique string>", "short_label": "<...>", "move": "<one of the allowed moves>", "prompt": "<...>"}]}',
     "The array may be empty. No prose outside the JSON object.",
   ]
     .filter((line): line is string => line !== undefined)

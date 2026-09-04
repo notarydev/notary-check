@@ -1,13 +1,13 @@
-// Track 2 / Advance — the strict output validator, six guardrail layers
-// (§ Track 2 / Advance build order step 3; Part 11 § Suggestion cardinality
+// Act / Move — the strict output validator, six guardrail layers
+// (§ Act / Move build order step 3; Part 11 § Move cardinality
 // and the six-layer guardrail architecture).
 //
 // THE CORE PRINCIPLE, restated in code: the model proposes, policy
 // constrains, THIS FILE rejects, code never repairs. There is no fallback
-// path anywhere below — a rejected response produces zero suggestions, never
+// path anywhere below — a rejected response produces zero moves, never
 // a "closest legal" substitute, never a rewritten/summarized/cleaned-up
 // version. This is written and tested against HAND-WRITTEN example outputs
-// (advance.test.ts), not against real model output — the shape of the
+// (moves.test.ts), not against real model output — the shape of the
 // contract has to be proven correct before a model is ever wired in.
 //
 // SIX LAYERS, WITH AN EXPLICIT, HONEST SPLIT between what this file can
@@ -57,11 +57,11 @@
 // ../review/, ../judge/judgeClient.ts, or any DB/pg client.
 
 import { z } from "zod";
-import type { AdvanceMove, AdvanceSuggestion } from "./types.ts";
+import type { MoveKind, Move } from "./types.ts";
 
-const ADVANCE_MOVES = ["clarify", "test", "compare", "repair"] as const;
+const MOVE_KINDS = ["clarify", "test", "compare", "repair"] as const;
 
-/** § Track 2 / Advance build order step 3. A few sentences, not a paragraph. */
+/** § Act / Move build order step 3. A few sentences, not a paragraph. */
 export const MAX_PROMPT_CHARS = 600;
 
 /**
@@ -74,26 +74,26 @@ export const MAX_PROMPT_CHARS = 600;
 // imperative words; this is the enforcement.
 export const MAX_SHORT_LABEL_CHARS = 48;
 
-/** Part 11 § Suggestion cardinality: 0-2 suggestions per round, never more. */
+/** Part 11 § Move cardinality: 0-2 moves per round, never more. */
 export const MAX_SUGGESTIONS = 2;
 
-const ADVANCE_ITEM_SCHEMA = z
+const MOVE_ITEM_SCHEMA = z
   .object({
     id: z.string().min(1),
     short_label: z.string().min(1).max(MAX_SHORT_LABEL_CHARS),
-    move: z.enum(ADVANCE_MOVES),
+    move: z.enum(MOVE_KINDS),
     prompt: z.string().min(1).max(MAX_PROMPT_CHARS),
   })
   .strict();
 
-const ADVANCE_RESPONSE_SCHEMA = z
+const MOVE_RESPONSE_SCHEMA = z
   .object({
-    suggestions: z.array(ADVANCE_ITEM_SCHEMA).max(MAX_SUGGESTIONS),
+    moves: z.array(MOVE_ITEM_SCHEMA).max(MAX_SUGGESTIONS),
   })
   .strict();
 
-export type AdvanceValidationResult =
-  | { ok: true; suggestions: readonly AdvanceSuggestion[] }
+export type MoveValidationResult =
+  | { ok: true; moves: readonly Move[] }
   | { ok: false; error: string };
 
 /**
@@ -102,7 +102,7 @@ export type AdvanceValidationResult =
  * ../judge/challengeGeneration.ts's extractChallengeJson exactly — same
  * tolerance, no more.
  */
-export function extractAdvanceJson(text: string): unknown {
+export function extractMoveJson(text: string): unknown {
   const trimmed = text.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)```\s*$/i.exec(trimmed);
   const candidate = fenced ? fenced[1].trim() : trimmed;
@@ -205,29 +205,29 @@ export function boundaryPreserved(prompt: string, boundaryText: string): boolean
  * content layers. Never throws. Rejection is whole-response — see module
  * comment.
  */
-export function validateAdvanceOutput(
+export function validateMoveOutput(
   raw: unknown,
-  opts: { allowedMoves: readonly AdvanceMove[] },
-): AdvanceValidationResult {
-  const json = typeof raw === "string" ? extractAdvanceJson(raw) : raw;
+  opts: { allowedMoves: readonly MoveKind[] },
+): MoveValidationResult {
+  const json = typeof raw === "string" ? extractMoveJson(raw) : raw;
   if (json === undefined || json === null) {
-    return { ok: false, error: "advance output is not a valid JSON object" };
+    return { ok: false, error: "move output is not a valid JSON object" };
   }
 
-  const parsed = ADVANCE_RESPONSE_SCHEMA.safeParse(json);
+  const parsed = MOVE_RESPONSE_SCHEMA.safeParse(json);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     const path = first?.path?.join(".") ?? "";
     return {
       ok: false,
-      error: `advance output failed schema validation${path ? ` at ${path}` : ""}: ${first?.message ?? "unknown"}`,
+      error: `move output failed schema validation${path ? ` at ${path}` : ""}: ${first?.message ?? "unknown"}`,
     };
   }
 
-  const items = parsed.data.suggestions;
+  const items = parsed.data.moves;
 
   // Layer 2 (policy): every item's move must be in the CALLER-supplied
-  // allowed set — a structurally valid AdvanceMove outside that set is
+  // allowed set — a structurally valid MoveKind outside that set is
   // still rejected. Whole-response.
   for (const item of items) {
     if (!opts.allowedMoves.includes(item.move)) {
@@ -245,7 +245,7 @@ export function validateAdvanceOutput(
   const seenMoveLabel = new Set<string>();
   for (const item of items) {
     if (seenIds.has(item.id)) {
-      return { ok: false, error: `duplicate suggestion id "${item.id}"` };
+      return { ok: false, error: `duplicate move id "${item.id}"` };
     }
     seenIds.add(item.id);
     const key = `${item.move}::${item.short_label.trim().toLowerCase()}`;
@@ -259,12 +259,12 @@ export function validateAdvanceOutput(
   for (const item of items) {
     const authorityHit = findAuthorityViolation(item.short_label) ?? findAuthorityViolation(item.prompt);
     if (authorityHit) {
-      return { ok: false, error: `suggestion ${item.id} failed authority check: ${authorityHit}` };
+      return { ok: false, error: `move ${item.id} failed authority check: ${authorityHit}` };
     }
     if (!looksLikeRequest(item.prompt)) {
-      return { ok: false, error: `suggestion ${item.id}'s prompt does not read as a request (layer 6)` };
+      return { ok: false, error: `move ${item.id}'s prompt does not read as a request (layer 6)` };
     }
   }
 
-  return { ok: true, suggestions: items };
+  return { ok: true, moves: items };
 }

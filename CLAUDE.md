@@ -10,6 +10,31 @@ are a different product (a forensic proof-of-mitigation / release-gate
 platform for AI agents). Nothing here shares a tool contract, verification
 pipeline, or judge design with them.
 
+## The vocabulary (renamed 2026-09-04 — nothing before this date uses it)
+
+One Notary invocation has two halves. They used to be called "Track 1" and
+"Track 2", which named an ORDER rather than a job; "Advance" separately named
+both the second half AND one layer inside it. All three names are retired.
+
+| Name | What it is | Where it lives |
+|---|---|---|
+| **Verify** | The deterministic half. Compares a material claim against resolved evidence and assigns a state through the state machine. A model may propose here; only an evidence-bound procedure decides. | `engine/src/verification/`, `engine/src/detect/` |
+| **Act** | The judged half. Never assigns a state, never adds evidence, never alters the manifest. Two layers: | `engine/src/act/` |
+| ├ **Challenge** | Bounded questions about a resolved claim ("what to pressure-test"). Built, frozen, flag-off (`act_challenge_enabled`). Also called Act v1. | `engine/src/judge/challengeGeneration.ts` |
+| └ **Move** | The closed four-move next-action set — `clarify` / `test` / `compare` / `repair`. 0-2 per invocation. Also called Act v2. Was "Advance". | `engine/src/act/` |
+
+Database objects follow the same words: `act_invocation`, `act_move`,
+`act_move_event`, `organization.act_challenge_enabled`,
+`organization.act_moves_enabled`, `challenge_item.verify_state`. The rename is
+migration `0016_rename_verify_act.sql`; migrations `0012`-`0014` are applied
+history and still contain the old words in their prose — read them as
+historical, not as current vocabulary.
+
+**If you find the words "Track 1", "Track 2", or "Advance" anywhere in this
+repo, that is a bug** — everything except the applied migrations above was
+renamed in one pass, and anything new carrying the old vocabulary drifted in
+after it.
+
 ## Read this first
 
 - **The rules for this docs/ folder**: [`docs/README.md`](docs/README.md)
@@ -36,7 +61,7 @@ Four documents, one question each (restructured 2026-09-03):
 
 Proposals that are **not** rules yet live in `docs/guide/proposals/`.
 History that is no longer guidance (the Phase 0 build guide, the frozen
-Track 2 v1 / Challenge design) is in
+Act v1 / Challenge design) is in
 [`docs/build/phase-0-and-challenge-archive.md`](docs/build/phase-0-and-challenge-archive.md).
 
 ## The one rule that matters most

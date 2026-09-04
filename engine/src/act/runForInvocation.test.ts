@@ -1,10 +1,10 @@
-// Track 2 at invocation level. The property under test is the one that was
+// Act at invocation level. The property under test is the one that was
 // broken: it must run with NO claims, NO sources and NO findings — that is
-// ~37% of real turns, and the case where Track 2 is the entire product.
+// ~37% of real turns, and the case where Act is the entire product.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rankActionCandidates, runAdvanceForInvocation } from "./runForInvocation.ts";
+import { rankActionCandidates, runMovesForInvocation } from "./runForInvocation.ts";
 import type { Finding, Gap } from "../detect/types.ts";
 import type { JudgeCallInput, JudgeCallResult, JudgeClient } from "../judge/judgeClient.ts";
 
@@ -27,7 +27,7 @@ function gap(over: Partial<Gap> = {}): Gap {
   return { detector: "self_report", missing: "execution_result", unblocks: "check the command output", ...over };
 }
 
-/** A client that records what it was asked and returns one valid suggestion. */
+/** A client that records what it was asked and returns one valid move. */
 function recordingClient(): { client: JudgeClient; seen: JudgeCallInput[] } {
   const seen: JudgeCallInput[] = [];
   const client: JudgeClient = {
@@ -36,7 +36,7 @@ function recordingClient(): { client: JudgeClient; seen: JudgeCallInput[] } {
       return {
         record: { model: "test", promptVersion: "test", question: "q", answer: "{}", inputTokens: 1, outputTokens: 1 },
         parsed: {
-          suggestions: [{ id: "s1", short_label: "Do the thing", move: "clarify", prompt: "Please clarify the thing." }],
+          moves: [{ id: "s1", short_label: "Do the thing", move: "clarify", prompt: "Please clarify the thing." }],
         },
       } as unknown as JudgeCallResult;
     },
@@ -46,7 +46,7 @@ function recordingClient(): { client: JudgeClient; seen: JudgeCallInput[] } {
 
 test("runs with no claims, no sources and no findings — the 37% case", async () => {
   const { client, seen } = recordingClient();
-  const r = await runAdvanceForInvocation(
+  const r = await runMovesForInvocation(
     {
       organizationId: "org",
       reviewId: "rev",
@@ -64,7 +64,7 @@ test("runs with no claims, no sources and no findings — the 37% case", async (
 
 test("infers intent from the request and uses it to pick the move set", async () => {
   const { client } = recordingClient();
-  const r = await runAdvanceForInvocation(
+  const r = await runMovesForInvocation(
     {
       organizationId: "org",
       reviewId: "rev",
@@ -82,7 +82,7 @@ test("infers intent from the request and uses it to pick the move set", async ()
 
 test("a finding counts as an evidence constraint and changes the allowed moves", async () => {
   const { client } = recordingClient();
-  const r = await runAdvanceForInvocation(
+  const r = await runMovesForInvocation(
     {
       organizationId: "org",
       reviewId: "rev",
@@ -99,18 +99,18 @@ test("a finding counts as an evidence constraint and changes the allowed moves",
 
 test("skips without a user request — and says why, rather than inventing a task", async () => {
   const { client, seen } = recordingClient();
-  const r = await runAdvanceForInvocation(
+  const r = await runMovesForInvocation(
     { organizationId: "org", reviewId: "rev", invocationId: "inv", findings: [finding()], gaps: [] },
     { client },
   );
   assert.equal(r.skipped, "no_user_request");
   assert.equal(seen.length, 0, "no model call may be paid for when there is no task");
-  assert.deepEqual(r.suggestions, []);
+  assert.deepEqual(r.moves, []);
 });
 
-test("Track 2 never receives evidence — only boundary statements", async () => {
+test("Act never receives evidence — only boundary statements", async () => {
   const { client, seen } = recordingClient();
-  await runAdvanceForInvocation(
+  await runMovesForInvocation(
     {
       organizationId: "org",
       reviewId: "rev",
@@ -123,8 +123,8 @@ test("Track 2 never receives evidence — only boundary statements", async () =>
   );
   const sent = JSON.stringify(seen[0]);
   assert.ok(sent.includes("The answer states X and also not-X."), "the boundary statement is passed");
-  assert.ok(!sent.includes("rejectedCandidates"), "no rejected-candidate pool may reach Track 2");
-  assert.ok(!sent.includes("resolved_text"), "no evidence corpus may reach Track 2");
+  assert.ok(!sent.includes("rejectedCandidates"), "no rejected-candidate pool may reach Act");
+  assert.ok(!sent.includes("resolved_text"), "no evidence corpus may reach Act");
 });
 
 test("candidates rank findings before gaps, and by detector rank within findings", () => {
@@ -139,11 +139,11 @@ test("candidates rank findings before gaps, and by detector rank within findings
 });
 
 test("the handoff carries WHICH fields disagreed, not just a sentence", async () => {
-  // Before this, Track 2 received one sentence and had to guess whether it was
+  // Before this, Act received one sentence and had to guess whether it was
   // looking at a wrong period, a wrong entity, or a wrong number — three
   // different repairs. The deltas were already computed and thrown away here.
   const { client, seen } = recordingClient();
-  await runAdvanceForInvocation(
+  await runMovesForInvocation(
     {
       organizationId: "org",
       reviewId: "rev",
@@ -161,14 +161,14 @@ test("the handoff carries WHICH fields disagreed, not just a sentence", async ()
     { client },
   );
   const sent = JSON.stringify(seen[0]);
-  assert.ok(sent.includes("valueUnit"), "the field name must reach Track 2");
+  assert.ok(sent.includes("valueUnit"), "the field name must reach Act");
   assert.ok(sent.includes("17%") && sent.includes("12%"), "both sides of the disagreement must reach it");
   assert.ok(sent.includes("ev-123"), "a locator reference lets a move name its source");
 });
 
 test("a finding with no field detail behaves exactly as before", async () => {
   const { client, seen } = recordingClient();
-  await runAdvanceForInvocation(
+  await runMovesForInvocation(
     {
       organizationId: "org",
       reviewId: "rev",
@@ -186,7 +186,7 @@ test("a finding with no field detail behaves exactly as before", async () => {
 
 test("the evidence passage itself still never crosses", async () => {
   const { client, seen } = recordingClient();
-  await runAdvanceForInvocation(
+  await runMovesForInvocation(
     {
       organizationId: "org",
       reviewId: "rev",
@@ -203,5 +203,5 @@ test("the evidence passage itself still never crosses", async () => {
     { client },
   );
   const sent = JSON.stringify(seen[0]);
-  assert.ok(!sent.includes("SECRET PASSAGE TEXT"), "the excerpt must not reach Track 2 — it would make it a second verifier");
+  assert.ok(!sent.includes("SECRET PASSAGE TEXT"), "the excerpt must not reach Act — it would make it a second verifier");
 });

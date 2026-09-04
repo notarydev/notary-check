@@ -3,8 +3,8 @@
 // Runs every registered detector against one invocation and collects the two
 // outputs: FINDINGS (things blatantly wrong) and GAPS (things a detector could
 // have checked if an input had arrived). Both are facts. Neither is an action —
-// turning a gap into an ask is Track 2's job, and nothing in this module
-// expresses a suggestion.
+// turning a gap into an ask is Act's job, and nothing in this module
+// expresses a move.
 //
 // THREE OUTCOMES, NOT TWO. A detector reports `ran`, `not_applicable`, or
 // `missing_input`, and the third is the one that is easy to omit and expensive
@@ -13,9 +13,9 @@
 // missing" — and we would ask a literature-review user to paste a test run.
 //
 // ISOLATION. A detector that throws produces nothing and cannot affect any
-// other detector or Track 1's verification result. The bank is additive: the
+// other detector or Verify's verification result. The bank is additive: the
 // worst a broken detector can do is contribute no findings. This is the same
-// rule Advance already follows toward Track 1, generalised — with several
+// rule Move already follows toward Verify, generalised — with several
 // detectors there are several new ways to break the one thing that already
 // works, and none of them may.
 //

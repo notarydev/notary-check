@@ -1,6 +1,6 @@
 // The detector bank's shared vocabulary.
 //
-// WHY THIS MODULE EXISTS. Track 1 used to have exactly one detector —
+// WHY THIS MODULE EXISTS. Verify used to have exactly one detector —
 // claim-versus-evidence — so its output could BE the claim's verification
 // state. With several detectors that stops working: source-verify can say
 // SUPPORTED while arithmetic says the numbers don't reconcile, and both are
@@ -17,9 +17,9 @@
 //   Finding  — something is wrong, and it is BLATANTLY wrong. A fact.
 //   Gap      — a detector could have run but an input was missing. Also a fact.
 //
-// Both are facts, which is why both live here in Track 1's vocabulary. What
-// to DO about either of them — the suggestion, the ask, the button — is
-// Track 2's, and nothing in this file expresses an action.
+// Both are facts, which is why both live here in Verify's vocabulary. What
+// to DO about either of them — the move, the ask, the button — is
+// Act's, and nothing in this file expresses an action.
 //
 // "BLATANT" IS THE BAR, not "computed". Some things are computable and still
 // arguable; those are not findings. If a reasonable person shown the evidence
@@ -98,9 +98,9 @@ export interface Finding {
   owner: EpistemicOwner;
   /** Which claim this concerns, when it concerns one. Arithmetic over the whole answer may not. */
   claimId?: string;
-  /** One compact sentence stating what was established. Shown to the user, and to Track 2. */
+  /** One compact sentence stating what was established. Shown to the user, and to Act. */
   boundaryText: string;
-  /** The structured disagreement. This is what lets Track 2 tell "wrong period" from "wrong number". */
+  /** The structured disagreement. This is what lets Act tell "wrong period" from "wrong number". */
   fieldDeltas: FieldDelta[];
   basis: FindingBasis;
   /**
@@ -119,7 +119,7 @@ export interface Gap {
   detector: DetectorId;
   claimId?: string;
   missing: "addressable_source" | "user_request" | "prior_context" | "execution_result";
-  /** What becomes checkable if this arrives. Track 2 turns this into an ask; this is not itself an ask. */
+  /** What becomes checkable if this arrives. Act turns this into an ask; this is not itself an ask. */
   unblocks: string;
 }
 

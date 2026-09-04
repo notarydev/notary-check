@@ -110,7 +110,7 @@ async function main() {
     console.log(`  reason:     ${claimBody?.claim?.state_reason}`);
     console.log(`  lifecycle:  ${claimBody?.claim?.lifecycle_state}`);
     console.log(`  matches:    ${claimBody?.matches?.length ?? 0}`);
-    console.log(`  advance:    ${claimBody?.advance_suggestions?.length ?? 0} suggestion(s)`);
+    console.log(`  moves:      ${claimBody?.moves?.length ?? 0} move(s)`);
     if (state !== CASE.expect) throw new Error(`WRONG STATE: got ${state}, expected ${CASE.expect}`);
 
     const after = (

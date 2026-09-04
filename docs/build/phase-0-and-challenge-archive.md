@@ -17,9 +17,9 @@ doc could shrink to what it actually is: the current operating spec.
    decisions were made (the mocked scenario copy, the card's three-state
    compression, the "no trust score" rule), not because anyone should
    follow it.
-2. **Track 2 v1 / Challenge** — built, tested, isolation-verified, then
-   frozen on 2026-09-03. `track2_enabled` stays off. Do not extend it.
-   "Track 2" now means **Advance** — see the current plan.
+2. **Act v1 / Challenge** — built, tested, isolation-verified, then
+   frozen on 2026-09-03. `act_challenge_enabled` stays off. Do not extend it.
+   "Act" now means **Move** — see the current plan.
 
 If you are looking for what to build, read `whats-left.md`. If you are
 looking for the rules, read `tier-1-build-and-operating-plan.md`. If you
@@ -510,13 +510,13 @@ No auth, no billing, no spend caps, no real verification engine, no database. Th
 
 ---
 
-### Track 2 / Challenge layer — SUPERSEDED 2026-09-03, kept for reference only
+### Act / Challenge layer — SUPERSEDED 2026-09-03, kept for reference only
 
-**Status: superseded, not the build target.** This section describes Track 2 v1 ("Challenge"), which is built, tested, and isolation-verified — but as of 2026-09-03 it is a frozen, non-default feature (`track2_enabled` stays off), not the thing being developed further. **"Track 2" now means "Advance"** — see the new § Track 2 / Advance section immediately below this one, and `docs/guide/proposals/system-definition-synthesis.md` Part 11 for the full design. This section is retained because the code still exists and is referenced elsewhere in this doc (e.g. § Release gates), not because it's current guidance for new work. Do not extend this implementation; build against § Track 2 / Advance instead.
+**Status: superseded, not the build target.** This section describes Act v1 ("Challenge"), which is built, tested, and isolation-verified — but as of 2026-09-03 it is a frozen, non-default feature (`act_challenge_enabled` stays off), not the thing being developed further. **"Act" now means "Move"** — see the new § Act / Move section immediately below this one, and `docs/guide/proposals/system-definition-synthesis.md` Part 11 for the full design. This section is retained because the code still exists and is referenced elsewhere in this doc (e.g. § Release gates), not because it's current guidance for new work. Do not extend this implementation; build against § Act / Move instead.
 
-**Original status note, kept for history**: this was in scope for the current build, per an explicit product decision superseding this doc's earlier default (Track 2 was previously deferred behind proven Track 1 repeat value — see `docs/guide/proposals/system-definition-synthesis.md` Part 6/9 for that history and the corrected design this section implements). This is an addition to the card contract above, not a replacement — every rule above (three-state compression, no severity levels, no trust score, mechanical-vs-AI-inferred labeling) is unchanged and still governs the **evidence record** register described below.
+**Original status note, kept for history**: this was in scope for the current build, per an explicit product decision superseding this doc's earlier default (Act was previously deferred behind proven Verify repeat value — see `docs/guide/proposals/system-definition-synthesis.md` Part 6/9 for that history and the corrected design this section implements). This is an addition to the card contract above, not a replacement — every rule above (three-state compression, no severity levels, no trust score, mechanical-vs-AI-inferred labeling) is unchanged and still governs the **evidence record** register described below.
 
-**The decision, precisely**: Track 1 and Track 2 are two outputs of one Notary invocation, not two separate user journeys or a second button. `review_source_backed_answer` runs both — **as built, Track 2 runs immediately after Track 1 completes for the same claim, not concurrently with it; that wording was aspirational and didn't match what this feature structurally requires.** Track 2's entire input is Track 1's *resolved* finding (state, applicability comparison, surviving passages) — it generates questions about a finding, so it cannot start before that finding exists. True concurrency (starting before Track 1 finishes, working from task state rather than a resolved claim) is a different feature — see `docs/guide/proposals/system-definition-synthesis.md` Part 11 ("Advance"), which is proposed, not built. Both outputs still return in **one combined card** with two registers, which is the part of the original decision that does hold:
+**The decision, precisely**: Verify and Act are two outputs of one Notary invocation, not two separate user journeys or a second button. `review_source_backed_answer` runs both — **as built, Act runs immediately after Verify completes for the same claim, not concurrently with it; that wording was aspirational and didn't match what this feature structurally requires.** Act's entire input is Verify's *resolved* finding (state, applicability comparison, surviving passages) — it generates questions about a finding, so it cannot start before that finding exists. True concurrency (starting before Verify finishes, working from task state rather than a resolved claim) is a different feature — see `docs/guide/proposals/system-definition-synthesis.md` Part 11 ("Move"), which is proposed, not built. Both outputs still return in **one combined card** with two registers, which is the part of the original decision that does hold:
 
 1. **Evidence record** (existing, unchanged) — the authoritative result described everywhere above: exact claim, exact passage, applicability reason, mechanical-vs-AI-inferred label, cost/method line.
 2. **"What to pressure-test"** (new) — a compact, clearly visually subordinate section beneath the evidence record. Never present without an evidence record above it; never the first thing the eye lands on.
@@ -538,7 +538,7 @@ What to pressure-test
 
 **Why concurrent-but-subordinate is a different thing from the "opens automatically" failure mode named in the synthesis doc's Part 6.** That failure mode is about a *separate, competing surface* stealing attention from the evidence result — a second panel, a second button someone has to notice and click, or a transcript that grows more persuasive than the quiet result above it. A single card with an unmistakable visual hierarchy (evidence record primary, challenge layer secondary, always in that order, never inverted) is a different design — this section exists specifically to write down why that distinction is load-bearing, so it isn't re-litigated as a contradiction later.
 
-**Track 2 is explicitly NOT `start_exploratory_review`/§ Exploratory review below.** That feature (an open-ended transcript between Claude and the judge) stays exactly where it already was — Phase 2+, deferred, not built. Track 2/Challenge is the narrower, safer design the synthesis doc's Part 6 argues for *instead of* an open transcript: typed, bounded, no free-form conversation, no verdict field. Building Track 2 does not pull Exploratory Review's timeline forward.
+**Act is explicitly NOT `start_exploratory_review`/§ Exploratory review below.** That feature (an open-ended transcript between Claude and the judge) stays exactly where it already was — Phase 2+, deferred, not built. Act/Challenge is the narrower, safer design the synthesis doc's Part 6 argues for *instead of* an open transcript: typed, bounded, no free-form conversation, no verdict field. Building Act does not pull Exploratory Review's timeline forward.
 
 **Output contract** (from the synthesis doc Part 6, adopted as-is): each challenge item is
 ```ts
@@ -549,11 +549,11 @@ What to pressure-test
   action: "clarify_claim" | "add_source" | "open_evidence" | "ask_host" | "draft_test" | "leave_unchanged",
 }
 ```
-No `verdict`, `confidence`, `answer`, or free-form transcript field, ever — same strict-parsing discipline `engine/src/judge/fieldExtraction.ts` already applies to the Track 1 judge (a sneaked-in field is rejected, not silently accepted). **Cap: at most 2 challenge items per material claim, at most 4 per invocation** (product decision, keeps the layer scannable and prevents it from out-growing the evidence record it's subordinate to).
+No `verdict`, `confidence`, `answer`, or free-form transcript field, ever — same strict-parsing discipline `engine/src/judge/fieldExtraction.ts` already applies to the Verify judge (a sneaked-in field is rejected, not silently accepted). **Cap: at most 2 challenge items per material claim, at most 4 per invocation** (product decision, keeps the layer scannable and prevents it from out-growing the evidence record it's subordinate to).
 
 **Action routing reuses the existing app-only tool contract** (§ Tool and UI contract, above) wherever it already fits — `add_source` for `evidence_request`, `open_evidence` for pointing at existing material, `qualify_claim` for `clarify_claim` (closest existing match; revisit if a distinct tool turns out to be needed once this is built), `recheck_claim` after any of the above changes something. `ask_host` and `draft_test` don't yet map to an existing tool — new, minimal additions if the challenge generator actually produces those action types in practice, not built speculatively ahead of need.
 
-**Authority invariant, restated for this specific addition**: Track 2 may propose a clarification or an additional source. It cannot itself add evidence, alter the manifest, or write `Claim.state` — every write it triggers routes back through the ordinary claim-revision or source-pointer machinery like a user-initiated action would, per the existing authority rule (§ 6 of the canonical product definition). Track 2 running concurrently with Track 1 does not change this: it is a second **output** of one invocation, never a second **writer**.
+**Authority invariant, restated for this specific addition**: Act may propose a clarification or an additional source. It cannot itself add evidence, alter the manifest, or write `Claim.state` — every write it triggers routes back through the ordinary claim-revision or source-pointer machinery like a user-initiated action would, per the existing authority rule (§ 6 of the canonical product definition). Act running concurrently with Verify does not change this: it is a second **output** of one invocation, never a second **writer**.
 
 **Feature-gated at the organization level** for initial rollout — ship dark first, per the existing "not yet validated" posture on the whole product (no held-out eval gate exists yet, see `docs/build/architecture-and-progress.md`).
 

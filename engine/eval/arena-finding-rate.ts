@@ -9,7 +9,7 @@
 // make it worth the model spend:
 //
 //   1. It is GENERAL CHAT, not coding. The earlier hit-rate measurement used
-//      51 Claude Code transcripts, which is the domain where Track 1 is
+//      51 Claude Code transcripts, which is the domain where Verify is
 //      weakest and is not what the connector is used for.
 //   2. The human vote gives a free, if weak, validation signal. If a detector
 //      fires MORE on the answer humans rejected than on the one they picked,

@@ -39,17 +39,17 @@ type CardRejectedCandidate = {
   origin: CardEvidenceOrigin;
 };
 
-// Locked Track 2 (Challenge, v1 — the shipped-dark, per-claim register) contract.
-// See docs/build/tier-1-build-and-operating-plan.md's "Track 2 / Challenge
+// Locked Act (Challenge, v1 — the shipped-dark, per-claim register) contract.
+// See docs/build/tier-1-build-and-operating-plan.md's "Act / Challenge
 // layer" section. Never a verdict/confidence/answer field.
 //
-// NOT the same thing as "Advance" (docs/guide/proposals/system-definition-synthesis.md
-// Part 11) — Advance is a separate, newer system (see the AdvanceSuggestion
-// type and the `notary-advance` render block below, its own section,
+// NOT the same thing as "Move" (docs/guide/proposals/system-definition-synthesis.md
+// Part 11) — Move is a separate, newer system (see the Move
+// type and the `notary-move` render block below, its own section,
 // structurally distinct from this one). Both now consume the same
 // pill-click-to-send interaction pattern; ChallengeItem stays frozen
-// (its `track2_enabled` org flag is off) while Advance is the system that
-// actually gets real, live-generated suggestions wired through it.
+// (its `act_challenge_enabled` org flag is off) while Move is the system that
+// actually gets real, live-generated moves wired through it.
 type ChallengeItem = {
   challenge_type: "ambiguity" | "missing_assumption" | "alternative_interpretation" | "evidence_request" | "adversarial_test";
   prompt: string;
@@ -57,13 +57,13 @@ type ChallengeItem = {
   action: "clarify_claim" | "add_source" | "open_evidence" | "ask_host" | "draft_test" | "leave_unchanged";
 };
 
-// Advance (Track 2 v2) — mirrors engine/src/advance/types.ts's
-// AdvanceSuggestion exactly (also re-declared, wire-shape only, in
-// server/src/mocks/scenarios.ts's AdvanceSuggestion). This IS the "Advance"
+// Move (Act v2) — mirrors engine/src/act/types.ts's
+// Move exactly (also re-declared, wire-shape only, in
+// server/src/mocks/scenarios.ts's Move). This IS the "Move"
 // this file's own comment above named as "not wired into reviewFlow.ts/this
 // card's data at all yet" — it is now real. No verdict, confidence, score, or
 // answer field, same discipline as ChallengeItem.
-type AdvanceSuggestion = {
+type Move = {
   id: string;
   short_label: string;
   move: "clarify" | "test" | "compare" | "repair";
@@ -97,10 +97,10 @@ type ReviewCardData = {
   // absent or empty, the "What to pressure-test" register simply doesn't
   // render — this is a coordination-by-contract dependency, not a hard one.
   challenges?: ChallengeItem[];
-  // Advance's 0-2 next-move suggestions. Structurally SEPARATE from
+  // Act's 0-2 moves. Structurally SEPARATE from
   // `challenges` above — a different system, a different authority level —
   // and rendered in its own section below, never merged into one list.
-  advance_suggestions?: AdvanceSuggestion[];
+  moves?: Move[];
 };
 
 type SourceRef = {
@@ -312,7 +312,7 @@ function DetailBlock({
   const scope = data.scope_detail;
 
   // AN ATTENTION POLICY, even though findings are uncapped in the engine.
-  // "Facts do not compete for attention the way suggestions do" is true of the
+  // "Facts do not compete for attention the way moves do" is true of the
   // engine and false of the screen: four pills beside an answer is
   // overwhelming whatever they contain. The rest stay one quiet click away.
   const VISIBLE = 2;
@@ -448,7 +448,7 @@ function ActionPill({
           {/* THE COMMIT AFFORDANCE, not an instruction to read.
               This was italic grey text saying "Click again to send to Claude" —
               six words of instruction where the interface should simply look
-              clickable. Track 2's whole job is that acting costs one click, and
+              clickable. Act's whole job is that acting costs one click, and
               the closing beat of that flow was the weakest thing on the card.
               Still the same two-step interaction: the first click reveals what
               would be sent, the second sends it. Nothing is sent by accident. */}
@@ -552,10 +552,10 @@ export default function App() {
     }
   }
 
-  // Track 2/Challenge action routing, per the plan doc: clarify_claim ->
+  // Act/Challenge action routing, per the plan doc: clarify_claim ->
   // qualify_claim (closest existing match), add_source -> add_source,
   // open_evidence -> open_evidence (folded into the same finding-expand
-  // toggle as Track 1's own evidence, not a separate reveal), recheck_claim
+  // toggle as Verify's own evidence, not a separate reveal), recheck_claim
   // after any of those. ask_host and draft_test don't map to an existing
   // app-only tool yet (plan doc: "not built speculatively ahead of need") —
   // those fall back to the same sendMessage-to-host pattern.
@@ -576,13 +576,13 @@ export default function App() {
 
   // Computed BEFORE the quiet-state returns below, and that ordering is the
   // whole fix. These used to be read further down, after `no_issue` and
-  // `not_checked` had already returned — so Track 2's suggestions were
-  // discarded on exactly the states where Track 2 is the ONLY thing that ran.
+  // `not_checked` had already returned — so Act's moves were
+  // discarded on exactly the states where Act is the ONLY thing that ran.
   // An unsourced answer is the case where a next move is the sole useful
   // output, and the card was throwing it away.
-  const quietAdvance = (data.advance_suggestions ?? []).slice(0, 2);
+  const quietMove = (data.moves ?? []).slice(0, 2);
   const quietGaps = (data.gaps ?? []).slice(0, 2);
-  const hasQuietContent = quietAdvance.length > 0 || quietGaps.length > 0;
+  const hasQuietContent = quietMove.length > 0 || quietGaps.length > 0;
 
   // Anything worth expanding into? Scope, a bank finding, or a gap.
   const hasDetail =
@@ -591,7 +591,7 @@ export default function App() {
     data.scope_detail !== undefined;
 
   /**
-   * L1 — one line, plus whatever Track 2 produced, plus a Details affordance
+   * L1 — one line, plus whatever Act produced, plus a Details affordance
    * when there is anything underneath.
    *
    * The gaps are NOT rendered at L1 any more; they moved into L2. At rest the
@@ -621,16 +621,16 @@ export default function App() {
           Dismiss
         </button>
       </div>
-      {quietAdvance.length > 0 && (
-        <div className="notary-advance">
-          <div className="notary-advance-pills">
-            {quietAdvance.map((s) => (
+      {quietMove.length > 0 && (
+        <div className="notary-move">
+          <div className="notary-move-pills">
+            {quietMove.map((s) => (
               <ActionPill
                 key={s.id}
                 label={s.short_label}
                 fullText={s.prompt}
-                busy={busy === `advance:${s.id}`}
-                onCommit={() => sendToHost(`advance:${s.id}`, s.prompt)}
+                busy={busy === `move:${s.id}`}
+                onCommit={() => sendToHost(`move:${s.id}`, s.prompt)}
               />
             ))}
           </div>
@@ -654,7 +654,7 @@ export default function App() {
   // procedure never ran, and announcing "no source!" beside every unsourced
   // sentence is the noise this card exists to avoid.
   //
-  // But silence is now conditional. When Track 2 produced a next move, or a
+  // But silence is now conditional. When Act produced a next move, or a
   // detector named something it could not check, there IS something worth
   // showing, and rendering null would discard it. The state is still carried
   // in the payload and the model-visible text either way.
@@ -687,16 +687,16 @@ export default function App() {
   // At most 4 total, per the plan doc's cap — already enforced server-side
   // (server/src/engineClient.ts), sliced again here defensively.
   const challenges = (data.challenges ?? []).slice(0, 4);
-  // Advance — at most 2 per Part 11's cardinality contract, already enforced
-  // server-side (server/src/engineClient.ts's MAX_ADVANCE_SUGGESTIONS),
+  // Move — at most 2 per Part 11's cardinality contract, already enforced
+  // server-side (server/src/engineClient.ts's MAX_MOVES),
   // sliced again here defensively, same discipline as `challenges` above.
-  const advanceSuggestions = (data.advance_suggestions ?? []).slice(0, 2);
+  const moves = (data.moves ?? []).slice(0, 2);
 
   // The resting line, in prose. Never a severity word, never a colour, and —
   // since 2026-09-04 — never a raw type code either.
   //
   // Findings come from two places now and both must read the same way to a
-  // reader who does not know the difference: Track 1's evidence-backed list,
+  // reader who does not know the difference: Verify's evidence-backed list,
   // and the detector bank. One item names what it is; several get a count,
   // because naming two different problems in one line reads as neither.
   const bankHere = data.bank_findings ?? [];
@@ -755,7 +755,7 @@ export default function App() {
             {allRejected.map((c, i) => (
               <RejectedCandidateView candidate={c} key={`rejected-${i}`} />
             ))}
-            {/* Only meaningful for a TRACK 1 finding, which is supposed to
+            {/* Only meaningful for a VERIFY finding, which is supposed to
                 rest on resolved evidence. A card carrying only bank findings
                 has no evidence by design — self-contradiction compares the
                 answer against itself — and printing this there said something
@@ -797,7 +797,7 @@ export default function App() {
               contract in this document before reusing this layout elsewhere.
             </div>
           )}
-          {/* "What to pressure-test" — Track 2/Challenge, visually subordinate,
+          {/* "What to pressure-test" — Act/Challenge, visually subordinate,
               always below the evidence record above, never a verdict/score/
               competing claim. Renders nothing when the engine hasn't produced
               any. Pills, not buttons: click once reveals the full text (or
@@ -841,24 +841,24 @@ export default function App() {
               </div>
             </div>
           )}
-          {/* Advance (Track 2 v2) — structurally SEPARATE from the "What to
+          {/* Move (Act v2) — structurally SEPARATE from the "What to
               pressure-test" register above: a different system, a different
-              authority level (a next-move suggestion about the user's broader
+              authority level (a next-move move about the user's broader
               task, not a question about this claim's finding). Reuses the exact
               same pill/sendToHost mechanism already built and tested against the
               real host above — not a new interaction pattern, just real data
               flowing through it for the first time. `short_label` is the text
-              at rest (Advance, unlike Track 1, has to say what it's proposing
+              at rest (Move, unlike Verify, has to say what it's proposing
               before the user engages with it — see the module comment on
               ChallengeItem above); `prompt` is the full, already-validated ask,
               revealed on first interaction (or hover) and sent verbatim on the
-              second. Renders nothing when the engine produced zero suggestions —
+              second. Renders nothing when the engine produced zero moves —
               a correct, expected result, never a broken state. */}
-          {advanceSuggestions.length > 0 && (
-            <div className="notary-advance">
-              <div className="notary-advance-pills">
-                {advanceSuggestions.map((s) => {
-                  const busyKey = `advance:${s.id}`;
+          {moves.length > 0 && (
+            <div className="notary-move">
+              <div className="notary-move-pills">
+                {moves.map((s) => {
+                  const busyKey = `move:${s.id}`;
                   return (
                     <ActionPill
                       key={s.id}

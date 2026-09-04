@@ -15,8 +15,8 @@
 //
 // WHAT IT IS NOT. It does not check anything and never produces a Finding. It
 // reports one fact — this material claim had nothing to check against — in the
-// shape Track 2 can turn into an ask. The distinction the whole design rests
-// on: a gap is a fact, an ask is a suggestion, and only Track 2 makes those.
+// shape Act can turn into an ask. The distinction the whole design rests
+// on: a gap is a fact, an ask is a move, and only Act makes those.
 
 import type { Detector, DetectorInput, DetectorOutcome, Gap } from "./types.ts";
 
@@ -27,7 +27,7 @@ export const SOURCE_GAP_VERSION = "source-gap-v1";
  *
  * Each gap can prompt a full re-invocation — Claude fetching a document, then
  * calling again — so ten unsourced claims must not become ten round trips the
- * user waits through. Two is the same interrupt budget the suggestions use, and
+ * user waits through. Two is the same interrupt budget the moves use, and
  * the connector caps again at the wire boundary.
  */
 const MAX_SOURCE_GAPS = 2;

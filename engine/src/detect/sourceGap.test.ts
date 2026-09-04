@@ -29,7 +29,7 @@ test("a material claim with no resolved evidence produces a source gap", () => {
 test("the gap says what becomes possible, never what to do", () => {
   // An imperative here would be an instruction inside data, which Claude
   // correctly refuses — the exact bug that had to be removed from the tool
-  // response earlier. A gap is a fact; only Track 2 turns it into an ask.
+  // response earlier. A gap is a fact; only Act turns it into an ask.
   const out = sourceGapDetector.run(input({ claims: [claim("c1", "Revenue grew 17% in FY25.")] }));
   assert.equal(out.status, "missing_input");
   if (out.status !== "missing_input") return;

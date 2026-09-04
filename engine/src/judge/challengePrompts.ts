@@ -1,14 +1,14 @@
-// Track 2 / Challenge prompt template (§ Track 2 / Challenge layer). Prompt
+// Act / Challenge prompt template (§ Act / Challenge layer). Prompt
 // text and nothing else — no HTTP, no parsing — mirroring promptTemplates.ts's
 // separation from judgeClient.ts and fieldExtraction.ts.
 //
-// HOW THIS PROMPT DIFFERS FROM THE TRACK 1 PROMPT, and why the difference is
+// HOW THIS PROMPT DIFFERS FROM THE VERIFY PROMPT, and why the difference is
 // deliberate rather than an inconsistency:
 //
 // buildFieldPrompt() is BLIND by construction — it never shows the model the
-// claim, because Track 1's judge extracts one property from one passage and
+// claim, because Verify's judge extracts one property from one passage and
 // showing it the asserted value would let it pattern-match instead of read.
-// Track 2 is the opposite: it is shown the claim, Track 1's resolved state and
+// Act is the opposite: it is shown the claim, Verify's resolved state and
 // reason, the per-field applicability outcome, and the evidence excerpts,
 // because a challenge generated without the finding is generic and useless
 // (synthesis doc Part 6, "The separation is an authority boundary, not an
@@ -31,11 +31,11 @@
 //      only ever ASK for a source via the evidence_request/add_source pair.
 //   4. Every item ends in one of six concrete, user-controlled actions.
 
-/** Version string persisted with every Track 2 call (§ requirement #6). Bump on
+/** Version string persisted with every Act call (§ requirement #6). Bump on
  * any change to the prompt text or the output schema. */
 export const CHALLENGE_PROMPT_VERSION = "judge-challenge-generation-v1";
 
-/** At most two items per material claim (§ Track 2 cap). */
+/** At most two items per material claim (§ Act cap). */
 export const MAX_CHALLENGES_PER_CLAIM = 2;
 
 /** At most four items per invocation, across every claim in one review. */
@@ -107,7 +107,7 @@ const ANTI_VERBOSITY =
 
 /** One already-resolved evidence passage, as the prompt renders it. */
 export interface ChallengeEvidenceExcerpt {
-  /** supports / contradicts — the relation Track 1 already assigned. */
+  /** supports / contradicts — the relation Verify already assigned. */
   relation: string;
   /** A human-readable locator display string, for the model's reference only. */
   locatorDisplay: string;
@@ -115,13 +115,13 @@ export interface ChallengeEvidenceExcerpt {
   delimitedQuote: string;
 }
 
-/** The immutable, read-only view of a finished Track 1 finding that Track 2 is
- * allowed to see. Nothing in it is writable and nothing Track 2 returns feeds
+/** The immutable, read-only view of a finished Verify finding that Act is
+ * allowed to see. Nothing in it is writable and nothing Act returns feeds
  * back into it — the one-directional flow of synthesis doc Part 6. */
 export interface FindingContext {
   claimText: string;
   decontextualizedForm?: string;
-  /** Track 1's assigned state — read-only context, never something to revise. */
+  /** Verify's assigned state — read-only context, never something to revise. */
   state: string;
   stateReason: string;
   /** Whether any addressable source existed at all. */
@@ -135,7 +135,7 @@ export interface FindingContext {
 }
 
 /**
- * Builds the Track 2 prompt for one resolved finding.
+ * Builds the Act prompt for one resolved finding.
  *
  * The caller MUST have run every excerpt through delimitEvidenceForModel
  * already (same contract as buildFieldPrompt) — this function does not delimit,

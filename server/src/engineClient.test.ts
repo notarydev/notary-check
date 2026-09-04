@@ -316,7 +316,7 @@ test("claims with no source supplied -> not_checked, never could_not_check and n
 //      five sequential round trips while the MCP tool call blocks Claude's
 //      turn.
 //   2. Results are accumulated IN CLAIM ORDER regardless of which network
-//      call returns first. The challenge/Advance caps are first-come, so if
+//      call returns first. The challenge/Move caps are first-come, so if
 //      accumulation followed completion order, identical input would produce
 //      different cards run to run and a reproduction would stop reproducing.
 //
@@ -409,11 +409,11 @@ test("claims are submitted concurrently but findings stay in claim order", async
 // Regression coverage for the detector bank being wired in (2026-09-04).
 //
 // The property that was broken: a review with NO material claims returned
-// immediately, so the detector bank never ran and Advance never ran. Measured
+// immediately, so the detector bank never ran and Move never ran. Measured
 // over 51 real transcripts, ~37% of substantive answers have material for no
-// detector at all — those are exactly the turns where Track 1 has nothing and
-// Track 2 is the entire product, and it was silent on all of them.
-test("zero material claims still runs detection and can return suggestions", async () => {
+// detector at all — those are exactly the turns where Verify has nothing and
+// Act is the entire product, and it was silent on all of them.
+test("zero material claims still runs detection and can return moves", async () => {
   const originalFetch = globalThis.fetch;
   process.env.ENGINE_URL = "http://engine.test";
   process.env.ENGINE_API_KEY = "test-key";
@@ -438,7 +438,7 @@ test("zero material claims still runs detection and can return suggestions", asy
       return jsonResponse(200, {
         findings: [],
         gaps: [],
-        advance_suggestions: [
+        moves: [
           { id: "s1", short_label: "Compare write throughput", move: "compare", prompt: "Compare write throughput." },
         ],
       });
@@ -453,7 +453,7 @@ test("zero material claims still runs detection and can return suggestions", asy
     });
     assert.ok(detectCalled, "detection must run even with zero material claims");
     assert.equal(result.status, "no_issue");
-    assert.equal(result.advance_suggestions?.length, 1, "Track 2 must produce value with no claims and no sources");
+    assert.equal(result.moves?.length, 1, "Act must produce value with no claims and no sources");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -511,7 +511,7 @@ test("a bank finding surfaces even when the claim itself is SUPPORTED", async ()
           },
         ],
         gaps: [],
-        advance_suggestions: [],
+        moves: [],
       });
     }
     throw new Error(`unexpected fetch: ${method} ${path}`);
@@ -522,7 +522,7 @@ test("a bank finding surfaces even when the claim itself is SUPPORTED", async ()
     const result = await reviewAnswer("Claim A.", [], "test-key", { userRequest: "check this" });
     assert.equal(result.status, "issue_found", "a bank finding must surface even when the claim is SUPPORTED");
     // It reaches the card through bank_findings, NOT through `findings`.
-    // `findings` is Track 1's evidence-backed list, and a bank finding has no
+    // `findings` is Verify's evidence-backed list, and a bank finding has no
     // evidence by nature — self-contradiction compares the answer against
     // itself. Merging them printed "No resolved evidence is on record" in
     // warning styling on a finding that was working exactly as designed.
@@ -532,7 +532,7 @@ test("a bank finding surfaces even when the claim itself is SUPPORTED", async ()
     );
     assert.ok(
       !(result.findings ?? []).some((f) => f.text.includes("states X and also not-X")),
-      "and must NOT be mixed into Track 1's evidence-backed findings",
+      "and must NOT be mixed into Verify's evidence-backed findings",
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -563,7 +563,7 @@ test("a gap from the engine reaches the card, capped at two", async () => {
           { detector: "source_verify", missing: "addressable_source", unblocks: "check the FY25 revenue figure" },
           { detector: "source_verify", missing: "addressable_source", unblocks: "check the headcount figure" },
         ],
-        advance_suggestions: [],
+        moves: [],
       });
     }
     throw new Error(`unexpected fetch: ${method} ${path}`);
@@ -602,7 +602,7 @@ test("malformed gaps are dropped rather than trusted", async () => {
     if (path.endsWith("/detect") && method === "POST") {
       return jsonResponse(200, {
         gaps: [{ missing: "" }, { unblocks: "no missing field" }, "a string", null, { missing: "x", unblocks: "y" }],
-        advance_suggestions: [],
+        moves: [],
       });
     }
     throw new Error(`unexpected fetch: ${method} ${path}`);

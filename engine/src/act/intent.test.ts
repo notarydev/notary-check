@@ -65,7 +65,7 @@ test("records what decided the classification", () => {
 test("general never narrows the move set", () => {
   // Documented contract with policy.ts: general resolves to all four moves.
   // This test exists so a future change to inferIntent's default cannot
-  // silently start narrowing what Track 2 may propose.
+  // silently start narrowing what Act may propose.
   const r = inferIntent("something unclassifiable");
   assert.equal(r.taskMode, "general");
   assert.deepEqual([...getAllowedMoves(r.taskMode, false)].sort(), ["clarify", "compare", "repair", "test"]);

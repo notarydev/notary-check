@@ -1,6 +1,6 @@
 // Tests for the quota/kill-switch gating this session added to
-// generateAdvanceSuggestions() (liveGenerate.ts) — a known, previously-flagged
-// gap: Advance's live call did not consult either gate before this change.
+// generateMoves() (liveGenerate.ts) — a known, previously-flagged
+// gap: Move's live call did not consult either gate before this change.
 // Mirrors ../judge/killSwitch.test.ts's counting-client pattern for the kill
 // switch (no DB, no network) and ../quotas/quotaCheck.test.ts's real-Postgres
 // pattern for the quota gate. Also covers the no_user_request short-circuit
@@ -12,12 +12,12 @@ import type { JudgeCallInput, JudgeClient, JudgeCallResult } from "../judge/judg
 import { DEFAULT_GLOBAL_SPEND_CAP_CENTS, DEFAULT_ORG_MONTHLY_LIMIT_CENTS } from "../quotas/quotaCheck.ts";
 import { estimateDeepSeekCostCents, insertUsageEvent, usageEventFromJudgeCall } from "../quotas/usage.ts";
 import { createOrganization, freshPool, HAS_DB } from "../test/db.ts";
-import { generateAdvanceSuggestions } from "./liveGenerate.ts";
-import type { AdvanceMove, InvocationContext } from "./types.ts";
+import { generateMoves } from "./liveGenerate.ts";
+import type { MoveKind, InvocationContext } from "./types.ts";
 
 const dbSkip = { skip: !HAS_DB ? "no test database configured (set TEST_DATABASE_URL or DATABASE_URL)" : false };
 
-const ALL_MOVES: readonly AdvanceMove[] = ["clarify", "test", "compare", "repair"];
+const ALL_MOVES: readonly MoveKind[] = ["clarify", "test", "compare", "repair"];
 
 function baseContext(overrides: Partial<InvocationContext> = {}): InvocationContext {
   return {
@@ -28,7 +28,7 @@ function baseContext(overrides: Partial<InvocationContext> = {}): InvocationCont
   };
 }
 
-/** A judge client that counts every call and always answers with zero suggestions. */
+/** A judge client that counts every call and always answers with zero moves. */
 function countingClient(): { client: JudgeClient; calls: () => number } {
   let calls = 0;
   const client: JudgeClient = {
@@ -40,7 +40,7 @@ function countingClient(): { client: JudgeClient; calls: () => number } {
           model: "deepseek-v4-flash",
           promptVersion: "v",
           question: "q",
-          answer: JSON.stringify({ suggestions: [] }),
+          answer: JSON.stringify({ moves: [] }),
           inputTokens: 10,
           outputTokens: 5,
         },
@@ -52,17 +52,17 @@ function countingClient(): { client: JudgeClient; calls: () => number } {
 
 // ---- pure: no_user_request short-circuit (no DB, no network) --------------
 
-test("empty user_request short-circuits to zero suggestions before any client is constructed", async () => {
+test("empty user_request short-circuits to zero moves before any client is constructed", async () => {
   const { client, calls } = countingClient();
-  const result = await generateAdvanceSuggestions(baseContext({ user_request: "" }), ALL_MOVES, undefined, { client });
-  assert.deepEqual(result.suggestions, []);
+  const result = await generateMoves(baseContext({ user_request: "" }), ALL_MOVES, undefined, { client });
+  assert.deepEqual(result.moves, []);
   assert.equal(result.error, "no_user_request");
   assert.equal(calls(), 0, "the judge client must never be invoked with no user_request");
 });
 
 test("whitespace-only user_request is treated the same as empty", async () => {
   const { client, calls } = countingClient();
-  const result = await generateAdvanceSuggestions(baseContext({ user_request: "   \n\t " }), ALL_MOVES, undefined, { client });
+  const result = await generateMoves(baseContext({ user_request: "   \n\t " }), ALL_MOVES, undefined, { client });
   assert.equal(result.error, "no_user_request");
   assert.equal(calls(), 0);
 });
@@ -75,13 +75,13 @@ afterEach(() => {
   else process.env.NOTARY_JUDGE_KILL_SWITCH = ORIG_KILL;
 });
 
-test("with the kill switch ON, generateAdvanceSuggestions returns an error and never invokes the client", async () => {
+test("with the kill switch ON, generateMoves returns an error and never invokes the client", async () => {
   process.env.NOTARY_JUDGE_KILL_SWITCH = "true";
   const { client, calls } = countingClient();
 
-  const result = await generateAdvanceSuggestions(baseContext(), ALL_MOVES, undefined, { client });
+  const result = await generateMoves(baseContext(), ALL_MOVES, undefined, { client });
 
-  assert.equal(result.suggestions, undefined);
+  assert.equal(result.moves, undefined);
   assert.equal(result.error, "judge_kill_switch_active");
   assert.equal(result.record?.error, "judge_kill_switch_active");
   assert.equal(calls(), 0, "the judge client must never be invoked while the kill switch is on");
@@ -91,9 +91,9 @@ test("with the kill switch OFF, the same client IS invoked — the switch is the
   delete process.env.NOTARY_JUDGE_KILL_SWITCH;
   const { client, calls } = countingClient();
 
-  const result = await generateAdvanceSuggestions(baseContext(), ALL_MOVES, undefined, { client });
+  const result = await generateMoves(baseContext(), ALL_MOVES, undefined, { client });
 
-  assert.deepEqual(result.suggestions, []);
+  assert.deepEqual(result.moves, []);
   assert.equal(calls(), 1);
 });
 
@@ -115,7 +115,7 @@ afterEach(() => {
 });
 
 test(
-  "with the org's monthly quota already exhausted, generateAdvanceSuggestions is blocked and the client is never invoked",
+  "with the org's monthly quota already exhausted, generateMoves is blocked and the client is never invoked",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
@@ -133,13 +133,13 @@ test(
       assert.ok(estimateDeepSeekCostCents(1_000_000, 1_000_000) >= 1, "sanity: the seeded usage row exceeds the 1-cent test limit");
 
       const { client, calls } = countingClient();
-      const result = await generateAdvanceSuggestions(baseContext(), ALL_MOVES, undefined, {
+      const result = await generateMoves(baseContext(), ALL_MOVES, undefined, {
         client,
         organizationId: orgId,
         db: pool,
       });
 
-      assert.equal(result.suggestions, undefined);
+      assert.equal(result.moves, undefined);
       assert.equal(result.error, "quota_organization_monthly_limit_exceeded");
       assert.equal(calls(), 0, "the judge client must never be invoked once quota is denied");
     } finally {
@@ -149,7 +149,7 @@ test(
 );
 
 test(
-  "with quota available, generateAdvanceSuggestions proceeds and the client IS invoked",
+  "with quota available, generateMoves proceeds and the client IS invoked",
   { ...dbSkip },
   async () => {
     const pool = await freshPool();
@@ -157,13 +157,13 @@ test(
       const orgId = await createOrganization(pool);
       const { client, calls } = countingClient();
 
-      const result = await generateAdvanceSuggestions(baseContext(), ALL_MOVES, undefined, {
+      const result = await generateMoves(baseContext(), ALL_MOVES, undefined, {
         client,
         organizationId: orgId,
         db: pool,
       });
 
-      assert.deepEqual(result.suggestions, []);
+      assert.deepEqual(result.moves, []);
       assert.equal(calls(), 1, "quota allowed the call through");
     } finally {
       await pool.end();
@@ -175,8 +175,8 @@ test(
   "with no organizationId/db supplied, the quota gate is skipped (documented, not silently enforced) and the client IS invoked",
   async () => {
     const { client, calls } = countingClient();
-    const result = await generateAdvanceSuggestions(baseContext(), ALL_MOVES, undefined, { client });
-    assert.deepEqual(result.suggestions, []);
+    const result = await generateMoves(baseContext(), ALL_MOVES, undefined, { client });
+    assert.deepEqual(result.moves, []);
     assert.equal(calls(), 1);
   },
 );

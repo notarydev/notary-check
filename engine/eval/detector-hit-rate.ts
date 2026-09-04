@@ -13,7 +13,7 @@
 //
 // KNOWN BIAS, stated up front: these are Claude Code transcripts, so they are
 // coding- and tooling-heavy. That is one real domain, not all of them, and it
-// under-represents the research/analysis content Track 1's source-verification
+// under-represents the research/analysis content Verify's source-verification
 // was designed for. Read the numbers as "what a coding user would see."
 //
 // The heuristics are deliberately generous — they look for the SHAPE a

@@ -141,13 +141,13 @@ export function usageEventFromExtractionCall(record: JudgeCallRecord, meta: Judg
 }
 
 /**
- * Maps a TRACK 2 / CHALLENGE-GENERATION call's record to a UsageEvent row.
+ * Maps a ACT / CHALLENGE-GENERATION call's record to a UsageEvent row.
  *
  * Same arithmetic again, third distinct event_type, for the same reason
- * extraction got its own: Track 2 is an ADDITIONAL DeepSeek call per material
+ * extraction got its own: Act is an ADDITIONAL DeepSeek call per material
  * claim on top of the field-judging calls, so folding it into "judge_call"
  * would hide exactly the cost question the feature flag exists to answer —
- * "what did enabling Track 2 for this org actually add to the bill". It goes
+ * "what did enabling Act for this org actually add to the bill". It goes
  * through insertUsageEvent like every other call site, which is what makes it
  * visible to checkQuota's sums rather than a fourth unmetered path.
  */
@@ -168,23 +168,23 @@ export function usageEventFromChallengeCall(record: JudgeCallRecord, meta: Judge
 }
 
 /**
- * Maps an ADVANCE-GENERATION call's record to a UsageEvent row. Same
+ * Maps an MOVE-GENERATION call's record to a UsageEvent row. Same
  * arithmetic, own event_type — same rationale as challenge_generation's own
- * split: Advance is an additional DeepSeek call per invocation on top of the
+ * split: Move is an additional DeepSeek call per invocation on top of the
  * field-judging (and, where enabled, Challenge) calls, and folding it into
  * "judge_call" would hide exactly the cost question the quota gate exists to
- * answer. This is what makes an Advance call visible to checkQuota's sums —
- * see engine/src/advance/liveGenerate.ts's quota gate, which is only
+ * answer. This is what makes a Move call visible to checkQuota's sums —
+ * see engine/src/act/liveGenerate.ts's quota gate, which is only
  * meaningful if every call that passes it is also recorded here.
  */
-export function usageEventFromAdvanceCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+export function usageEventFromMoveCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
   const inputTokens = record.inputTokens ?? 0;
   const outputTokens = record.outputTokens ?? 0;
   return {
     organizationId: meta.organizationId,
     userId: meta.userId,
     reviewId: meta.reviewId,
-    eventType: "advance_generation",
+    eventType: "move_generation",
     inputTokens,
     outputTokens,
     fetchBytes: 0,
