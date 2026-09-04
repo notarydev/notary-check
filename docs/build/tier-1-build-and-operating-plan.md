@@ -23,6 +23,23 @@ The delivery sequence, release gates, and "do not build yet" list stay
 here, because they are *rules about sequencing*. `whats-left.md` tracks
 current status against them — it does not restate them.
 
+## What the words mean — read this before anything else
+
+Added 2026-09-03 because the vocabulary has repeatedly outrun the code, and design conversations kept stalling on names for things that either already ship or do not exist. **There are two things. Everything else is a name for part of one of them.**
+
+| Word | What it actually is | State |
+|---|---|---|
+| **Track 1**, **Verify** | Takes a claim and a source, finds the exact spot, decides whether it holds. Four outcomes plus the `no_source` flag. | **Live** |
+| **Track 2**, **Advance** | After a check, proposes up to two next moves from a closed set of four: `clarify`, `test`, `compare`, `repair`. | **Live** |
+| **"Detector"** | Informal word for a kind of thing Notary can notice and act on. **Today there are exactly four of them and they are the four Advance moves.** | — |
+| **"Repair"**, **"Inspect/Test"** | Renames of the `repair` and `test` moves. Not separate features, not things to build. | **Already live** |
+| **Challenge** (Track 2 v1) | An earlier, separate suggestion register. Superseded by Advance. | **Built, frozen, permanent** |
+| **Reconcile** | Compares the current answer against something established **earlier in the same conversation** — a decision, number, or constraint — with no external source involved. The one genuinely new detector proposed. | **Not built.** Not a move, not in the policy table, no `prior_context` field. A proposal only |
+| **Exploratory review** | Open-ended transcript between Claude and the judge. | **Designed, deliberately deferred** — § Do not build yet |
+| **WATCH** | Deterministic interception of every response. The only mechanism that can support a coverage claim. | **Later tier**, not CHECK |
+
+**Where the AI is, precisely.** Two model calls in Track 1, both ours, both DeepSeek: claim extraction reads Claude's answer; the judge reads the resolved evidence passage and answers narrow per-field questions *blind*, without being shown what the claim asserted. Everything that **decides** is code with no model in it — locator resolution, applicability comparison, and `verification/stateMachine.ts`, which has zero imports. Claude only supplies; it never reads evidence for us and never assigns a state.
+
 ## Build decision
 
 Build Notary Check — Notary's Tier 1, CHECK-tier product — first as an **interactive Claude connector**, not as a browser extension and not as a standalone document product. It reviews source-backed factual claims in a Claude answer, presents only material evidence breaks in an inline card, and supports a correction/recheck loop. WATCH and CAPTURE are later, separate tiers (§ Do not build yet); this document covers CHECK only.
@@ -297,6 +314,36 @@ interface AdvanceModelResponse { suggestions: AdvanceSuggestion[]; }  // 0 <= le
 
 The frozen example cases used in step 4 are the same real, rights-cleared coding-agent transcripts (plus the user's own historical non-coding transcripts) that Part 11's offline evaluation describes — building the fixture set and running the schema/policy/validator against it (step 4) IS the first phase of that evaluation, not a separate later task.
 
+### One suggestion register, not two — decided 2026-09-03
+
+Challenge and Advance were compared directly rather than left in their accidental state (Challenge switched off in the morning because we moved on, never because it lost a comparison). The decision:
+
+**Challenge stays frozen permanently. Advance is the only suggestion register.** Its prompt file is retained as a design reference, not as a code path to revive.
+
+**Why Advance wins on vocabulary.** Challenge's six actions collapse almost entirely into Advance's four moves — `clarify_claim`/`add_source`/`ask_host` → `clarify`, `draft_test` → `test`, `leave_unchanged` → zero suggestions. The only one without an Advance equivalent is `open_evidence`, which was never a next move at all; it is a card interaction. Advance's set is smaller, closed, `CHECK`-enforced in the database, and adversarially validated (2026-09-03). Challenge's is none of those.
+
+**Why not run both.** Challenge caps at 4 per invocation and Advance at 2, so one card could carry **six** items. That breaks the interrupt budget outright. It also means two prompts, two caps, two flags, and two vocabularies to keep honest — and under any broadening of invocation, Challenge produces nothing at all on turns without a resolved claim, leaving a register that is dark most of the time.
+
+**What Challenge had that Advance does not, and which should be taken from it:**
+
+1. **A real view of the finding.** Challenge is shown the claim, the assigned state, the per-field applicability outcome, and the resolved excerpts. Advance is shown **one sealed sentence** (`boundary_text`). For a suggestion about a finding, that is a large and unnecessary handicap — Advance currently has to infer what kind of mismatch occurred. Widen `Track2EvidenceConstraint`, or add a sibling read-only view, so Advance can see which fields matched and which did not.
+2. **Per-state guidance.** "For CONTRADICTED, help separate a genuinely wrong claim from a wrong scope, period, or incomplete evidence set. For UNSUPPORTED, identify what evidence is missing or how the claim could be qualified — never invent a replacement fact. For INDETERMINATE, help obtain the missing source pointer." That is specific and earned; Advance's prompt has no equivalent.
+
+**Deliberately NOT taken: Challenge's `SUPPORTED` branch.** It instructs the model to pressure-test a finding that came back *correct* — which qualifier or alternative reading could still matter. Its own prompt has to caution "do not imply the finding is unsafe just to have something to say," which is the tell. Asking a model to manufacture doubt about a right answer is the most likely source of noise in the whole design, and Advance already handles the case better by construction: with nothing useful to propose, the correct output is zero suggestions — which production data shows it actually produces (4 of 21 invocations, 2026-09-03).
+
+### Running the two tracks genuinely in parallel — what it costs
+
+The independence property at the top of this section ("Track 2 never waits for Track 1 to produce its initial move") is **not what ships today.** Today Advance runs per claim submission, strictly after Track 1's rows commit, and does not run at all when there are no material claims. Track 2 is currently a passenger on Track 1.
+
+Making it real depends on two things that are **specified and deferred**, and neither is optional:
+
+1. **The revision step** (build-order step 9) — Track 2 emits immediately, then revises when Track 1's sealed boundary lands. Untouched items are replaced in place; anything the user has engaged with is never mutated.
+2. **A channel to update the card after first render.** Without it there is nothing for a revision to land in — the card is drawn once and cannot hear from the server again. This is the deferred authenticated status-polling channel.
+
+**Cheaper interim, if latency is the goal rather than independence:** start both from the same payload and hold the response until both finish. Total latency becomes `max(track1, track2)` rather than `track1 + track2`, with no revision step and no update channel. The trade is that Track 2 sees no finding at all that turn.
+
+**Do the arithmetic before optimising either way.** Claims are processed in a serial loop, each iteration performing a judge call and an Advance call. A five-claim answer is five sequential round trips. Parallelising *within* one claim saves a fraction of one claim's time; parallelising *across* claims saves most of the total, and claims are fully independent with no ordering between them. Fix the loop first.
+
 **Feature flag — the debt, and how it was settled.** Track 2 v1 (Challenge)'s org flag (`track2_enabled`, migration `0012`) stays off and is not reused for Advance; the two features are not variants of the same flag. The rule here has always been that *Advance gets its own flag once it has its own persisted state to gate*. Migration `0013` gave it persisted state on 2026-09-03 and no flag was added, so Advance shipped ungated — by omission, not by decision.
 
 **Settled by migration `0014_advance_flag.sql`**: `organization.advance_enabled`, `DEFAULT false` (ship dark for every new org, since Advance is an additional DeepSeek call per material claim) with a one-time backfill to `true`, so organizations that already had Advance running keep it. Adding governance must not be a silent feature removal for a live user. It is read in `reviewFlow.ts` **before any client construction or budget query**, so a disabled org costs exactly zero model calls — not a call whose result is discarded.
@@ -328,6 +375,58 @@ MCP Apps can render an inline card and let the card call tools, send messages, o
 Launch for Claude answers with accessible web citations, user-added URLs, pasted text, small direct uploads, or a Notary source collection — these are the intake channels. Every source arriving through any of them is then filtered by § Document-class scope for v1: only HTML/PDF corporate/financial reports, and excerpts traceable to one, are admissible. Do not claim private Claude attachments are available until the host actually passes them.
 
 When evidence is absent, render the truth plainly: “This answer contains claims but no inspectable sources were supplied,” or “This URL could not be preserved or resolved and cannot support a positive result.”
+
+### There is no background channel — Notary cannot ask Claude anything mid-check
+
+Written down 2026-09-03 because it gets re-proposed in every design conversation, in the same shape as the "always-visible button" question below: *"can Notary go back and forth with Claude in the background to gather more before it decides?"*
+
+**No. MCP is request/response.** Claude calls Notary; Notary answers. There is no callback, no open socket, no way to pause a review halfway and fetch more. Calling Anthropic's API from the engine would reach a **different** Claude with none of this conversation — that is not "asking Claude what source it used," it is asking a stranger, and its answer would be worthless.
+
+**Everything Notary will ever know about a turn arrives in one payload, at the start.** That single constraint decides more of this product's design than any other, so state its consequences plainly:
+
+- There is no "gather context, *then* run Track 2." There is only what arrived.
+- A "checklist of what a good conversation should contain" cannot be filled in by interrogating Claude. It can only be (a) requested in the tool's input schema up front, or (b) noted as missing and requested for *next* time.
+- The evidence-binding round-trip (§ Verification pipeline, step 6) is therefore **not one synchronous question**, whatever its own wording implies. It is asynchronous across two invocations, and the second one may never come.
+
+**The two places more information can actually be asked for:**
+
+| | Mechanism | Who decides | Reliability |
+|---|---|---|---|
+| **Up front** | The tool's input schema and description request it, so Claude sends it in the first call | Claude, at call time | Probabilistic — Claude may omit any optional field, and does (19% of Advance invocations arrived with no `user_request`, measured in production 2026-09-03) |
+| **Afterwards** | The model-visible response text names what we could not do and what would fix it; Claude may re-invoke | Claude, next turn | Probabilistic and weaker — an invitation, not a question |
+| **Afterwards, by the user** | A card button calling `app.sendMessage()`, which lands editable text in the user's own input box | **The user** | The only one that does not depend on model behaviour |
+
+The third row is the important one and is the reason the button below exists. It is also the only one consistent with the research this design already leans on: assistance delivered **on request** produces more critical engagement and less misleading than unsolicited assistance.
+
+**Do not design anything that assumes a mid-check conversation is possible.** If a feature needs one, it is a different feature — and the honest version of it is WATCH (deterministic interception), not a chattier CHECK.
+
+### Asking for a missing source — the round-trip, as actually buildable
+
+Follows directly from the constraint above. § Verification pipeline step 6 specifies the *policy*; this is the delivery.
+
+**Two triggers, deliberately both, because they fail differently:**
+
+1. **In the response text**, once per claim: *"Claim 3 could not be checked — no inspectable source. If you used a document or URL for it, call again with it. Point to the source; do not paste what it says."* Claude may act on its own. Free — it rides in a field already sent.
+2. **A card button** on any claim Track 1 could not finish: `[Ask Claude for the source]`, which calls `sendMessage()` and fills the user's input box with that request, unsent and editable. Confirmed on Claude Desktop 2026-09-03 that `sendMessage()` does not auto-send.
+
+**Hard rule on what comes back — this is the load-bearing half.** Asking a model to produce a source creates exactly the pressure under which it invents one. So on this path:
+
+- A **URL** is admissible — Notary fetches it. A fabricated URL fails retrieval, lands `retrieval_status = unavailable`, and can never become a match. `text_provenance` records `fetched`, not `caller_supplied`.
+- A **host-delivered attachment or workspace reference** is admissible, same path.
+- A **pasted excerpt is REFUSED on this path**, not merely distrusted. Nothing fetches it and nothing can, so accepting one would turn the round-trip into a machine that manufactures evidence on request. `quoted_excerpt` with no retrievable origin is already the single route by which a fabrication can enter as evidence; this is where that hole would be widest.
+
+**Boundedness needs state.** The release gate requires asking at most once per claim, but the second call is a *different review with different row ids*, so nothing links them for free. Without a record we would re-ask every turn forever — the loop the gate exists to forbid. Cheapest key is `(organization_id, hash(claim_text))` with an asked-at timestamp. **Known weakness, not solved:** a rephrased claim hashes differently and gets asked again; a genuinely new claim with identical text stays silent. There is no obviously correct key here.
+
+**Known asymmetry in the incentive**, recorded because it is the most likely way this goes wrong: every turn where Claude produces *something* has an effect, and every turn where it honestly has nothing does not. The retrieval gate catches invented URLs; it does not catch a real-but-irrelevant document attached to make the prompt go away. That resolves fine, then fails applicability, and costs a full second review.
+
+### Clarification cannot use this path — the asymmetry that surprises people
+
+Evidence questions may be put to Claude. Clarification questions may not, and the difference is not a matter of degree:
+
+- **"What source did you use?"** is a question about Claude's own process, and the answer is **independently verified** — we fetch the artifact. Claude's description of the source is never trusted; the source is.
+- **"Is 'revenue' gross or net?"** has no independent verification. Worse, the canonical definition (§ 5.2) forbids it outright: claim-side ambiguity may be resolved *only* by explicit context already in the answer, a declared deterministic rule, or a **user-confirmed** revision. A model guessing the likelier reading is specifically ruled out, because evidence-led reinterpretation resolves the check in the direction the available evidence happens to point — deciding the question the procedure exists to answer.
+
+So clarification goes to the **user**, as a suggestion. It is Advance's `clarify` move. It is not, and cannot become, a background question to Claude.
 
 ### There is no persistent, always-visible Notary button — what's actually possible instead
 

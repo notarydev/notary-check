@@ -24,6 +24,25 @@ a status header, it names blockers, and it is expected to be correct.
 
 ---
 
+## Readiness by area — what "ready" actually means
+
+Added 2026-09-03. "Engine ready" was ambiguous because it had never been
+defined: it could mean "it runs" (true) or "I would let a stranger rely on
+it" (not close). Each area below states its own bar, so the answer is a
+check rather than an opinion.
+
+| Area | Ready means | Status |
+|---|---|---|
+| **Engine** | All 18 locked test cases pass **against the live deployment**, the pre-pilot gate has real numbers and meets them, quotas and spend caps demonstrably enforce, retention matches the canonical rule, kill switch drilled. | **Not ready.** E1 (locked case 2 fails live) is disqualifying on its own. B1 has no numbers. B4 violates a canonical rule. Caps now meter correctly as of 2026-09-03 but have never been observed to bite. |
+| **Connector** (MCP server, card, auth) | Deployed at current code, Clerk auth gating, the card renders every state honestly, invocation defects fixed and measured. | **Partly.** Clerk live and verified. `not_checked` committed but **not deployed** — `server/` still needs rebuilding. E3's four defects open. |
+| **Billing** | Live Stripe keys, entitlement activates on payment, cancellation and refund paths exercised, webhook failures alert, receipts confirmed delivered. | **Not ready.** Test-mode keys only. The live-key swap is env-only, but no live payment has ever been taken. |
+| **Account** (signup, dashboard, keys) | Signup gate enforced at both app and IdP level, account page works against live billing, key issue/revoke exercised. | **Partly.** App-level waitlist gate live. **O5 — Clerk Restricted mode not confirmed** — the hard half is unverified. |
+| **Marketing site** | `getnotary.ai` reflects what the product actually does and claims nothing the engine cannot support. | **Unreconciled.** A live Cloudflare-fronted site exists that does not match this checkout's `dashboard/` at all. Flagged stale by the owner, never investigated. Highest risk of the set: it is the only surface making public claims. |
+| **Ops** | Monitoring alerts (not just logs), backup schedule, restore drilled, CI, rollback drilled, named incident owner. | **Not ready.** Datadog key set, ingestion unconfirmed. Backup/restore genuinely drilled 2026-09-03. No CI. No named owner. |
+| **Legal** | ToS, Privacy Policy (must disclose evidence text goes to a third-party model), DPA template, named correction/deletion contact. | **Not started.** Needs a lawyer. Blocks public self-serve signup, not an invited pilot. |
+
+**The engine is the only area where the next step is unambiguous** — E1 below. Every other area is blocked on a decision, a person, or money rather than on engineering.
+
 ## Blocking anything being called "validated"
 
 These are not features. Each one is a claim the product currently cannot
@@ -79,27 +98,80 @@ when claims exist, run Track 2 unconditionally.
 [`../README.md`](../README.md), it becomes canonical only when the owner
 says to merge it — not by being agreed with in conversation.
 
-Its first four steps are worth doing **whether or not the pivot is
-accepted**, because each improves the current product on its own:
+Its early steps are worth doing **whether or not the pivot is accepted**,
+because each improves the current product on its own. They now sit in the
+ordered engine queue below rather than being listed separately here.
 
-1. **Parallelise the claim loop.** `engineClient.ts` submits claims
-   serially, and each submission internally runs a judge call and an
-   Advance call. A five-claim answer is five sequential round trips while
-   the tool call blocks Claude's turn. Claims are independent; there is no
-   ordering dependency.
-2. **Fix the ask.** `user_request` effectively required, the trailing
-   reminder unqualified, Track 2 named in the description, `task_mode`
-   added so the policy table stops being inert. Before changing the
-   schema, query production for the `advance_invocation` skipped-vs-ok
-   ratio — that instrumentation already exists and answers "how often
-   does Claude actually omit it" with no build.
-3. **Return what we could not check, and why.** One response field. The
-   only lever we have on our own invocation frequency.
-4. **Land F1 properly** — regression test, commit, deploy, and finish F2.
+Step "decouple the tracks" onward (a detector registry, Reconcile) is
+where the re-architecture actually starts and should not begin until the
+pivot is decided.
 
-Step 5 onward (decoupling Advance from the claim loop, a detector
-registry, Reconcile) is where the re-architecture actually starts and
-should not begin until the pivot is decided.
+---
+
+# Ordered work — engine
+
+Decided 2026-09-03. Ordered so each step is independently worth doing and
+the expensive re-architecture happens only after the cheap wins are banked.
+Rationale for each decision lives in
+[`tier-1-build-and-operating-plan.md`](tier-1-build-and-operating-plan.md);
+this is the queue, not the argument.
+
+**E1 — Fix locked case 2 (B2).** The flagship contradiction returns
+`UNSUPPORTED` instead of `CONTRADICTED` on the paraphrased-operator path.
+Newly narrowed: the live smoke test on 2026-09-03 returned a correct
+`CONTRADICTED` for the exact-value path, so locator resolution,
+applicability, and the state machine are all proven working. **The failure
+is in the one place a model reads** — the judge recognising "declined" as
+`decrease`. Also newly testable: the deployment is now current code, which
+eliminates "already fixed locally, just not deployed" as a cause.
+*Highest priority. This is the example the product leads with.*
+
+**E2 — Parallelise the claim loop.** `engineClient.ts` submits claims
+serially and each submission internally runs a judge call and an Advance
+call, so a five-claim answer is five sequential round trips while the tool
+call blocks Claude's turn. Claims are fully independent. Bounded
+`Promise.all`. **Biggest latency win available, and it is a precondition
+for anything that adds per-claim work.**
+
+**E3 — Fix the four invocation defects.** `user_request` is optional and
+its own description tells the model it may be omitted; the trailing
+reminder re-teaches the *narrow* trigger on every turn; the tool
+description never mentions Track 2 exists; there is no `task_mode` field,
+so the six-mode policy table resolves to the full move set every time and
+constrains nothing in production. Measured baseline already exists:
+19% of Advance invocations arrived with no `user_request`
+(`scripts/advance-invocation-report.ts`). Re-measure after changing the
+description, before deciding whether the field must become required —
+a validation error may prompt a corrected retry or may make Claude stop
+calling entirely, and that is not known.
+
+**E4 — Ask for a missing source, two ways.** Response text naming what
+could not be checked, plus a card button calling `sendMessage()` so the
+*user* can force the ask. Both, because they fail differently. Requires
+the `(organization_id, hash(claim_text))` record for boundedness and a
+**hard refusal of pasted excerpts on this path**. Full design and the
+known weaknesses: § Asking for a missing source in the build plan.
+
+**E5 — Give Advance a real view of the finding.** It currently sees one
+sealed sentence and has to infer what kind of mismatch occurred. Widen the
+constraint so it can see state, reason, and per-field applicability, and
+port Challenge's per-state guidance for CONTRADICTED / UNSUPPORTED /
+INDETERMINATE. **Deliberately not porting the SUPPORTED branch** — see the
+build plan for why. Re-run `eval/advance-adversarial.ts --repeat 3`
+afterwards and confirm the 0/1/2 distribution has not shifted toward
+padding; the pre-change production baseline is 19% / 67% / 14%.
+
+**E6 — Retention (B4).** A canonical rule the code violates. Independent
+of everything above and blocks the privacy policy.
+
+**E7 — Decouple the tracks.** Only after E1–E5. Needs two deferred pieces
+— the revision step and a channel to update the card after first render —
+and neither is optional. If the goal is only latency, the cheaper interim
+is to run both from the same payload and hold the response until both
+finish. **E2 dominates this on latency; do not do E7 for speed.**
+
+**E8 — Reconcile.** Depends on E7 and on the pivot being decided. Not
+before.
 
 ## Open questions that change the plan
 
