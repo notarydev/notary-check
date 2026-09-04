@@ -494,7 +494,22 @@ test("a bank finding surfaces even when the claim itself is SUPPORTED", async ()
     }
     if (path.endsWith("/detect") && method === "POST") {
       return jsonResponse(200, {
-        findings: [{ type: "internal_conflict", boundaryText: "The answer states X and also not-X." }],
+        // Shaped exactly like real engine output. An earlier version of this
+        // fixture omitted `detector` and `fieldDeltas`, which parseBankFindings
+        // correctly rejects — the parser was right and the fixture was thin,
+        // which is the same class of miss that hid three bugs today.
+        findings: [
+          {
+            detector: "self_contradiction",
+            type: "internal_conflict",
+            owner: "computed",
+            boundaryText: "The answer states X and also not-X.",
+            fieldDeltas: [{ field: "valueUnit", claimed: "17%", observed: "12%", relation: "conflict" }],
+            basis: { kind: "answer_internal" },
+            rank: 20,
+            detectorVersion: "self-contradiction-v1",
+          },
+        ],
         gaps: [],
         advance_suggestions: [],
       });
@@ -506,9 +521,18 @@ test("a bank finding surfaces even when the claim itself is SUPPORTED", async ()
     const { reviewAnswer } = await import("./engineClient.js");
     const result = await reviewAnswer("Claim A.", [], "test-key", { userRequest: "check this" });
     assert.equal(result.status, "issue_found", "a bank finding must surface even when the claim is SUPPORTED");
+    // It reaches the card through bank_findings, NOT through `findings`.
+    // `findings` is Track 1's evidence-backed list, and a bank finding has no
+    // evidence by nature — self-contradiction compares the answer against
+    // itself. Merging them printed "No resolved evidence is on record" in
+    // warning styling on a finding that was working exactly as designed.
     assert.ok(
-      result.findings?.some((f) => f.text.includes("states X and also not-X")),
-      "the bank's finding must reach the card",
+      result.bank_findings?.some((f) => f.boundary_text.includes("states X and also not-X")),
+      "the bank's finding must reach the card through its own field",
+    );
+    assert.ok(
+      !(result.findings ?? []).some((f) => f.text.includes("states X and also not-X")),
+      "and must NOT be mixed into Track 1's evidence-backed findings",
     );
   } finally {
     globalThis.fetch = originalFetch;

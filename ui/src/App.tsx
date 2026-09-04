@@ -219,6 +219,28 @@ function NotaryMark() {
 }
 
 /**
+ * What a finding type MEANS, in the reader's words.
+ *
+ * The card was showing the raw type — "Notary · internal_conflict" — which
+ * names a code the reader has never seen and cannot act on. The first line has
+ * exactly one job: answer "is something wrong, and what kind of thing is it?"
+ * A snake_case identifier answers neither.
+ */
+const FINDING_PROSE: Record<string, string> = {
+  internal_conflict: "the answer contradicts itself",
+  self_report_mismatch: "the output does not match what the answer claims",
+  source_contradiction: "a supplied source contradicts this",
+  arithmetic_conflict: "the numbers do not reconcile",
+  requirement_unmet: "part of what you asked for is missing",
+  overreach: "stated more strongly than the source supports",
+  conflict_candidate: "this differs from something established earlier",
+};
+
+function findingProse(type: string): string {
+  return FINDING_PROSE[type] ?? "something worth checking";
+}
+
+/**
  * L2 and L3 — what Notary looked at, and how it knows.
  *
  * THE LAYERING, and why it is three levels rather than two:
@@ -254,30 +276,10 @@ function DetailBlock({
 
   return (
     <div className="notary-detail">
-      {/* Scope, stated as counts rather than as a verdict. "5 claims checked"
-          would be false whenever some had no source, which is why the resting
-          line never carries a number and this does. */}
-      {scope !== undefined && (
-        <div className="notary-scope">
-          {/* Describes what the ANSWER IS, not what Notary lacked.
-              "none had a source to check against" was accurate and read as a
-              deficiency — it framed answering from knowledge, which is a normal
-              and legitimate mode, as a failure of the answer or of Notary.
-              "Answered from Claude's own knowledge" is the same fact stated as
-              what happened.
-              It must still not read as approval: canonical § 5.7 forbids
-              rendering no_source as "fine". Naming the mode does not endorse
-              it — it says where the answer came from and leaves the judgement
-              to the reader. */}
-          {scope.claims} claim{scope.claims === 1 ? "" : "s"} ·{" "}
-          {scope.checkable === 0
-            ? "answered from Claude's own knowledge, not from a supplied source"
-            : scope.checkable === scope.claims
-              ? `checked against ${scope.sources} supplied source${scope.sources === 1 ? "" : "s"}`
-              : `${scope.checkable} checked against ${scope.sources} supplied source${scope.sources === 1 ? "" : "s"}, the rest answered from knowledge`}
-        </div>
-      )}
-
+      {/* THE FINDING FIRST. It is the only element on this card that carries
+          the product; everything else is scaffolding. It used to appear after
+          the scope line and again inside the record — twice, under a sentence
+          about what had not happened. */}
       {bank.length > 0 && (
         <ul className="notary-detail-findings">
           {bank.map((f, i) => (
@@ -286,12 +288,36 @@ function DetailBlock({
         </ul>
       )}
 
+      {/* Scope, in the fewest words that stay honest. The long form — "10
+          claims · answered from Claude's own knowledge, not from a supplied
+          source" — was a sentence explaining what did NOT happen, sitting
+          above the thing that did. It only changes a decision for a reader who
+          assumed the answer had been verified, so it states that and stops. */}
+      {scope !== undefined && (
+        <div className="notary-scope">
+          {scope.checkable === 0
+            ? `${scope.claims} claim${scope.claims === 1 ? "" : "s"}, none source-backed`
+            : scope.checkable === scope.claims
+              ? `${scope.claims} claim${scope.claims === 1 ? "" : "s"} checked against ${scope.sources} source${scope.sources === 1 ? "" : "s"}`
+              : `${scope.checkable} of ${scope.claims} claims checked against ${scope.sources} source${scope.sources === 1 ? "" : "s"}`}
+        </div>
+      )}
+
+      {/* Gaps sit BELOW the record toggle and read as one line, not a list.
+          Each is only actionable by someone about to supply a source, which in
+          a chat conversation is rare — so it states what is available rather
+          than presenting a chore list above the finding. */}
       {gaps.length > 0 && (
-        <ul className="notary-gaps">
-          {gaps.map((g) => (
-            <li key={g.missing + g.unblocks}>Would let Notary {g.unblocks}</li>
+        <div className="notary-scope">
+          {gaps.length === 1 ? "A source would let Notary" : `Sources would let Notary`}{" "}
+          {gaps.map((g, i) => (
+            <span key={g.missing + g.unblocks}>
+              {i > 0 ? "; " : ""}
+              {g.unblocks}
+            </span>
           ))}
-        </ul>
+          .
+        </div>
       )}
 
       {hasRecord && (
@@ -304,6 +330,15 @@ function DetailBlock({
           >
             {recordOpen ? "Hide record" : "Record"}
           </button>
+          {/* THE RECORD IS FOR CHECKING OUR WORK, and is worded that way
+              deliberately.
+              Research on explanation interfaces is consistent that
+              explanations can raise perceived transparency and trust WITHOUT
+              improving decision quality — they get read as persuasive
+              rationale rather than as diagnostic evidence. So this is framed
+              as a record to inspect, never as a justification for why the
+              finding is right, and it sits behind a second click so only a
+              reader who actually doubts the finding reaches it. */}
           {recordOpen && (
             <div className="notary-record">
               {bank.map((f, i) => (
@@ -318,7 +353,7 @@ function DetailBlock({
                           <tr key={d.field}>
                             <td className="notary-record-field">{d.field}</td>
                             <td>
-                              claim <q>{d.claimed}</q> / found <q>{d.observed}</q>
+                              <q>{d.claimed}</q> vs <q>{d.observed}</q>
                             </td>
                             <td className="notary-record-rel">{d.relation}</td>
                           </tr>
@@ -326,18 +361,15 @@ function DetailBlock({
                       </tbody>
                     </table>
                   ) : (
-                    <div className="notary-record-note">no field-level detail for this detector</div>
+                    <div className="notary-record-note">compared as whole statements</div>
                   )}
-                  <div className="notary-record-note">basis: {f.basis_kind.replace(/_/g, " ")}</div>
                 </div>
               ))}
-              {/* Why these moves. The policy table, finally visible — and only
-                  when the task was actually recognised. */}
               {intent != null && !intent.defaulted && moves.length > 0 && (
                 <div className="notary-record-item">
-                  <div className="notary-record-head">why these moves</div>
+                  <div className="notary-record-head">moves offered</div>
                   <div className="notary-record-note">
-                    read as a {intent.task_mode} task · offered {moves.join(", ")}
+                    read as a {intent.task_mode} task · {moves.join(", ")}
                   </div>
                 </div>
               )}
@@ -623,11 +655,21 @@ export default function App() {
   // sliced again here defensively, same discipline as `challenges` above.
   const advanceSuggestions = (data.advance_suggestions ?? []).slice(0, 2);
 
-  // The finding icon's hover/title text: the single finding's own reason
-  // when there's one, or a plain count when there are several — never a
-  // severity word, never a color.
+  // The resting line, in prose. Never a severity word, never a colour, and —
+  // since 2026-09-04 — never a raw type code either.
+  //
+  // Findings come from two places now and both must read the same way to a
+  // reader who does not know the difference: Track 1's evidence-backed list,
+  // and the detector bank. One item names what it is; several get a count,
+  // because naming two different problems in one line reads as neither.
+  const bankHere = data.bank_findings ?? [];
+  const totalFindings = findings.length + bankHere.length;
   const findingSummary =
-    findings.length === 1 ? findings[0].label : `${findings.length} things to check`;
+    totalFindings === 1
+      ? bankHere.length === 1
+        ? findingProse(bankHere[0].type)
+        : findings[0].label
+      : `${totalFindings} things to check`;
 
   return (
     <div className="notary-card">
@@ -676,7 +718,14 @@ export default function App() {
             {allRejected.map((c, i) => (
               <RejectedCandidateView candidate={c} key={`rejected-${i}`} />
             ))}
-            {allMatches.length === 0 && allRejected.length === 0 && (
+            {/* Only meaningful for a TRACK 1 finding, which is supposed to
+                rest on resolved evidence. A card carrying only bank findings
+                has no evidence by design — self-contradiction compares the
+                answer against itself — and printing this there said something
+                had gone wrong when nothing had. Separating the two finding
+                lists was necessary but not sufficient: with `findings` empty,
+                both arrays below are empty too and this fired anyway. */}
+            {findings.length > 0 && allMatches.length === 0 && allRejected.length === 0 && (
               <div className="notary-evidence-unresolved">No resolved evidence is on record for this finding.</div>
             )}
             {/* Original submitted source references — provenance context
@@ -698,7 +747,12 @@ export default function App() {
             )}
           </div>
           {actionNote && <div className="notary-action-note">{actionNote}</div>}
-          <div className="notary-scope">{data.scope}</div>
+          {/* Suppressed when scope_detail exists, because DetailBlock already
+              rendered the same fact in fewer words. Both showed at once:
+              "10 claims · answered from Claude's own knowledge, not from a
+              supplied source" followed by "10 material claims reviewed against
+              0 accessible sources." */}
+          {data.scope_detail === undefined && <div className="notary-scope">{data.scope}</div>}
           {isTwoBlock && (
             <div className="notary-note">
               Two-block card — only render this shape when a rejected candidate AND

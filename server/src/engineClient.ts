@@ -832,18 +832,21 @@ export async function reviewAnswer(
       apiKey,
       extras,
     );
-    const bankFindings: Finding[] = Array.isArray(detection.findings)
-      ? (detection.findings as Array<{ boundaryText?: string; type?: string }>).map((f) => ({
-          label: String(f.type ?? "finding"),
-          text: String(f.boundaryText ?? ""),
-          why: "internal_conflict",
-        }))
-      : [];
-    // Bank findings join the issue list rather than replacing it: a claim can
-    // be SUPPORTED by its source AND the answer still contradict itself, and
-    // both are true. "Is there a problem?" is no longer readable off
-    // claim.state alone.
-    issueFindings.push(...bankFindings);
+
+    // Bank findings are deliberately NOT pushed into issueFindings.
+    //
+    // They used to be, and it produced a genuinely misleading card: a bank
+    // finding has no evidence BY NATURE — self-contradiction compares the
+    // answer against itself — so rendering it through Track 1's evidence-backed
+    // UI printed "No resolved evidence is on record for this finding" in
+    // warning styling, as though something had gone wrong. Nothing had. It also
+    // duplicated the finding text (once in Track 1's list, once in the record)
+    // and surfaced the raw `internal_conflict` code as the user-facing label.
+    //
+    // They are a different kind of thing and get their own rendering. What
+    // still holds is the reason they were merged: a claim can be SUPPORTED by
+    // its source AND the answer still contradict itself, so the card's status
+    // is computed from EITHER source below.
     // Invocation-level Advance replaces whatever the per-claim calls produced.
     const invocationGaps = parseGaps(detection.gaps);
     const bankFindingsDetail = parseBankFindings(detection.findings);
@@ -869,11 +872,15 @@ export async function reviewAnswer(
     const challengesField = challenges.length > 0 ? challenges : undefined;
     const advanceSuggestionsField = advanceSuggestions.length > 0 ? advanceSuggestions : undefined;
 
-    if (issueFindings.length > 0) {
+    // "Is there a problem?" is no longer readable off claim.state alone: a
+    // claim can be SUPPORTED by its source while the answer contradicts
+    // itself. Either source raises the status; only Track 1's own findings go
+    // in `findings`, which is the evidence-backed list.
+    if (issueFindings.length > 0 || bankFindingsDetail.length > 0) {
       return {
         status: "issue_found",
         scope,
-        findings: issueFindings,
+        findings: issueFindings.length > 0 ? issueFindings : undefined,
         actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
         challenges: challengesField,
         advance_suggestions: advanceSuggestionsField,
