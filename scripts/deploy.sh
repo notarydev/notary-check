@@ -25,6 +25,11 @@
 #   ./scripts/deploy.sh both --migrate    # …and run pending migrations in the
 #                                         #   gap between push and deploy
 #   ./scripts/deploy.sh both --dry-run    # build and push, deploy nothing
+#   ./scripts/deploy.sh both --use-pushed # skip build+push, deploy the image
+#                                         #   already at the top of the registry
+#
+# --use-pushed is for two situations: a deploy that failed after the push (retry
+# without a ten-minute rebuild), and a --dry-run you now want to release.
 #
 # --migrate needs PROD_DATABASE_URL in the environment. Read it off the
 # container service; it is deliberately not stored in this repo.
@@ -42,10 +47,12 @@ TARGET="${1:-}"
 shift || true
 MIGRATE=false
 DRY_RUN=false
+USE_PUSHED=false
 for arg in "$@"; do
   case "$arg" in
     --migrate) MIGRATE=true ;;
     --dry-run) DRY_RUN=true ;;
+    --use-pushed) USE_PUSHED=true ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -75,6 +82,23 @@ aws sts get-caller-identity >/dev/null 2>&1 || die "AWS credentials are not conf
 # suite runs the boundary check first, so a layering violation stops the deploy
 # too.
 # ---------------------------------------------------------------------------
+if $USE_PUSHED && $DRY_RUN; then die "--use-pushed and --dry-run do nothing together"; fi
+
+if $USE_PUSHED; then
+  # Trust what is already in the registry. The tests were run before it was
+  # pushed; re-running them here would not re-verify that image.
+  latest_image() {
+    aws lightsail get-container-images --region "$REGION" --service-name "$1" \
+      --query 'containerImages[0].image' --output text
+  }
+  ENGINE_REF=""; SERVER_REF=""
+  $DO_ENGINE && ENGINE_REF="$(latest_image notary-check-api)"
+  $DO_SERVER && SERVER_REF="$(latest_image notary-check-mcp)"
+  say "Using images already in the registry"
+  [[ -n "$ENGINE_REF" ]] && echo "  engine: $ENGINE_REF"
+  [[ -n "$SERVER_REF" ]] && echo "  server: $SERVER_REF"
+else
+
 say "Verifying before building"
 (cd engine && npx tsc --noEmit) || die "engine typecheck failed"
 (cd server && npx tsc --noEmit) || die "server typecheck failed"
@@ -134,6 +158,8 @@ if $DO_SERVER; then
   echo "  -> $SERVER_REF"
 fi
 
+fi  # end of the build-and-push path (skipped by --use-pushed)
+
 if $DRY_RUN; then
   say "--dry-run: images pushed, nothing deployed"
   [[ -n "$ENGINE_REF" ]] && echo "  engine: $ENGINE_REF"
@@ -157,8 +183,11 @@ if $MIGRATE; then
     pg_dump "$PROD_DATABASE_URL" > "$BACKUP" || die "pg_dump failed — refusing to migrate without a backup"
     echo "  -> $BACKUP ($(wc -c < "$BACKUP") bytes)"
   else
+    # No local pg_dump on this machine, so use the image. If this fails with a
+    # server-version complaint, bump the tag to match production's major
+    # version — pg_dump refuses to dump a NEWER server than itself.
     docker run --rm postgres:16 pg_dump "$PROD_DATABASE_URL" > "$BACKUP" \
-      || die "pg_dump (via docker) failed — refusing to migrate without a backup"
+      || die "pg_dump (via docker) failed — refusing to migrate without a backup. If it complained about server version, re-run with a postgres:N image matching production."
     echo "  -> $BACKUP ($(wc -c < "$BACKUP") bytes)"
   fi
   say "Applying migrations to production"
