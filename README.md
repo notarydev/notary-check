@@ -1,54 +1,89 @@
 # Notary Check
 
-Phase 0 scaffolding for Notary Check — Notary's Tier 1, CHECK-tier product. An MCP App that shows an in-chat evidence-review card in Claude. This phase is **mocked data only**: no real claim extraction, no evidence retrieval, no database, no auth, no billing. **This description is historical** — Phase 0's mocked scaffolding has since been replaced by a real engine, judge, Clerk auth, and a redesigned card. For current state see [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md); for what's next see [`docs/build/whats-left.md`](docs/build/whats-left.md). The original Phase 0 spec is archived at [`docs/build/phase-0-and-challenge-archive.md`](docs/build/phase-0-and-challenge-archive.md).
+An MCP connector that checks the claims in a Claude answer and shows only what
+breaks. It renders as an interactive card inside the conversation.
 
-Separate, clean codebase — independent of the unrelated `notary-platform` repo.
+Notary runs **outside** the conversation. It cannot see the chat; it only sees
+what Claude hands it in one tool call, and it answers once. That single
+constraint shapes most of the design — see `docs/` below.
+
+## Start here
+
+| If you want to | Read |
+|---|---|
+| Know what the words mean | [`CLAUDE.md`](CLAUDE.md) — Verify / Act / Challenge / Move, and the one authority rule |
+| Find your way around the code | [`MODULES.md`](MODULES.md) — what each directory owns and what it may import |
+| Know what's actually live | [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md) |
+| Know what's next | [`docs/build/whats-left.md`](docs/build/whats-left.md) |
+| Know the rules code is held to | [`docs/build/tier-1-build-and-operating-plan.md`](docs/build/tier-1-build-and-operating-plan.md) |
+| See status at a glance | [`PROGRESS.md`](PROGRESS.md) |
+
+## What it does
+
+One invocation has two halves:
+
+- **Verify** — deterministic. Compares each material claim against the evidence
+  actually supplied, re-dereferences the locator against retained canonical
+  text, and assigns a state through the state machine. A model may propose
+  here; only an evidence-bound procedure decides.
+- **Act** — judged, and never decides anything. Two layers: **Challenge** (0–2
+  bounded questions about a resolved claim, built but flag-off) and **Move**
+  (0–2 next actions from a closed set: `clarify` / `test` / `compare` /
+  `repair`).
+
+Act cannot assign a claim state. That is enforced by
+`engine/scripts/check-boundaries.ts`, not by convention.
 
 ## Structure
 
 ```
 notary-check/
-├── server/   MCP server (Express + @modelcontextprotocol/sdk + ext-apps), mocked scenario routing
-└── ui/       The review card (React), built to a single inlined HTML file
+├── engine/       Verification engine + HTTP API. Postgres, DeepSeek judge.
+│   ├── src/        see MODULES.md for the layering
+│   ├── migrations/ applied, append-only — never edit one that has run
+│   ├── eval/       measurement harnesses (these cost real model calls)
+│   └── scripts/    ops, plus check-boundaries.ts
+├── server/       The MCP server Claude talks to (Express + MCP SDK)
+├── ui/           The review card (React → one inlined HTML file)
+├── dashboard/    Customer dashboard (Next.js)
+└── docs/         Governed docs — see docs/README.md for what's canonical
 ```
 
 ## Run it
 
+Tests use a real Postgres and a real judge — deliberately not mocked. Without a
+database, ~19 tests fail with `ECONNREFUSED` and nothing else tells you why.
+
 ```bash
-# 1. Build the card
-cd ui
-npm run build
-
-# 2. Start the server (separate terminal)
-cd ../server
-npm start
+docker run -d --name notary-pg -p 5432:5432 \
+  -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=notary_check postgres:16
+docker exec notary-pg psql -U postgres -c "CREATE ROLE $USER LOGIN SUPERUSER;"
+cd engine && npm run migrate && npm test
 ```
 
-Test the card in isolation, without Claude:
-```
-ui/dist/mcp-app.html?mock=<url-encoded JSON of one of the four scenarios in server/src/mocks/scenarios.ts>
+```bash
+cd ui && npm run build        # build the card first
+cd ../server && npm start     # then the MCP server
 ```
 
-To actually test inside Claude, the server needs to be reachable over the public internet — Claude's custom connectors call out from Anthropic's infrastructure, not `localhost`. Use a tunnel:
+To test inside Claude, the server must be reachable from Anthropic's
+infrastructure — `localhost` will not do:
 
 ```bash
 cloudflared tunnel --url http://localhost:3333
-# or: ngrok http 3333
 ```
 
-Register the printed public HTTPS URL (e.g. `https://<random>.trycloudflare.com/mcp`) as a custom connector in Claude's developer settings, then ask Claude to call `review_source_backed_answer` on a message containing "Acme's revenue grew 17%..." to trigger the mocked scenarios.
+Register the printed HTTPS URL + `/mcp` as a custom connector in Claude's
+developer settings.
 
-## Notes on this scaffolding
+## Deployed
 
-A few things were fixed here that the original build plan flagged as `VERIFY` or got wrong, found by actually building and running this — see the plan's § Phase 0 build guide for the full detail:
+Two AWS Lightsail container services in `us-east-2`: `notary-check-api` (the
+engine, behind `api.getnotary.ai`) and `notary-check-mcp` (the MCP server, at
+`mcp.getnotary.ai`). Postgres runs on a separate Lightsail instance. Clerk
+provides OAuth. Credentials live only in the container service environment and
+are deliberately not recorded in this repo.
 
-- `@modelcontextprotocol/ext-apps`'s server helpers (`registerAppTool`, `registerAppResource`, `RESOURCE_MIME_TYPE`) live under the `/server` subpath, not the package root.
-- The UI needs `@modelcontextprotocol/ext-apps` too — its `react` subpath's `useApp` hook is the real (not mocked) way the card receives tool results from the host.
-- `vite` is pinned to `^5` and `@vitejs/plugin-react` to `^4` — `vite@8`'s default rolldown bundler currently breaks `vite-plugin-singlefile`.
-- Renaming the build output to `mcp-app.html` is done as a post-build rename, not via `rollupOptions.output.entryFileNames` (that approach makes the plugin misclassify the JS chunk as an HTML template and crash).
-- `App.tsx`'s mock-param parsing calls `JSON.parse(mock)` directly — `URLSearchParams.get()` already URL-decodes, so an extra `decodeURIComponent()` throws on any literal `%` in the card copy (e.g. "17%").
-- `index.html` declares `<meta charset="utf-8">` and `index.css` sets an explicit light background — without them, the card's em dashes/§ and dark-on-transparent text broke visually.
-
-## What's not here yet
-
-No auth, no billing, no real verification engine, no database, no live Claude connector test, no user testing. Per § 0.12 of the plan, Phase 0 isn't done until all four mocked scenarios have been confirmed through a live Claude conversation over a public tunnel URL, and 20–30 scripted test conversations have run with real people.
+Current image versions and the verification commands are in
+[`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md).
+Don't assume it's in sync — check the live endpoint after any deploy.

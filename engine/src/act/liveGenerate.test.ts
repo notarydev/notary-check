@@ -126,7 +126,7 @@ test(
       await insertUsageEvent(
         pool,
         usageEventFromJudgeCall(
-          { model: "deepseek-v4-flash", promptVersion: "v", question: "q", inputTokens: 1_000_000, outputTokens: 1_000_000 },
+          { model: "deepseek-v4-flash", promptVersion: "v", inputTokens: 1_000_000, outputTokens: 1_000_000 },
           { organizationId: orgId },
         ),
       );

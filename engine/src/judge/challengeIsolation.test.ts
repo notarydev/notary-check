@@ -78,16 +78,30 @@ test("static: no Act source file names a verdict-bearing output field", async ()
   assert.equal((schemaBlock[0].match(/\.strict\(\)/g) ?? []).length, 2);
 });
 
-test("static: reviewFlow's Act stage writes only challenge_item and usage_event", async () => {
-  const src = await readFile(new URL("../review/reviewFlow.ts", import.meta.url), "utf8");
-  const stage = src.slice(src.indexOf("async function runActChallenge"));
-  assert.ok(stage.length > 0, "the Act stage must be findable");
-  // The stage may SELECT freely; it may INSERT/UPDATE/DELETE nothing but its
-  // own table. usage_event is written through insertUsageEvent, not raw SQL.
-  const writes = stage.match(/\b(INSERT INTO|UPDATE|DELETE FROM)\s+(\w+)/g) ?? [];
+test("static: review/actForClaim.ts writes only challenge_item and usage_event", async () => {
+  // Act moved out of reviewFlow.ts into its own module, so this scans the WHOLE
+  // file rather than slicing a function out of the orchestrator — which is a
+  // stronger check than the slice it replaces: every line of Act, both layers,
+  // is now in scope, not just the one function someone remembered to name.
+  const raw = await readFile(new URL("../review/actForClaim.ts", import.meta.url), "utf8");
+  // Scan CODE, not prose. This file's own header comment explains that Act
+  // cannot reach assignState(), and a naive substring scan would read that
+  // sentence as the violation it describes. Stripping comments first is also
+  // what makes the check honest: it now proves the call does not exist, rather
+  // than proving nobody wrote the word.
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(
+    src.includes("export async function runActChallenge") && src.includes("export async function runMovesForClaim"),
+    "both Act stages must be in this file — if one moved, this test is scanning the wrong source and is no longer protecting anything",
+  );
+  // Act may SELECT freely; it may INSERT/UPDATE/DELETE nothing but its own
+  // table. usage_event is written through insertUsageEvent, and the Move
+  // layer's rows through persist.ts — neither is raw SQL here.
+  const writes = src.match(/\b(INSERT INTO|UPDATE|DELETE FROM)\s+(\w+)/g) ?? [];
   assert.deepEqual(writes, ["INSERT INTO challenge_item"]);
-  assert.ok(!stage.includes("assignState("), "the Act stage must never assign a state");
-  assert.ok(!/\bclaim\b\s+SET/.test(stage), "the Act stage must never update the claim row");
+  assert.ok(!src.includes("assignState("), "Act must never assign a state");
+  assert.ok(!src.includes("assessApplicability("), "Act must never run the applicability check");
+  assert.ok(!/\bclaim\b\s+SET/.test(src), "Act must never update the claim row");
 });
 
 test("the caps match the product contract exactly", () => {

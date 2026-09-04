@@ -44,9 +44,9 @@ A standalone Postgres on a Lightsail instance (address deliberately not recorded
 
 Practical consequence worth knowing before the next migration run: this is a single instance with no documented backup schedule beyond the manual `pg_dump` taken before the `0007`–`0013` run. Take a verified dump before every migration.
 
-No ORM — raw SQL migrations (`engine/migrations/0001`–`0015`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package.
+No ORM — raw SQL migrations (`engine/migrations/0001`–`0016`) run by a minimal custom runner (`engine/src/migrate.ts`), using the plain `pg` package.
 
-**Applied to production: `0001`–`0015`, all of them.** `0007`–`0013` ran on 2026-09-03; `0014`–`0015` ran later the same day (see the deploy record below). Migration `0013_advance.sql` adds `act_invocation`/`act_move`/`act_move_event` for the Move (Act v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
+**Applied to production: `0001`–`0015`. `0016` is written and applied locally but NOT yet in production** — it renames tables, so the running engine cannot survive it being applied ahead of a matching deploy (see "The Verify / Act rename" below). `0007`–`0013` ran on 2026-09-03; `0014`–`0015` ran later the same day (see the deploy record below). Migration `0013_advance.sql` adds `act_invocation`/`act_move`/`act_move_event` for the Move (Act v2) feature — see "2026-09-03 deploy" below. **Neon is not used** — the only mention of it anywhere in the repo is a pricing-comparison footnote in `docs/build/tier-1-build-and-operating-plan.md`, alongside Vercel/R2/DeepSeek pricing citations, not a decision record. The checked-in local-dev `DATABASE_URL` points at `localhost:5432`; production's is recorded at the top of this section.
 
 **Schema, as it stands** (all raw SQL, no schema file to point to instead):
 - `organization` — plus `plan`, `stripe_customer_id`, `stripe_subscription_id` (migration 0005), `clerk_user_id` (0007). Still has **no `created_at` column** — `GET /v1/organization` (below) returns `created_at: null` rather than inventing one.
@@ -112,6 +112,74 @@ Both live AWS Lightsail container services, region `us-east-2`, both currently `
 | `getnotary.ai` | Live `curl`, 2026-09-02 | **Confirmed live** — a real, Cloudflare-fronted marketing site with actual copy, distinct from this checkout's `dashboard/`. Flagged by the product owner as older and needing an update; not yet reconciled with this repo. |
 | `clerk.getnotary.ai` | Live `dig`, 2026-09-02 (CNAME resolves to Clerk's own frontend-api / Cloudflare) | **Confirmed live** — previously only described in `HANDOFF.md` prose, now independently verified. |
 | `notarycheck.ai` | `dashboard/src/app/account/page.tsx` (`sales@notarycheck.ai` mailto) | Does not resolve (`dig` returned nothing, 2026-09-02) — this mailto address's domain is not live. |
+
+
+## 2026-09-04, third session — the Verify / Act rename and the module split
+
+Nothing about behaviour changed in this session. Everything in it was aimed at
+one thing: making the codebase legible enough that a different agent, in a new
+session, can pick it up without reconstructing context from conversation
+history.
+
+**The vocabulary was retired and replaced.** "Track 1"/"Track 2" named an order
+rather than a job, and "Advance" named both the second half and one layer
+inside it. Now: **Verify** (deterministic, decides), **Act** (judged, never
+decides), with Act's two layers keeping the distinct names **Challenge** and
+**Move**. 53 files, plus migration `0016_rename_verify_act.sql`:
+`advance_invocation` → `act_invocation`, `advance_suggestion` → `act_move`,
+`advance_event` → `act_move_event`, `organization.track2_enabled` →
+`act_challenge_enabled`, `advance_enabled` → `act_moves_enabled`,
+`challenge_item.track1_state` → `verify_state`, and `usage_event` rows carrying
+`'advance_generation'` rewritten to `'move_generation'` so the ledger stays
+summable. Indexes and constraints renamed too — they do not follow a table
+rename in Postgres, and leaving them would print the retired vocabulary back at
+whoever runs `\d`. Migrations `0012`–`0014` keep their original prose: they are
+applied history, not current vocabulary.
+
+**Two dependency cycles were broken.** `verification/immaterialAmbiguity.ts`
+imported `parseValueUnit` from `judge/fieldExtraction.ts`, which made the
+deterministic core depend on the module whose whole job is calling a model —
+type-safe and behaviourally harmless, but the wrong direction, and direction is
+the property the layering exists to guarantee. It moved to
+`verification/valueUnit.ts`. Separately, `quotas/` and `judge/` imported each
+other; `quotas/usage.ts` now declares the minimal `ModelCallRecord` shape it
+actually needs, which `JudgeCallRecord` satisfies structurally. No caller
+changed.
+
+**`review/reviewFlow.ts` was split**, 1341 lines → 872. `review/types.ts` holds
+the wire contract (imports nothing that runs); `review/actForClaim.ts` holds
+both Act layers, which run only after Verify has committed and cannot reach
+`assignState()`.
+
+**The layering is now enforced.** `engine/scripts/check-boundaries.ts` runs as
+the first step of `npm test`: no upward or sideways imports between modules, and
+only `review/` may import `verification/stateMachine.ts`. Both rules were
+verified to actually fail by introducing violations deliberately. Both had
+already been broken before the check existed, and nothing had failed — which is
+the argument for it.
+
+**A real gap was found while wiring it up: `npm test` never ran `detect/` or
+`middleware/`.** The script enumerated test directories by hand and those two
+were never added, so the entire Verify detector bank — 4 test files — had never
+run in the suite. The glob is now `src/*/*.test.ts`, so a new directory cannot
+be silently unrun. Test count went 391 → 428; all 37 newly-run tests pass.
+
+**Known flake, worth recording so it is not re-investigated:** a handful of
+tests in `review/` and `judge/` call DeepSeek for real, and under the wider
+suite's parallelism one occasionally fails on network timing — a different one
+each run, passing in isolation. Three consecutive full runs gave 1 fail, 1 fail
+(different test), 0 fail.
+
+**Docs**: new `MODULES.md` (the module map — layers, what each directory owns,
+how to run things, and the mistakes this codebase has actually made);
+`README.md` rewritten, having still described Phase 0's mocked scaffolding and
+not mentioned `engine/` at all; `CLAUDE.md` gained the vocabulary glossary as
+its second section.
+
+**Not deployed.** The wire format changed (`advance_suggestions` → `moves`,
+`skip_claim_advance` → `skip_claim_moves`) and `0016` renames tables, so engine
+and server must go out together and the migration must land with them.
+
 
 ## 2026-09-03 deploy — audit fixes, Clerk auth, and Move now live
 

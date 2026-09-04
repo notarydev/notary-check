@@ -3,7 +3,7 @@
 // real network. Focus: blind answering (the claim's value can never reach the
 // model), evidence delimiting, strict four-outcome parsing (and the rejection
 // of anything outside it, including confidence figures), and the pure
-// assembleEvidenceFields / parseValueUnit helpers.
+// assembleEvidenceFields helper.
 
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
@@ -14,7 +14,6 @@ import {
   assembleEvidenceFields,
   extractField,
   parseJudgeAnswer,
-  parseValueUnit,
   safeParseModelOutput,
   type JudgeFieldAnswer,
 } from "./fieldExtraction.ts";
@@ -219,16 +218,6 @@ test("parseJudgeAnswer leaves an explicit modality marker untouched", () => {
   const result = parseJudgeAnswer(raw, "modality", {} as JudgeCallRecord);
   assert.equal(result.outcome, "present");
   assert.equal(result.value, "estimated");
-});
-
-test("parseValueUnit splits a leading signed number from its unit deterministically", () => {
-  assert.deepEqual(parseValueUnit("17%"), { value: "17", unit: "%" });
-  assert.deepEqual(parseValueUnit(" 17 % "), { value: "17", unit: "%" });
-  assert.deepEqual(parseValueUnit("12"), { value: "12" });
-  assert.deepEqual(parseValueUnit("$1.2 billion"), { value: "1.2", unit: "billion" });
-  assert.deepEqual(parseValueUnit("3.5x"), { value: "3.5", unit: "x" });
-  assert.deepEqual(parseValueUnit("17%."), { value: "17", unit: "%" });
-  assert.deepEqual(parseValueUnit("1,200.50"), { value: "1200.50" });
 });
 
 test("assembleEvidenceFields: present → value, everything else → undefined, valueUnit parsed", () => {

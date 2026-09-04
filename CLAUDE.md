@@ -37,6 +37,14 @@ after it.
 
 ## Read this first
 
+- **The module map**: [`MODULES.md`](MODULES.md) — what each directory owns,
+  what it may import, how to run the tests, and the handful of mistakes this
+  codebase has actually made. Read it before your first edit.
+- **The layering is enforced, not described**: `engine/scripts/check-boundaries.ts`
+  runs as the first step of `npm test` and fails the build on an upward or
+  sideways import between modules, or on anything but `review/` importing
+  `verification/stateMachine.ts`. If you believe a rule is wrong, change the
+  `LAYERS` table in that file deliberately — do not route around it.
 - **The rules for this docs/ folder**: [`docs/README.md`](docs/README.md)
   — governs what's canonical vs. proposed vs. current-fact, and how to
   update each as you build.

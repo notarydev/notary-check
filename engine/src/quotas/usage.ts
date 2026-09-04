@@ -1,7 +1,7 @@
 // UsageEvent shaping for § Core data model's UsageEvent table.
 //
 // This module has two jobs:
-//   1. Map the data judgeClient.ts already returns on JudgeCallRecord
+//   1. Map the data judgeClient.ts already returns on its call record
 //      (inputTokens / outputTokens — it already tracks them) into a
 //      UsageEvent-shaped record a caller can persist, with the
 //      estimated_cost_cents derived from DeepSeek's published prices.
@@ -24,7 +24,26 @@
 //     enforcement itself.
 
 import type pg from "pg";
-import type { JudgeCallRecord } from "../judge/judgeClient.ts";
+/**
+ * The only thing this module needs from a model call: what it cost and which
+ * model/prompt produced it. Declared HERE, structurally, rather than imported
+ * from judge/judgeClient.ts's JudgeCallRecord.
+ *
+ * WHY. quotas/ is a lower layer than judge/ — judge/, extraction/ and act/ all
+ * import this module to write their spend to the ledger. Importing a judge type
+ * back made the two directories mutually dependent, which meant neither could
+ * be read, tested, or replaced without the other, for the sake of four field
+ * names. JudgeCallRecord still satisfies this shape structurally, so every
+ * existing caller compiles unchanged and no cast is needed.
+ *
+ * scripts/check-boundaries.ts fails the build if the import comes back.
+ */
+export interface ModelCallRecord {
+  model: string;
+  promptVersion: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}
 
 /**
  * DeepSeek pricing, § Operating cost (off-peak cache-miss, the conservative
@@ -96,7 +115,7 @@ export interface JudgeUsageMeta {
  * Maps a judge call's persisted record to a UsageEvent-shaped row. The caller
  * supplies the org/review context the judge client itself does not know about.
  */
-export function usageEventFromJudgeCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+export function usageEventFromJudgeCall(record: ModelCallRecord, meta: JudgeUsageMeta): UsageEventShape {
   const inputTokens = record.inputTokens ?? 0;
   const outputTokens = record.outputTokens ?? 0;
   return {
@@ -124,7 +143,7 @@ export function usageEventFromJudgeCall(record: JudgeCallRecord, meta: JudgeUsag
  * at ALL (see extractClaims.ts's header), so every quota sum in the system was
  * computed against an incomplete ledger.
  */
-export function usageEventFromExtractionCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+export function usageEventFromExtractionCall(record: ModelCallRecord, meta: JudgeUsageMeta): UsageEventShape {
   const inputTokens = record.inputTokens ?? 0;
   const outputTokens = record.outputTokens ?? 0;
   return {
@@ -151,7 +170,7 @@ export function usageEventFromExtractionCall(record: JudgeCallRecord, meta: Judg
  * through insertUsageEvent like every other call site, which is what makes it
  * visible to checkQuota's sums rather than a fourth unmetered path.
  */
-export function usageEventFromChallengeCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+export function usageEventFromChallengeCall(record: ModelCallRecord, meta: JudgeUsageMeta): UsageEventShape {
   const inputTokens = record.inputTokens ?? 0;
   const outputTokens = record.outputTokens ?? 0;
   return {
@@ -177,7 +196,7 @@ export function usageEventFromChallengeCall(record: JudgeCallRecord, meta: Judge
  * see engine/src/act/liveGenerate.ts's quota gate, which is only
  * meaningful if every call that passes it is also recorded here.
  */
-export function usageEventFromMoveCall(record: JudgeCallRecord, meta: JudgeUsageMeta): UsageEventShape {
+export function usageEventFromMoveCall(record: ModelCallRecord, meta: JudgeUsageMeta): UsageEventShape {
   const inputTokens = record.inputTokens ?? 0;
   const outputTokens = record.outputTokens ?? 0;
   return {

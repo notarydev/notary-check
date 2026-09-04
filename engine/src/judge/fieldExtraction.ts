@@ -25,7 +25,8 @@
 import { delimitEvidenceForModel } from "../ingestion/delimitEvidence.ts";
 import { logEvent } from "../observability/log.ts";
 import { estimateDeepSeekCostCents } from "../quotas/usage.ts";
-import type { ApplicabilityField, EvidenceFields, ValueUnit } from "../verification/applicability.ts";
+import type { ApplicabilityField, EvidenceFields } from "../verification/applicability.ts";
+import { parseValueUnit } from "../verification/valueUnit.ts";
 import { z } from "zod";
 import {
   createJudgeClient,
@@ -295,25 +296,6 @@ export function parseJudgeAnswer(rawAnswer: string, field: ApplicabilityField, r
     sourceSpan: parsed.data.source_span,
     record,
   };
-}
-
-/**
- * Deterministic split of the judge's extracted value string into a ValueUnit.
- * This is NOT claim-side extraction and NOT a unit conversion; it only separates
- * a leading signed number from its unit so assessApplicability's unit-vs-value
- * distinction (applicability.ts) can do its exact comparison. Matches the
- * convention used in applicability.test.ts ('17%' → value '17', unit '%').
- */
-export function parseValueUnit(extracted: string): ValueUnit {
-  const raw = extracted.trim();
-  const stripped = raw.replace(/^[$£€¥]/, "").trim();
-  const match = /^([+-]?(?:\d[\d,]*)(?:\.\d+)?)\s*(.*)$/.exec(stripped);
-  if (!match) {
-    return { value: raw };
-  }
-  const value = match[1].replace(/,/g, "");
-  const unit = match[2].trim().replace(/\s+/g, " ").replace(/[.,;:]$/, "").trim();
-  return unit.length > 0 ? { value, unit } : { value };
 }
 
 /**

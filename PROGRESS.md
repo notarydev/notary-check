@@ -9,7 +9,15 @@
 > to `~/Downloads/notary-check-tracker.html`) — rebuilt 2026-09-03 to lead
 > with "what's left and who owns it" instead of a chronological narrative.
 
-**Last updated**: 2026-09-04 (second session) — **Notary now does two things, on any answer.** Before today it was a claim-versus-source checker that ran only when Claude had a citable claim *and* a source; measurement said that describes at most ~19% of real turns. It now (1) finds what is blatantly wrong and (2) works out what the user is trying to do and suggests a next move — and the second half runs with no claims, no sources, and nothing for Verify to say, which is ~37% of substantive answers.
+**Last updated**: 2026-09-04 (third session) — **repo made handoff-ready.** No behaviour changed. The Track 1/Track 2/Advance vocabulary is retired for **Verify / Act**, with Act's two layers keeping the names **Challenge** and **Move** (migration `0016`, 53 files). Two dependency cycles broken. `reviewFlow.ts` split 1341 → 872 lines. The layering is now enforced by `engine/scripts/check-boundaries.ts` in `npm test` rather than described in prose. New `MODULES.md`; `README.md` rewritten; `CLAUDE.md` gained the glossary.
+
+Found while wiring the boundary check: **`npm test` never ran `detect/` or `middleware/`** — the entire Verify detector bank had never executed in the suite. Fixed with a glob. Engine **428/428** (was 391), server **10/10**, all against real Postgres.
+
+**Not deployed.** Wire format changed and `0016` renames tables — engine and server must go out together, with the migration.
+
+---
+
+**Previous update**: 2026-09-04 (second session) — **Notary now does two things, on any answer.** Before today it was a claim-versus-source checker that ran only when Claude had a citable claim *and* a source; measurement said that describes at most ~19% of real turns. It now (1) finds what is blatantly wrong and (2) works out what the user is trying to do and suggests a next move — and the second half runs with no claims, no sources, and nothing for Verify to say, which is ~37% of substantive answers.
 
 Live: `:notary-check-api.engine.23` and `:notary-check-mcp.server.24`. No migration, so fully reversible. Engine **388/388** against real Postgres, server **10/10**.
 

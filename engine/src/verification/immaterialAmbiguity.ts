@@ -37,7 +37,7 @@
 // model that omits them) every path here returns "material", which is exactly
 // today's behaviour.
 
-import { parseValueUnit } from "../judge/fieldExtraction.ts";
+import { parseValueUnit } from "./valueUnit.ts";
 import type { ValueUnit } from "./applicability.ts";
 
 /**
