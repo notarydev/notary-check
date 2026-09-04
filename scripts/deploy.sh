@@ -180,21 +180,41 @@ if $MIGRATE; then
   BACKUP="$REPO/.backups/notary_check-$(date +%Y%m%d-%H%M%S).sql"
   mkdir -p "$REPO/.backups"
 
+  # STRIP DRIVER-ONLY QUERY PARAMETERS BEFORE HANDING THE URL TO libpq.
+  #
+  # Production's DATABASE_URL carries `uselibpqcompat=true`, which is a
+  # node-postgres flag. libpq does not know it and rejects the whole URI:
+  #
+  #     psql: error: invalid URI query parameter: "uselibpqcompat"
+  #
+  # So psql and pg_dump never even attempted a connection, and because the
+  # failure happened before any output, the redirect produced a 0-byte file
+  # that looked like a backup. That is the real reason three deploys stopped
+  # here — not a server-version mismatch, which was the first guess.
+  #
+  # The engine's own migrator keeps the original URL: it runs through
+  # node-postgres, which is what the flag is for. Only libpq tools get the
+  # stripped one.
+  libpq_url() {
+    printf '%s' "$1" | sed -E 's/[?&]uselibpqcompat=[^&]*//; s/\?&/?/; s/[?&]$//'
+  }
+  LIBPQ_URL="$(libpq_url "$PROD_DATABASE_URL")"
+
   # pg_dump refuses to dump a server NEWER than itself, so the client version
   # has to match production's major. Detect it rather than hardcode it: psql
   # has no such restriction and will connect to any server, so we can ask.
-  PG_MAJOR="$(docker run --rm postgres:16 psql "$PROD_DATABASE_URL" \
+  PG_MAJOR="$(docker run --rm postgres:16 psql "$LIBPQ_URL" \
       -tAc "SELECT current_setting('server_version_num')::int / 10000" 2>/dev/null | tr -d '[:space:]')"
   if [[ ! "$PG_MAJOR" =~ ^[0-9]+$ ]]; then
-    die "could not reach production Postgres to read its version. Check PROD_DATABASE_URL and network access."
+    die "could not reach production Postgres to read its version. Check PROD_DATABASE_URL and network access. If it names an unknown URI query parameter, add it to libpq_url()'s strip list above."
   fi
   echo "  production Postgres is major version $PG_MAJOR"
 
   DUMP_ERR="$(mktemp)"
   if command -v pg_dump >/dev/null && [[ "$(pg_dump --version | grep -oE '[0-9]+' | head -1)" -ge "$PG_MAJOR" ]]; then
-    pg_dump "$PROD_DATABASE_URL" > "$BACKUP" 2>"$DUMP_ERR" || { cat "$DUMP_ERR" >&2; die "pg_dump failed — refusing to migrate without a backup"; }
+    pg_dump "$LIBPQ_URL" > "$BACKUP" 2>"$DUMP_ERR" || { cat "$DUMP_ERR" >&2; die "pg_dump failed — refusing to migrate without a backup"; }
   else
-    docker run --rm "postgres:$PG_MAJOR" pg_dump "$PROD_DATABASE_URL" > "$BACKUP" 2>"$DUMP_ERR" \
+    docker run --rm "postgres:$PG_MAJOR" pg_dump "$LIBPQ_URL" > "$BACKUP" 2>"$DUMP_ERR" \
       || { cat "$DUMP_ERR" >&2; die "pg_dump (postgres:$PG_MAJOR via docker) failed — refusing to migrate without a backup"; }
   fi
   BYTES="$(wc -c < "$BACKUP" | tr -d ' ')"
