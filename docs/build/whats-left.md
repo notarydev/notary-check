@@ -1,6 +1,6 @@
 > Status: snapshot
 > Owner: Hardyk
-> Last verified: 2026-09-03
+> Last verified: 2026-09-04
 > Supersedes: —
 
 # What's left
@@ -33,15 +33,15 @@ check rather than an opinion.
 
 | Area | Ready means | Status |
 |---|---|---|
-| **Engine** | All 18 locked test cases pass **against the live deployment**, the pre-pilot gate has real numbers and meets them, quotas and spend caps demonstrably enforce, retention matches the canonical rule, kill switch drilled. | **Not ready.** E1 (locked case 2 fails live) is disqualifying on its own. B1 has no numbers. B4 violates a canonical rule. Caps now meter correctly as of 2026-09-03 but have never been observed to bite. |
-| **Connector** (MCP server, card, auth) | Deployed at current code, Clerk auth gating, the card renders every state honestly, invocation defects fixed and measured. | **Partly.** Clerk live and verified. `not_checked` committed but **not deployed** — `server/` still needs rebuilding. E3's four defects open. |
+| **Engine** | All 18 locked test cases pass **against the live deployment**, the pre-pilot gate has real numbers and meets them, quotas and spend caps demonstrably enforce, retention matches the canonical rule, kill switch drilled. | **Closer, still not ready.** Locked case 2 now passes live (E1, 2026-09-04) — the one disqualifying item is gone. Remaining: **B1** (no gate numbers, needs annotators), **B4** (retention violates a canonical rule), **B2a** (two-block card undiagnosed), and the other 17 locked cases have never been run against the *live* deployment, only locally. Caps meter correctly since 0015 but have never been observed to bite. |
+| **Connector** (MCP server, card, auth) | Deployed at current code, Clerk auth gating, the card renders every state honestly, invocation defects fixed and measured. | **Partly.** Clerk live and verified. `not_checked` and the parallelised claim loop deployed 2026-09-04 as `server.17`. **E3's four invocation defects still open** — that is the remaining gap. |
 | **Billing** | Live Stripe keys, entitlement activates on payment, cancellation and refund paths exercised, webhook failures alert, receipts confirmed delivered. | **Not ready.** Test-mode keys only. The live-key swap is env-only, but no live payment has ever been taken. |
 | **Account** (signup, dashboard, keys) | Signup gate enforced at both app and IdP level, account page works against live billing, key issue/revoke exercised. | **Partly.** App-level waitlist gate live. **O5 — Clerk Restricted mode not confirmed** — the hard half is unverified. |
 | **Marketing site** | `getnotary.ai` reflects what the product actually does and claims nothing the engine cannot support. | **Unreconciled.** A live Cloudflare-fronted site exists that does not match this checkout's `dashboard/` at all. Flagged stale by the owner, never investigated. Highest risk of the set: it is the only surface making public claims. |
 | **Ops** | Monitoring alerts (not just logs), backup schedule, restore drilled, CI, rollback drilled, named incident owner. | **Not ready.** Datadog key set, ingestion unconfirmed. Backup/restore genuinely drilled 2026-09-03. No CI. No named owner. |
 | **Legal** | ToS, Privacy Policy (must disclose evidence text goes to a third-party model), DPA template, named correction/deletion contact. | **Not started.** Needs a lawyer. Blocks public self-serve signup, not an invited pilot. |
 
-**The engine is the only area where the next step is unambiguous** — E1 below. Every other area is blocked on a decision, a person, or money rather than on engineering.
+**The engine is the only area where the next step is unambiguous** — E3 below, now that E1 and E2 are done. Every other area is blocked on a decision, a person, or money rather than on engineering.
 
 ## Blocking anything being called "validated"
 
@@ -52,7 +52,7 @@ honestly make.
 |---|---|---|
 | **B1** | **Held-out eval set is 20 unadjudicated drafts.** `engine/eval/SCHEMA.md` says in bold it is not the gating set. | § Pre-pilot engine gate requires real numbers for false-supported rate, wrong-source acceptance, and contradiction precision. X and Y in that gate are still blank because no labeled data exists to set them from. Nothing can be called validated, and public signup stays gated, until this is annotated. Needs human annotators — no engineering path around it. |
 | **B2a** | **Two-block contradiction card returns a single finding live.** The flagship Acme 17%/12% case returned "1 thing to check" against the live connector, not the two stacked findings the card contract describes. Found 2026-09-03, not diagnosed — unknown whether it is an older deployed build or a current bug. | Blocks trusting live Track 1 output for further UI work. Related to but distinct from B2. |
-| **B2** | **Locked case 2 fails live.** A paraphrased contradiction ("declined 12 percent" vs "grew 17%") returns `UNSUPPORTED`, not `CONTRADICTED`. | This is the project's own flagship scenario, and it is in the locked test suite. Flagged 2026-09-02 as *"worth prioritizing over UI polish"* and still not root-caused. Three candidate causes named in `architecture-and-progress.md`; none eliminated. |
+| ~~**B2**~~ | ~~Locked case 2 fails live.~~ **FIXED 2026-09-04 (E1).** Root cause was **not** the judge — it read "declined" as `decrease` correctly on every run. The claim said `Acme`, the passage said `Acme Corp`, and `normalizeEntity` canonicalised suffix *spelling* but not *presence*, so entity mismatched, the candidate was ruled inapplicable, and it was dropped before the state machine saw it. Fixed with an asymmetric optional-suffix rule. **Verified live**: `CONTRADICTED` on both the paraphrase and exact cases against `api.getnotary.ai`. | Release gate for a comparator change (§ Evaluator governance) could not be met — the held-out set is B1. Shipped on the owner's explicit call; re-score when B1 lands. |
 | ~~**B3**~~ | ~~Advance shipped without its adversarial eval.~~ **RESOLVED 2026-09-03.** Harness built at `engine/eval/advance-adversarial.ts` and run against live DeepSeek: **21 case-runs, 0 violations**, distribution 0:14% / 1:43% / 2:43%. Case 5 ("no useful move exists") returned 0 on all three runs — the behaviour that mattered most. Not the "always emits 2" failure Part 11 warned about. | Re-run this gate on any Advance prompt or model change (`npx tsx eval/advance-adversarial.ts --repeat 3`). Layers 4 and 6 are heuristic, so a green run is evidence, not proof. |
 | **B4** | **Retention violates the canonical rule.** `claim.text` and `evidence.resolved_text` are retained indefinitely, no consent, no TTL. | Directly contradicts § Security, privacy, and reliability requirements' first bullet. Also blocks the Privacy Policy in § Public-launch readiness, which has to describe a retention policy that currently doesn't exist. |
 
@@ -62,9 +62,9 @@ Small, and each one closes a gap between a stated rule and the code.
 
 | # | Item |
 |---|---|
-| ~~**O1**~~ | ~~Advance has no feature flag.~~ **RESOLVED 2026-09-03** — migration `0014_advance_flag.sql` adds `organization.advance_enabled`, `DEFAULT false` (ship dark for new orgs) with a backfill to `true` so existing orgs keep the working feature. Read in `reviewFlow.ts` before any client construction, so a disabled org costs zero model calls. Regression test asserts both no suggestions *and* zero model calls. **Not yet applied to production** — see F3. |
+| ~~**O1**~~ | ~~Advance has no feature flag.~~ **RESOLVED 2026-09-03** — migration `0014_advance_flag.sql` adds `organization.advance_enabled`, `DEFAULT false` (ship dark for new orgs) with a backfill to `true` so existing orgs keep the working feature. Read in `reviewFlow.ts` before any client construction, so a disabled org costs zero model calls. Regression test asserts both no suggestions *and* zero model calls. **Applied to production 2026-09-03.** |
 | **O2** | **`advance_event` is written by nothing.** The table exists, tests reference it, production never writes a row. Zero interaction telemetry for Advance. |
-| ~~**O3**~~ | ~~Cost meter rounds to whole cents, so both spend caps summed zeros and never fired.~~ **RESOLVED 2026-09-03** — migration `0015_cost_millicents.sql`. Cost is now metered in millicents; `estimated_cost_cents` became a `GENERATED ALWAYS` column derived from it, so a writer that sets only cents gets a hard Postgres error instead of silently under-metering. Regression test proves 1,000 realistic calls accrue ~134 cents where they previously accrued 0. **Not applied to production** — see F3. |
+| ~~**O3**~~ | ~~Cost meter rounds to whole cents, so both spend caps summed zeros and never fired.~~ **RESOLVED 2026-09-03** — migration `0015_cost_millicents.sql`. Cost is now metered in millicents; `estimated_cost_cents` became a `GENERATED ALWAYS` column derived from it, so a writer that sets only cents gets a hard Postgres error instead of silently under-metering. Regression test proves 1,000 realistic calls accrue ~134 cents where they previously accrued 0. **Applied to production 2026-09-03**; live ledger now accruing real cost (136 millicents and rising). |
 | **O4** | **Quota check is read-then-decide, not atomic** — two concurrent calls can both observe "under the cap." Already documented as a known limitation in § Locked test suite's Cost gate. Low risk at current volume. |
 | **O5** | **Clerk Restricted sign-up mode not confirmed enabled** — the hard, IdP-level half of the public-signup gate. Manual dashboard action, not verifiable from this repo. |
 | **O6** | **Profile Preferences copy not on the onboarding page.** Written and tested (§ Three concrete changes, item 4), never added where a user would see it. |
@@ -116,7 +116,7 @@ Rationale for each decision lives in
 [`tier-1-build-and-operating-plan.md`](tier-1-build-and-operating-plan.md);
 this is the queue, not the argument.
 
-**E1 — Fix locked case 2 (B2).** The flagship contradiction returns
+**~~E1~~ — DONE 2026-09-04.** Fix locked case 2 (B2). The flagship contradiction returns
 `UNSUPPORTED` instead of `CONTRADICTED` on the paraphrased-operator path.
 Newly narrowed: the live smoke test on 2026-09-03 returned a correct
 `CONTRADICTED` for the exact-value path, so locator resolution,
@@ -124,14 +124,28 @@ applicability, and the state machine are all proven working. **The failure
 is in the one place a model reads** — the judge recognising "declined" as
 `decrease`. Also newly testable: the deployment is now current code, which
 eliminates "already fixed locally, just not deployed" as a cause.
-*Highest priority. This is the example the product leads with.*
+*Was the highest priority — the example the product leads with.*
 
-**E2 — Parallelise the claim loop.** `engineClient.ts` submits claims
+**Outcome.** The documented hypothesis was wrong and usefully so: the judge
+extracted every field correctly, `operator=present(decrease)`, 3/3. The
+failure was entity comparison — claim `Acme` vs passage `Acme Corp`. Both
+extractions faithful; the comparator could not bridge them, so the candidate
+was inapplicable and dropped, and the correctly-detected operator conflict
+never mattered. Fixed in `verification/normalization.ts` with a deliberately
+asymmetric rule (see the build plan). Live-verified on both cases.
+
+**~~E2~~ — DONE 2026-09-04.** Parallelise the claim loop. `engineClient.ts` submits claims
 serially and each submission internally runs a judge call and an Advance
 call, so a five-claim answer is five sequential round trips while the tool
 call blocks Claude's turn. Claims are fully independent. Bounded
 `Promise.all`. **Biggest latency win available, and it is a precondition
 for anything that adds per-claim work.**
+
+**Outcome.** Bounded concurrency of 4. The subtlety worth keeping: execution
+fans out, accumulation stays in claim order, because the challenge/Advance
+caps are first-come and accumulating by completion would let network timing
+decide which claim's suggestions survive. Regression test makes completion
+order the exact reverse of claim order.
 
 **E3 — Fix the four invocation defects.** `user_request` is optional and
 its own description tells the model it may be omitted; the trailing

@@ -154,6 +154,30 @@ aws lightsail get-container-services --region us-east-2 \
 
 **Confirmed by the same run:** the pre-fix ledger was entirely fictional. All 228 historical `usage_event` rows sum to **0 cents** — every production call since launch metered as zero, so neither the per-org limit nor the global provider cap has ever had anything to sum.
 
+## 2026-09-04 — locked case 2 fixed (E1) and the claim loop parallelised (E2)
+
+**Shipped:** `:notary-check-api.engine.16` (deployment version 7) and `:notary-check-mcp.server.17` (deployment version 12). No migration, so no deploy-ordering hazard this time.
+
+**E1 — locked case 2, root cause.** The long-standing "paraphrased contradiction returns UNSUPPORTED" failure, open since 2026-09-02, is fixed. **The documented hypothesis was wrong**, and the correction is worth keeping: it blamed the judge for not recognising "declined" as a decrease. The judge does that perfectly — reproduced 3/3 with every field correct and `operator=present(decrease)` every time.
+
+The real cause was entity comparison. Claim and evidence are extracted by different prompts from different texts and legitimately disagree on how much of a name to include: the answer says "Acme's revenue grew 17%", the passage says "Acme Corp FY25 results". `normalizeEntity` canonicalised the *spelling* of a corporate suffix ("Corporation" → "corp") but not its *presence*, so `acme` and `acme corp` stayed different strings. Entity landed in `mismatched` → the candidate was ruled inapplicable → it was dropped before `assignState` ever saw it, and the correctly-detected operator conflict never mattered.
+
+**The asymmetry that explains the original intermittency:** a *differing* operator is a contradiction, but an *absent or mismatched* field is an applicability failure. Same evidence, opposite outcomes, turning on extraction granularity nobody controls.
+
+Fixed with a new, deliberately asymmetric rule in `verification/normalization.ts` (`entity-optional-corporate-suffix-v1`): base names are compared only when **exactly one** side carries a known suffix. "Acme Corp" vs "Acme Inc" still mismatches — those can be different legal entities. "market" vs "Acme" (locked case 6) is untouched. Seven tests, six of them negative boundaries.
+
+**Release gate not met, recorded rather than glossed:** § Evaluator governance requires scoring a comparator change against the held-out labelled set for false-supported rate. That set is 20 unadjudicated drafts (B1), so the number cannot exist. Shipped on the owner's explicit instruction with prod having no users. Re-score when B1 lands.
+
+**Verified live** against `api.getnotary.ai` via `engine/scripts/prod-smoke.ts`, both cases returning `CONTRADICTED` with a resolved match and an Advance suggestion:
+- `--case paraphrase` — "declined 12 percent in fiscal 2025" vs claim "grew 17% in FY25" (the case that was broken)
+- `--case exact` — "increased 12%" vs "grew 17%" (regression check on the path that already worked)
+
+**E2 — claim loop parallelised.** Claims were submitted one at a time, each round trip internally running a judge call and an Advance call, so a five-claim answer was five sequential waits while the MCP tool call blocked Claude's turn. Now bounded-concurrent at 4 in flight. Execution fans out; **accumulation stays in claim order**, because the challenge and Advance caps are first-come and accumulating by completion would let network timing decide which claim's suggestions survive.
+
+**Also now live:** the `not_checked` card state (previously committed but undeployed), so an unsourced claim no longer reports as a Notary malfunction.
+
+**Test counts:** engine 356/356 against real Postgres with all 15 migrations (up from 349); server 6/6.
+
 ## Live verification, 2026-09-02 — direct testing against `mcp.getnotary.ai`, not repo inspection
 
 Everything in this repo's earlier snapshots about `server/`'s live status was inferred from source/`.env` files, never from actually calling the deployed service. This section corrects that — four isolated `tools/call` requests, run directly against `https://mcp.getnotary.ai/`, each changing exactly one variable from the last:
