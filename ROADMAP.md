@@ -450,10 +450,10 @@ blocked on finishing.
 ### F1 — ~~main is ahead of production~~ CLOSED 2026-09-05 (re-verified 2026-09-05 later run)
 
 Everything on `main` is deployed. Live at last check (Lightsail API):
-`:notary-check-api.engine.51` (deployment 24) / `:notary-check-mcp.server.49`
-(deployment 27), migrations through `0019` — including the E-LAT fixes, the
+`:notary-check-api.engine.55` (deployment 28) / `:notary-check-mcp.server.49`
+(deployment 27), migrations through `0020` — including the E-LAT fixes, the
 `evidence_field_observation` cache (0018 re-keyed on text by 0019), the
-whitespace-tolerant matching, and the `checks_did_not_complete` diagnostic.
+whitespace-tolerant matching, and the `checks_did_not_complete` diagnostic, and E13/E9/E10-mini.
 
 Verified against production, not against the deploy's exit code:
 
