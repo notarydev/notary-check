@@ -44,3 +44,8 @@ passed hygiene, engine tests/typecheck, server tests/typecheck and card build, t
 failed because the final summary used `rg`, unavailable on the runner. Replaced
 that summary with portable `grep -E`; repeat CI is required on this correction.
 No production deployment or merge occurred.
+
+The second CI run also passed all tests/builds but its Node reporter produced no
+TAP-style summary lines, so grep returned 1. Summary display now prints each test
+log's final 12 lines, independent of reporter format; command exit status remains
+the test gate. This fixes reporting, not a failing engine test.
