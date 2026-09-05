@@ -156,3 +156,12 @@ Adversarial-case read, with the caveat that 2 of 7 (the boundary-narrower-than-c
 - Website + pricing/alpha-offer design (you're scoping UI/UX; I build once you hand it over).
 - Round 3 (release versioning/health endpoints/staging env/rollback drill) — not yet started, natural next step now that both tracks are live.
 - A fresh real Claude-session run through the redeployed connector, now that OAuth + Move are both actually live — the offline/local verification is done, a live conversational pass is the natural next check.
+
+**2026-09-05 (latest):** engine.55 + Act enabled on the test org. Newest run
+(`64bc7b05`, Earth diameter) showed the diagnostic value of Step 0: Verify did
+fetch the cited source — which was the geeksforgeeks.org HOMEPAGE, so no
+Earth data existed to support the claim. It landed `required_field_unresolved`
+instead of a clean UNSUPPORTED because claim hedges ("approximately"/"about")
+were extracted as modality. E10-mini fixes that (hedges → unasserted), so such
+runs now resolve cleanly. Act did not show because the new test org ships with
+`act_moves_enabled=false` — enabled on `88a5e76d` and the API-test org.

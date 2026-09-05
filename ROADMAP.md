@@ -60,7 +60,7 @@ Detailed arguments and statuses live in `docs/build/whats-left.md`
 | # | Item | Why | Status |
 |---|---|---|---|
 | ~~**E9**~~ | Real HTML parser + entity decode + table-row intake (replace regex `stripHtml`) | parse5-based `htmlToText`; entity decode + table-row text. | ✅ DONE — live engine.54 |
-| **E10** | Atomic claim decomposition + non-atom quality gate | A sentence is many claims; "not 714M"/"should be corrected" aren't checkable. Kills the noise. | not started |
+| **E10** | Atomic claim decomposition + non-atom quality gate | Hedge-as-modality fixed (E10-mini, live engine.55). Full atom split + non-atom gate still open. | partial |
 | **E11** | Core vs qualifier semantics (decision needed) | entity+metric+value match must not be annihilated by an unanchorable tier/scope qualifier. | needs owner decision |
 | **E12** | Derived-claim calculator | "$913 for 10TB" is recompute-or-say-derived, never "UNSUPPORTED". | not started |
 | ~~**E13**~~ | Bounded concurrency on the judge wave (and evidence fetch) | `Promise.all(rows)` is unbounded. | ✅ DONE — `mapWithLimit`, live engine.53 |
