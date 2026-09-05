@@ -124,6 +124,43 @@ One claim-extraction call returned unparseable JSON
 in the same run. Low frequency, but it silently drops a whole batch of claims
 when it happens.
 
+### E-EVIDENCE — we verify against a 19-character snippet, not the page
+
+**Root cause of `checks_did_not_complete`, found 2026-09-05 by reading the
+evidence rows rather than guessing.**
+
+On the run where all 18 claims failed to complete, all six sources were
+`content_kind = inline_excerpt`, `canonical_url = inline`, and **19 to 224
+characters long**. Claude supplied URLs *and* excerpts;
+`server/src/engineClient.ts`'s `registerEvidence` sends both and the engine
+prefers the excerpt, so the pages were never fetched.
+
+You cannot establish entity, period and metric from 19 characters. On that
+input `checks_did_not_complete` is arguably CORRECT rather than a defect —
+which is why every other diagnosis came up empty: the judge was healthy (13
+present, 6 absent, zero abstentions), there were no locator failures, and spend
+was $1.01 against a $1,000 cap.
+
+Runs that DID fetch pages got 5k–28k chars and produced real UNSUPPORTED and
+CONTRADICTED states.
+
+**Preferring the excerpt was a deliberate decision** and the comment defends it:
+an excerpt is text somebody actually had, while a URL may be paywalled, may
+have changed, or may never re-fetch. That reasoning is sound for provenance and
+wrong for verification, because verification needs context the excerpt does not
+carry.
+
+**Proposed fix, NOT yet made — it changes what counts as evidence:** when a URL
+is present, fetch it and verify against the document, keeping the excerpt as a
+locator hint and as the fallback when the fetch fails or the text no longer
+contains it. That uses both rather than reverting the earlier decision. Fetches
+measured 10–250ms, so the latency cost is small.
+
+**Open question for the owner:** should an excerpt too thin to establish the
+claim's fields be reported as a GAP ("this source is a snippet — the page would
+let me check it") rather than silently becoming INDETERMINATE? That is probably
+the more honest card either way.
+
 ### Speed — the plan, ready to hand to anyone
 
 **Executable spec: [`docs/build/speed-implementation-plan.md`](docs/build/speed-implementation-plan.md)**
