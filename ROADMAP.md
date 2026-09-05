@@ -40,10 +40,25 @@ rows, not inferred.
 
 ### ~~E-LAT~~ — FIXED 2026-09-05, awaiting production measurement
 
-Both halves shipped. **Re-measure before believing the numbers below are gone** —
-query `usage_event` grouped by `review_id` after a real multi-claim answer and
-compare judge calls per claim. The original measurement is kept for that
-comparison.
+Both halves shipped. **Re-measure before believing the numbers below are gone.** The prod smoke test
+CANNOT show the saving — its evidence matches the claim's entity, so nothing is
+foreclosed. It confirmed only that the happy path is unchanged (CONTRADICTED,
+3 calls, 4.6s). The saving appears on a real multi-claim answer whose sources
+do not all match:
+
+```sql
+-- judge calls per claim, per review. The old number was ~20.
+SELECT r.id, count(DISTINCT c.id) AS claims, count(u.id) AS judge_calls,
+       round(count(u.id)::numeric / NULLIF(count(DISTINCT c.id),0), 1) AS per_claim
+FROM review r
+LEFT JOIN claim c ON c.review_id = r.id
+LEFT JOIN usage_event u ON u.review_id = r.id AND u.event_type = 'judge_call'
+WHERE r.created_at > now() - interval '1 day'
+GROUP BY r.id ORDER BY judge_calls DESC LIMIT 10;
+```
+
+Baseline to beat, from review `f6dd5300`: **14 claims, 286 judge calls, ~20 per
+claim, 94 seconds, zero matches.**
 
 - **E-LAT-a — entity fail-fast.** Entity is asked first and alone; a row whose
   entity comes back `absent` skips its remaining fields. Implemented as an
