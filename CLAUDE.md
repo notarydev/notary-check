@@ -55,10 +55,10 @@ after it.
 - **What's left, and which status file does what**: [`ROADMAP.md`](ROADMAP.md)
   — the milestone view and the index over the other four status documents.
   **Its "In flight right now" section is the first thing to read in a new
-  session**: two commits are built and not deployed, the deploy's own test gate
-  is failing for an unidentified reason, and live connector testing is
-  half-finished. Starting new work before reading it means duplicating or
-  undoing that.
+  session** — it names the active build, the queued work, the owner
+  decisions that are open, and the key/portal chores that will bite. It is
+  kept current by whoever finishes a change. Starting new work before
+  reading it means duplicating or undoing it.
 - **The rules for this docs/ folder**: [`docs/README.md`](docs/README.md)
   — governs what's canonical vs. proposed vs. current-fact, and how to
   update each as you build.

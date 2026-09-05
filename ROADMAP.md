@@ -20,6 +20,34 @@ facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code layout is in
 `MODULES.md`. Vocabulary is in `CLAUDE.md`.
 
 ---
+## In flight right now — read this first in a new session
+
+Last updated 2026-09-05 (handoff to Claude). Live prod: `engine.55` /
+`server.49`, migrations through `0020`, suite 474/466/0 (live-model tests
+skip without a valid key).
+
+**Active build:** E10 slice 2 — stop `scope` being extracted as full
+qualifier clauses and fix `metric` synonyms (pricing run `79202c0c` is 8/8
+couldn't-check with figures verbatim on fetched pages). E9 (real HTML
+parser/table-row text), E13 (bounded judge wave), E10-mini (hedges ≠
+modality) are live. E18 harness baseline: 98 verbatim-but-not-supported /
+219 unresolved.
+
+**Queued:** E9b (structured table-row intake), E12 (derived-claim
+calculator), E14 (already shipped — chunked extraction), E15 (unit/format
+routing), E16 (cache/storage growth).
+
+**Awaiting owner decision:** E11 (core-vs-qualifier: should an unanchorable
+qualifier annihilate a verbatim core match?) and E17 (early-return card;
+approved, not yet implemented — flagged as the single next server change).
+
+**Do not start before checking:** two live keys are invalid/rotating
+(deployed server `CLERK_SECRET_KEY`, local `engine/.env`
+`DEEPSEEK_API_KEY`); Clerk Account portal is unpublished (OAuth browser
+sign-in blocked); F4 live keys in `.claude/settings.local.json`. Ops
+detail: `OPERATIONS.md` § Clerk.
+
+---
 ## Where we actually are
 
 Notary Check works. The engine verifies claims against evidence deterministically,
