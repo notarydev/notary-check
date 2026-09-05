@@ -51,6 +51,35 @@ Claude writes an answer
   Claude calls Notary again.        ← the loop; this is the product
 ```
 
+### What changed 2026-09-05 — read before you trust an older paragraph
+
+- **Sources are now fetched pages, not just excerpts.** A source registered with
+  both a caller excerpt and a URL is resolved against the **fetched page**
+  (Step 1/E9); the excerpt is kept as `evidence.caller_excerpt` and used only
+  when the fetch is unreachable or unparseable (provenance stays
+  `caller_supplied`). HTML is parsed with parse5 (`htmlToText.ts`): character
+  references decoded, non-content subtrees removed, table rows kept as
+  `cell | cell | cell` text rows.
+- **Judge answers are cached per canonical-text-hash × field** (migrations
+  0018/0019, `evidence_field_observation`). A hit costs 0 calls; a re-check of
+  the same source across invocations is near-free.
+- **The judge wave is bounded and fail-fast.** Entity is asked first and alone
+  (absent → the row is skipped); the remaining residual fields run as one
+  bounded 4-wide wave (E13). The deterministic pass and the locator share
+  whitespace-tolerant `findExactSpan`.
+- **An unanchorable judge `present` now abstains** (`required_field_unresolved`)
+  instead of reporting a locator failure (Step 2); the scope prompt forbids
+  fusing readings (prompt v4).
+- **Extraction never treats hedges as modality** (approximately/about/~ →
+  unasserted; engine.55).
+- **Every claim persists its `claim_fields` and `rejected_candidates`**
+  (migration 0020), so any state is explainable from the DB alone.
+- **Act still runs AFTER the claim loop** via `/detect` (sequential, not
+  parallel — parallel lanes are E7, not yet live). Extraction is chunked and
+  parallelised across chunks.
+
+Live prod at last check: engine.55 / server.49.
+
 ---
 
 ## 1. What Claude is told, and why it's told there
@@ -103,17 +132,27 @@ charge of Act's policy, and make the classification unauditable.
 
 Runs once **per claim**, four claims at a time. `review/reviewFlow.ts`.
 
-1. **Resolve evidence.** Fetch/parse each bound source to canonical text. A
-   source that fetched but could not be parsed is *not* readable — that
-   distinction is why an unparseable PDF routes to INDETERMINATE rather than
-   "your claim is unsupported."
-2. **Deterministic pass.** Literal, case-insensitive substring matching only,
+1. **Resolve evidence.** Each bound source becomes canonical text: fetch the
+   cited page when a URL exists (parse5 `htmlToText` — entities decoded,
+   table rows as text rows — or per-page PDF text), falling back to the caller
+   excerpt only when the fetch is unreachable or unparseable. A source that
+   fetched but could not be parsed is *not* readable — that distinction is why
+   an unparseable PDF routes to INDETERMINATE rather than "your claim is
+   unsupported."
+2. **Deterministic pass.** Literal, case-insensitive, whitespace-tolerant
+   substring matching only (`findExactSpan`, shared with the locator),
    recording exact `[start,end)` offsets. No semantic matching here, ever.
-3. **Judge the residue.** Only fields the deterministic pass could not settle.
-   One DeepSeek call per field, quota-gated.
-   **The judge never sees the claim's asserted value.** It is asked only: is
-   this property present / absent / ambiguous / cannot-be-determined? It cannot
-   agree with a claim it has not been shown.
+3. **Judge the residue — cached and fail-fast.** Only fields the deterministic
+   pass could not settle. Observations are cached per canonical-text-hash ×
+   field, so a text judged once is never re-asked (across claims and across
+   invocations). Entity is asked first and alone; an `absent` entity skips the
+   row. The remaining residual fields for a row run as one bounded (4-wide)
+   wave. Each miss is one DeepSeek call, quota-gated. **The judge never sees
+   the claim's asserted value.** It is asked only: is this property present /
+   absent / ambiguous / cannot-be-determined? It cannot agree with a claim it
+   has not been shown. A `present` answer whose value cannot be anchored to the
+   retained text is recorded as an abstained required field
+   (`required_field_unresolved`), never as established evidence.
 4. **Assemble** deterministic findings + judge residue into `EvidenceFields`.
 5. **Applicability** — is this evidence even *about* this claim? Entity,
    period, metric, scope, comparator, modality must agree. Deterministic.
@@ -125,7 +164,9 @@ Runs once **per claim**, four claims at a time. `review/reviewFlow.ts`.
    `INDETERMINATE`. **This function is the only thing in the codebase that may
    write `claim.state`, and only `review/` may call it** — enforced by
    `scripts/check-boundaries.ts`, not by convention.
-9. **Persist** claim + evidence_match in one transaction.
+9. **Persist** claim + evidence_match in one transaction — and persist the
+   claim's `claim_fields` and `rejected_candidates` (migration 0020) so the
+   verdict is explainable later without replaying the run.
 
 **No source → INDETERMINATE, never UNSUPPORTED.** "We had nothing to check" and
 "the evidence didn't support you" are different statements and the second is
@@ -255,10 +296,17 @@ Not "Notary found a contradiction." The second pass is the point.
 
 Not hidden here — the full list with numbers is `ROADMAP.md` § Priority 1.
 
-- **`/detect` runs after the claim loop, not alongside it.** Act does not need
-  Verify's verdicts, so this is pure latency.
-- **The field-extraction loop is a cartesian product.** One real answer cost
-  286 judge calls, 94 seconds and 9.5¢ — and produced zero matches.
+- **`/detect` (Act) runs after the claim loop, not alongside it.** Act does not
+  need Verify's verdicts, so this is pure latency — parallel lanes are E7.
+- **The card still waits for the whole run.** The early-return card + polling
+  groundwork is built but inert; E17 (flag-gated) is the change that turns it
+  on.
+- **Pricing/table facts still often fail.** Claims carry tier/free-allowance
+  qualifiers and metric paraphrases that the all-fields-must-match gate cannot
+  anchor, so a figure that is verbatim on a fetched page can still land
+  couldn't-check (e.g. `79202c0c`: 8/8). This is E10-slice-2 (scope clause
+  bloat, metric synonyms) + E9b (table-row records) + E11 (qualifier
+  semantics decision).
 - **The endpoint `/detect` is misnamed.** It runs Verify's detector bank *and*
   Act's Move call, so the word straddles the one line the vocabulary otherwise
   keeps clean. The module `detect/` is named correctly; the route is not.

@@ -63,7 +63,7 @@ and `quotas/usage.ts`'s `ModelCallRecord` — both are that fix, applied).
 | 0 | `middleware/` | Rate limiting. | — |
 | 0 | `test/` | Test-only DB helpers. | — |
 | 1 | `detect/` | **Verify's detector bank** (note: the HTTP endpoint `/detect` runs this bank *and* Act's Move call, so the endpoint name straddles the Verify/Act line even though the module does not — see `docs/build/architecture-and-progress.md` § Correction) — findings (blatantly wrong) and gaps (couldn't check). Deliberately has no `state`/`verdict`/`confidence` field; a test asserts this. | `verification`, `observability` |
-| 1 | `ingestion/` | Fetching sources safely, resolving them to canonical text, delimiting untrusted text before it reaches a model. | `evidence` |
+| 1 | `ingestion/` | Fetching sources safely, resolving them to canonical text (HTML via parse5 `htmlToText.ts` — entities decoded, table rows as text rows; PDFs via `parsePdf.ts`), delimiting untrusted text before it reaches a model. | `evidence` |
 | 2 | `judge/` | **The model transport.** DeepSeek client, kill switch, field extraction, prompt templates — plus `challengeGeneration.ts`/`challengePrompts.ts`, which are Act's Challenge layer. | `ingestion`, `quotas`, `verification`, `observability` |
 | 3 | `extraction/` | Pulling material claims out of a Claude answer. | `judge`, `quotas`, `verification`, `observability` |
 | 3 | `act/` | **Act's Move layer.** The closed four-move set, intent classification, the six-layer validator, prompt construction, persistence. | `detect`, `ingestion`, `judge`, `quotas`, `observability` |
@@ -83,6 +83,7 @@ Split out of a single 1341-line file so each piece answers one question:
 | `reviewFlow.ts` | *How is a claim verified?* The nine-step deterministic pipeline and the single `assignState()` call. |
 | `actForClaim.ts` | *What does Act do with a committed finding?* Both layers — Challenge and Move. Neither function can throw; a failure degrades to zero output over an intact Verify finding. |
 | `lifecycle.ts` | *Did the checks actually run?* Claim lifecycle state, strictly orthogonal to `claim.state`. |
+| `concurrency.ts` | `mapWithLimit` — bounded, order-preserving fan-out used for the judge wave (E13). No imports. |
 
 ---
 

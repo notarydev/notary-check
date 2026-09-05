@@ -88,6 +88,7 @@ Detailed arguments and statuses live in `docs/build/whats-left.md`
 | # | Item | Why | Status |
 |---|---|---|---|
 | ~~**E9**~~ | Real HTML parser + entity decode + table-row intake (replace regex `stripHtml`) | parse5-based `htmlToText`; entity decode + table-row text. | ✅ DONE — live engine.54 |
+| **E9b** | Structured table-row records at intake | Pricing claims must match a *row* (rate, tier-range, free-allowance) not a page blob. E9 gives text rows; this turns them into matchable records. | not started |
 | **E10** | Atomic claim decomposition + non-atom quality gate | E10-mini (hedges) live engine.55. **Slice 2 (open): scope must be a short canonical noun, not a qualifier clause; governed metric synonyms** — pricing run `79202c0c` is 8/8 couldn't-check with figures verbatim. | partial |
 | **E11** | Core vs qualifier semantics (decision needed) | entity+metric+value match must not be annihilated by an unanchorable tier/scope qualifier. | needs owner decision |
 | **E12** | Derived-claim calculator | "$913 for 10TB" is recompute-or-say-derived, never "UNSUPPORTED". | not started |
