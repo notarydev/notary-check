@@ -903,6 +903,29 @@ export async function runReview(
   const checksCompleted =
     quotaDeniedReason === null && !hadUnparseableEvidence && !hadAbstainedRequiredField && !hadUnresolvedLocator;
 
+  // WHICH of the four conditions failed, when one did.
+  //
+  // `checks_did_not_complete` has been the dominant claim state on real answers
+  // — 18 of 18 on one production run — and it was impossible to diagnose,
+  // because only ONE of the four inputs (the unresolved locator) logged
+  // anything. Everything else was indistinguishable from the outside, so the
+  // cause could only be guessed at. Guessing has already cost this codebase a
+  // day.
+  //
+  // Logged only on the failing path, so it costs nothing on a healthy claim.
+  if (!checksCompleted) {
+    logEvent({
+      event: "checks_did_not_complete",
+      organization_id: organizationId,
+      review_id: reviewId,
+      quota_denied: quotaDeniedReason ?? "no",
+      unparseable_evidence: String(hadUnparseableEvidence),
+      abstained_required_field: String(hadAbstainedRequiredField),
+      unresolved_locator: String(hadUnresolvedLocator),
+      resolved_rows: String(rows.length),
+    });
+  }
+
   const relations: EvidenceRelation[] = outcomes.map((o) => ({ relation: o.relation, evidenceId: o.evidenceId }));
   const assigned = assignState(relations, hadAddressableSource, checksCompleted);
 
