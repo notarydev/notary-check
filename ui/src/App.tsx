@@ -72,6 +72,17 @@ type Move = {
 
 type ReviewCardData = {
   status: "no_issue" | "issue_found" | "could_not_check" | "not_checked";
+  /**
+   * The review this card is about, so it can poll for its own updates. Absent
+   * on the mocked and standalone paths, and on failures that happened before a
+   * review existed — a card without it simply does not poll.
+   */
+  review_id?: string;
+  /**
+   * False while verification is still running. A card that is not complete must
+   * never present itself as a finished verdict.
+   */
+  complete?: boolean;
   /** What a detector could not check, and what would make it checkable. Facts, at most two. */
   gaps?: Array<{ missing: string; unblocks: string }>;
   bank_findings?: Array<{
@@ -469,6 +480,15 @@ function ActionPill({
   );
 }
 
+/**
+ * How often a running review is re-read.
+ *
+ * Deliberately unhurried. The work being waited on takes seconds, the read is
+ * cheap but not free, and a card that repaints twice a second reads as agitated
+ * rather than busy.
+ */
+const POLL_INTERVAL_MS = 1500;
+
 export default function App() {
   const [data, setData] = useState<ReviewCardData | null>(null);
   const [toolInput, setToolInput] = useState<ToolInput | null>(null);
@@ -525,6 +545,55 @@ export default function App() {
   // these variables (with light-mode-safe fallbacks) instead of hardcoding
   // colors that only worked against a light host.
   useHostStyles(app, app?.getHostContext());
+
+  /**
+   * Polls the review until it finishes, folding in results as they land.
+   *
+   * WHY. Verification of a real answer takes seconds to tens of seconds. The
+   * connector used to block for all of it, so the user watched nothing happen
+   * and then a finished card appeared. This lets the card show what is known
+   * and fill itself in.
+   *
+   * Only runs when the card says there is more coming — `review_id` present and
+   * `complete` false. A finished card polls nothing, and the mocked/standalone
+   * paths carry no review id at all, so they are unaffected.
+   *
+   * Every failure is swallowed and the interval simply continues. A poll that
+   * surfaced errors would turn a slow-but-working review into a broken card;
+   * the right response to "I could not read the state" is to keep showing what
+   * we already have.
+   */
+  useEffect(() => {
+    if (!app || data === null) return;
+    const reviewId = data.review_id;
+    if (reviewId === undefined || data.complete === true) return;
+
+    let stopped = false;
+    const timer = setInterval(() => {
+      void app
+        .callServerTool({ name: "get_review_state", arguments: { review_id: reviewId } })
+        .then((result) => {
+          if (stopped) return;
+          const text = (result?.content as Array<{ type: string; text?: string }> | undefined)?.find(
+            (c) => c.type === "text",
+          )?.text;
+          if (text === undefined) return;
+          const state = JSON.parse(text) as { complete?: boolean };
+          // Merge rather than replace: the card already holds everything the
+          // first response established, and a poll only ever ADDS. Replacing
+          // wholesale would blank fields the state endpoint does not carry.
+          setData((prev) => (prev === null ? prev : { ...prev, ...state }));
+        })
+        .catch(() => {
+          /* keep polling; a failed read is not a failed review */
+        });
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [app, data]);
 
   /**
    * Records that a move was DISPLAYED.

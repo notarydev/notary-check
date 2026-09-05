@@ -15,7 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { clerkMiddleware } from "@clerk/express";
 import { mcpAuthClerk, protectedResourceHandlerClerk, authServerMetadataHandlerClerk } from "@clerk/mcp-tools/express";
-import { recordMoveEvent, reviewAnswer } from "./engineClient.js";
+import { fetchReviewState, recordMoveEvent, reviewAnswer } from "./engineClient.js";
 import { resolveApiKeyForUser } from "./orgResolver.js";
 
 try {
@@ -283,6 +283,43 @@ function buildServer() {
       // Reports state, gives no instruction — the same discipline the review
       // tool's own response block is held to.
       return { content: [{ type: "text" as const, text: ok ? "recorded" : "not recorded" }] };
+    },
+  );
+
+  /**
+   * get_review_state — called by the CARD, not by Claude.
+   *
+   * The read half of a card that fills itself in. Verification of a real answer
+   * takes seconds to tens of seconds; this lets the card render what is known
+   * and poll for the rest instead of the connector blocking for all of it.
+   *
+   * Registered with registerTool rather than registerAppTool because it has no
+   * UI of its own, and its description is written for a machine caller: Claude
+   * has no reason to call it and gains nothing by doing so. It is a pure read —
+   * it computes nothing, writes nothing, and cannot change what a card says.
+   */
+  server.registerTool(
+    "get_review_state",
+    {
+      title: "Read a Notary review's current state",
+      description:
+        "Internal read for the Notary review card. Returns the claims, findings, gaps and moves recorded so far for one review, plus whether it has finished. " +
+        "Called by the card while a check is still running; there is no reason to call it while composing an answer, and it returns nothing that is not already on the card.",
+      inputSchema: { review_id: z.string().describe("The review id, exactly as it appeared in the review card data.") },
+    },
+    async (
+      args: { review_id: string },
+      extra: { authInfo?: { extra?: { userId?: string; email?: string } } },
+    ) => {
+      const clerkUserId = extra?.authInfo?.extra?.userId;
+      if (!clerkUserId) {
+        throw new Error("Unauthenticated tool call: no Clerk user id on authInfo.");
+      }
+      const apiKey = await resolveApiKeyForUser(clerkUserId, extra?.authInfo?.extra?.email);
+      const state = await fetchReviewState(args.review_id, apiKey);
+      // Reports state and gives no instruction — the same discipline the review
+      // tool's own response block is held to.
+      return { content: [{ type: "text" as const, text: JSON.stringify(state ?? { complete: false }) }] };
     },
   );
 

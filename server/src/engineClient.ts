@@ -700,6 +700,23 @@ async function markReviewComplete(reviewId: string, apiKey: string): Promise<voi
   }
 }
 
+/**
+ * Reads a review's current state for a polling card.
+ *
+ * Returns null rather than throwing on any failure. A poll that errors would
+ * turn a slow-but-working review into a broken card, and the card's correct
+ * response to "I could not read the state" is to keep showing what it has.
+ */
+export async function fetchReviewState(reviewId: string, apiKey: string): Promise<unknown | null> {
+  try {
+    const res = await engineFetch(`/v1/reviews/${reviewId}/state`, { method: "GET" }, apiKey);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function recordMoveEvent(
   moveId: string,
   eventType: "shown" | "revealed" | "committed" | "dismissed",
