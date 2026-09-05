@@ -103,6 +103,21 @@ It tracks status; it does not restate the delivery sequence, release
 gates, or "do not build yet" list — those are sequencing *rules* and stay
 in the Tier 1 plan.
 
+## Scope and automated hygiene
+
+[Change map](build/change-map.md) routes edits to implementation, references and
+checks. `scripts/check-hygiene.mjs` checks changed docs headers/local links,
+work proof, migration immutability and common private-material leaks. It runs in
+the installed local commit hook and in CI once this configuration is pushed.
+
+## Per-work development records
+
+[Development workflow](build/development-workflow.md) defines the lightweight
+`build/work/<id>-<name>/intent.md → spec.md → plan.md → verification.md` chain.
+These are reference records for a change, not replacements for canonical guides.
+Work status is separate from this folder's authority status. Current baseline:
+[DEV-001](build/work/DEV-001-baseline/verification.md).
+
 ## Current contents
 
 ```

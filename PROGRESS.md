@@ -9,6 +9,23 @@
 > canonical copy; a mirror lives at `~/Downloads/notary-check-tracker.html`
 > but has drifted — re-copy from `status-page/index.html` if you use it).
 
+## Current setup — 2026-09-05
+
+| Area | Verified state |
+|---|---|
+| Cross-agent hygiene | DEV-002: change map, staged hygiene checker, hook and CI configuration; [proof](docs/build/work/DEV-002-hygiene/verification.md). |
+| Development baseline | DEV-001 implemented locally on `codex/development-baseline`; [proof](docs/build/work/DEV-001-baseline/verification.md). |
+| Engine | 474/474 live-model tests pass; offline 466 pass, 8 skip; boundaries and typecheck pass. |
+| Server/card | Server 10/10 and typecheck pass; card build passes. |
+| Monitoring | Local dashboard inspected; loopback binding, honest assessment/follow-up labels and stale error feedback corrected locally. |
+| Production | engine.55/server.49, migrations through 0020 confirmed; no deploy. 77 old processing reviews need lifecycle triage. |
+| Next | E10 slice 2 acceptance fixtures; monitoring provenance/lifecycle; E11 decision and E17 approval-scope evidence. |
+
+Update this summary in place. Earlier entries below are historical observations;
+use the roadmap and the linked proof for current facts.
+
+## Historical review notes
+
 **Last updated**: 2026-09-05 (evening) — **structural verdict recorded; rebuild queue open; first build started.** A real pricing run (`74ea42e8`, cloud egress) returned 8/10 claims `required_field_unresolved` while "$0.09/GB for the first 10 TB" is verbatim on the fetched page. Conclusion: the engine's unit (whole-sentence claims) and gate (every field must literally anchor) are the problem — prompts won't fix it. Full queue **E9–E18** in `docs/build/whats-left.md`, indexed in `ROADMAP.md` Priority 1. E13 (bounded judge-wave concurrency) started first — it is small, safe, and de-risks scale. Also live today: engine.52 deploy (steps 0–2: diagnostics persistence, page-fetch intake, scope judge contract), the local **runs-report dashboard** (`engine/scripts/runs-report.mjs`, http://localhost:8123, auto-polling), and a second account provisioned for OAuth testing.
 
 **Last updated**: 2026-09-05 (late session) — **speed solved and measured in production; correctness now the open front.** E-LAT is measured, not just shipped: review `9f3958a6` (05:14, 12 claims) → `891ee8f5` (05:27, 18 claims) went **261 → 52 judge calls (per-claim 21.8 → 2.9), 31.0s → 10.7s wall, 9.70¢ → 1.93¢** from `usage_event`. A later 2-claim run (`900530a5`, Pacific Ocean, 10:40) did **10 judge calls in a 0.19s span, 4.5s, 0.35¢** — the text-hash observation cache (migration 0019) hits across invocations. Live prod at last check: `engine.51` (deployment 24) / `server.49` (deployment 27).

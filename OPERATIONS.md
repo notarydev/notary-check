@@ -188,7 +188,16 @@ reads. Both are current.
 - **Admin API pattern** (valid secret from `server/.env`): users, invitations, oauth_applications, rotate_secret all via `api.clerk.com` with `Authorization: Bearer <sk>`.
 
 ### Local tooling a new agent should know
-- **runs-report dashboard:** `cd engine && node scripts/runs-report.mjs` (or leave running) → http://localhost:8123. Local, read-only, auto-polls every 20s; shows the last 5 runs by default (toggle to all); per-run: flow bar (extract/verify/finalise), Verify & Track-2 verdict cards, Comms-with-Claude, second-trip, and full plumbing (claims incl persisted `claim_fields`/`rejected_candidates`, evidence provenance+lengths, usage, moves, findings/gaps). Restart after editing `runs-report.{mjs,html}`.
+
+Current reproducible commands and monitoring limits:
+[development workflow](docs/build/development-workflow.md). The dashboard binds
+`127.0.0.1:8123`; use that address. It is local, cross-organization inspection,
+not an alerting service. Historical timing bars and assessments are estimates or
+manual notes. Latest E18 observation: **106 candidates / 233 unresolved** on
+2026-09-05; the baseline below is historical. Tests must use a dedicated local
+database, with `TEST_DATABASE_URL` and `DATABASE_URL` explicitly aligned.
+
+- **runs-report dashboard:** `cd engine && node scripts/runs-report.mjs` (or leave running) → http://localhost:8123. Local, read-only, auto-polls every 20s; shows the last 5 runs by default (toggle to all); per-run: flow bar (extract/verify/finalise), Verify & Act assessment cards, Comms-with-Claude, second-trip, and full plumbing (claims incl persisted `claim_fields`/`rejected_candidates`, evidence provenance+lengths, usage, moves, findings/gaps). Restart after editing `runs-report.{mjs,html}`.
 - **Regression harness:** `cd engine && node scripts/measure-cant-check.mjs` — flags claims whose value is verbatim on a fetched source yet ended UNSUPPORTED/INDETERMINATE (E18 baseline: 98 candidates / 219 unresolved).
 - **Prod DB read pattern:** psql via `docker run --rm postgres:16-alpine psql …`; the prod URL from the Lightsail engine env carries `uselibpqcompat=true`, which libpq rejects — strip it first (see deploy.sh `libpq_url`). Everything is read-only from this repo unless you intend a deploy.
 - **Key hygiene still open:** rotate the invalid deployed `CLERK_SECRET_KEY`; fix the invalid local `engine/.env` `DEEPSEEK_API_KEY` (breaks the engine test gate when present); close F4 (live keys in `.claude/settings.local.json`).
@@ -198,7 +207,7 @@ reads. Both are current.
 Run these before claiming you can operate anything; each documents what it proves.
 
 ```bash
-git ls-remote origin -h refs/heads/main      # GitHub push/pull works
+git ls-remote origin -h refs/heads/main      # GitHub remote read works; does not prove push access
 aws sts get-caller-identity                  # AWS CLI authenticated (IAM `Opencode_Notary`)
 docker info >/dev/null 2>&1 && echo docker-ok  # Docker daemon running (test PG, prod-DB psql, amd64 image builds)
 aws lightsail get-container-services --region us-east-2 \

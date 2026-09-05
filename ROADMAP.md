@@ -12,7 +12,7 @@ them has been a real cost, so:
 | `MECHANISM.md` | How it works right now, end to end. Not a plan and not history — if it is out of date that is a bug. | present |
 | **`ROADMAP.md`** (this) | The priority list. **Engine correctness and cost is priority 1; open issues are priority 2.** The index — start here. | future |
 | `docs/build/whats-left.md` | The detailed queue, with stable IDs (`B1`, `O4`, `E5`…) and the full argument for each. **This file cites those IDs; it does not restate them.** | future |
-| `PROGRESS.md` | The audit trail. Every review pass, every bug found. Append-only history. | past |
+| `PROGRESS.md` | Current setup summary updated in place; older review narratives retained as history. New work proof lives beside its intent/spec/plan. | present + history |
 | `docs/build/architecture-and-progress.md` | What is *actually* built and live right now, including infra. | present |
 
 How the system actually works, end to end, is in `MECHANISM.md`. Operational
@@ -22,24 +22,36 @@ facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code layout is in
 ---
 ## In flight right now — read this first in a new session
 
-Last updated 2026-09-05 (handoff to Claude). Live prod: `engine.55` /
-`server.49`, migrations through `0020`, suite 474/466/0 (live-model tests
-skip without a valid key).
+Last verified 2026-09-05 by the setup agent: local and GitHub main at
+`e1b9fa8`; live `engine.55` / `server.49`, database migration `0020` confirmed.
+Engine **474/474 pass with live model**, **466 pass / 8 skipped offline**;
+server **10/10**, both typechecks and card build pass.
+
+**Active cleanup:** [DEV-002 hygiene](docs/build/work/DEV-002-hygiene/verification.md) —
+change map, staged commit checks and CI configuration; locally verified and
+recorded in the cleanup commit. Remote CI remains pending push. [Change map](docs/build/change-map.md) names edit scope and required proof.
+
+**Development setup:** [DEV-001 proof](docs/build/work/DEV-001-baseline/verification.md)
+and [working process](docs/build/development-workflow.md). Local changes are on
+`codex/development-baseline`; no release has been made. Local dashboard:
+http://127.0.0.1:8123. Production has 77 old `processing` reviews in the three-day
+window: investigate lifecycle/diagnostic-run provenance before calling them outages.
 
 **Active build:** E10 slice 2 — stop `scope` being extracted as full
 qualifier clauses and fix `metric` synonyms (pricing run `79202c0c` is 8/8
 couldn't-check with figures verbatim on fetched pages). E9 (real HTML
 parser/table-row text), E13 (bounded judge wave), E10-mini (hedges ≠
-modality) are live. E18 harness baseline: 98 verbatim-but-not-supported /
-219 unresolved.
+modality) are live. E18 observed 2026-09-05: 106 numeric-overlap candidates / 233 unresolved.
+Rolling-window triage signal, not adjudicated ground truth.
 
 **Queued:** E9b (structured table-row intake), E12 (derived-claim
 calculator), E14 (already shipped — chunked extraction), E15 (unit/format
 routing), E16 (cache/storage growth).
 
-**Awaiting owner decision:** E11 (core-vs-qualifier: should an unanchorable
-qualifier annihilate a verbatim core match?) and E17 (early-return card;
-approved, not yet implemented — flagged as the single next server change).
+**Owner decisions:** E11 remains unresolved. E17 is reported approved in the
+previous handoff, while the detailed queue still requests an A/B/C decision.
+Preserve that reported approval; recover its exact scope before activating the
+async card. No approval is being inferred or revoked by this setup.
 
 **Do not start before checking:** two live keys are invalid/rotating
 (deployed server `CLERK_SECRET_KEY`, local `engine/.env`
@@ -93,10 +105,10 @@ Detailed arguments and statuses live in `docs/build/whats-left.md`
 | **E11** | Core vs qualifier semantics (decision needed) | entity+metric+value match must not be annihilated by an unanchorable tier/scope qualifier. | needs owner decision |
 | **E12** | Derived-claim calculator | "$913 for 10TB" is recompute-or-say-derived, never "UNSUPPORTED". | not started |
 | ~~**E13**~~ | Bounded concurrency on the judge wave (and evidence fetch) | `Promise.all(rows)` is unbounded. | ✅ DONE — `mapWithLimit`, live engine.53 |
-| **E14** | Chunked/parallel claim extraction | Extraction is the remaining 8–18s tail. | not started |
+| **E14** | Chunked/parallel claim extraction | Chunked path exists and is called by the extraction route (`a40a8a9`, `f9ca156`). Overlap with verification remains separate work. | chunking implemented; overlap pending |
 | **E15** | Normalization routing + $/GB / unit/format layer (confirm-only) | "$0.09/GB" should resolve deterministically before any judge call. | not started |
 | **E16** | Observation cache + page storage growth / eviction (ties to B4) | Unbounded storage; no TTL. | not started |
-| **E17** | Early-return / async card decision (STEP 2 of speed plan) | Users wait on full e2e; groundwork is built but inert. | needs owner decision |
+| **E17** | Early-return / async card (STEP 2 of speed plan) | Groundwork built but inert; reconcile the reported approval with the unresolved A/B/C queue entry. | approval scope needs evidence |
 | ~~**E18**~~ | Regression harness over real runs (ground truth) | `scripts/measure-cant-check.mjs`: 98 candidates / 219 unresolved across real runs. | ✅ v1 DONE |
 
 **Order:** E9 → E13 (small, de-risks) → E18 harness → E10 → E12 → E15 → E11/E17 (owner decisions) → E14 → E16.
@@ -562,8 +574,8 @@ That is not the same claim.
 | **B1** | **The held-out eval set is 20 unadjudicated drafts.** The pre-pilot gate's thresholds are literally blank because there is no labelled data to set them from. Needs human annotators — **no engineering path around this.** |
 | **B2a** | The flagship two-block contradiction returns a single finding against the live connector. Found, never diagnosed. |
 | **B5** | 17 of the 18 locked cases have never been run against the *live* deployment, only locally. |
-| **S5b** | **`inputProvenance` is set but never persisted or surfaced.** The semantics are now correct in memory; no row records them and the card does not distinguish a finding computed over observed material from one computed over Claude's own report. |
-| **S4** | **Findings are not persisted.** There is no `finding` table, so nothing measures which detectors ever fire in production. We cannot answer "is the detector bank earning its place." |
+| **S5b** | **Historical claim, requires re-audit: `inputProvenance` is set but never persisted or surfaced.** The semantics are now correct in memory; no row records them and the card does not distinguish a finding computed over observed material from one computed over Claude's own report. |
+| ~~**S4**~~ | **Persistence shipped (E-MEAS).** `finding` and `gap` rows are queried by the live dashboard. Measuring detector usefulness remains open. |
 | ~~**O2**~~ | ~~`act_move_event` is written by nothing.~~ **RESOLVED 2026-09-04** — the card now records shown / revealed / committed / dismissed through a `record_move_event` app tool. The root cause was deeper than the missing write: the invocation-level Act path persisted nothing at all, so there was no row for an event to reference. |
 
 S4 is the same shape as O2 was: we ship things and then cannot tell whether they
@@ -612,7 +624,7 @@ not — that path needs only S1–S3 and O5.
 | | What's missing |
 |---|---|
 | **S8** | **No `/healthz` or `/readyz`** on either service. Nothing can tell whether a deploy is healthy except a smoke test run by hand. |
-| **S9** | **No CI.** Tests run only when a human remembers. |
+| **S9** | **CI configured locally** in `.github/workflows/verify.yml`; remote run and required branch protection remain pending. |
 | **S10** | **No staging environment.** Every change is verified locally and then goes to production. |
 | **S11** | **Rollback never drilled.** Lightsail rolls back on a failed deploy; we have never exercised a deliberate one. |
 | **S12** | Datadog key is set; **ingestion never confirmed**. |

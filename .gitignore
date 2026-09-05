@@ -11,3 +11,7 @@ dist/
 !.env.example
 *.pem
 *.key
+
+# Local operational evidence and database backups must not enter this public repo.
+/.local/
+/.backups/

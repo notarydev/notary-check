@@ -1,3 +1,6 @@
+> Historical handoff snapshot. For current work start at [ROADMAP](ROADMAP.md);
+> for verification see [DEV-001](docs/build/work/DEV-001-baseline/verification.md).
+
 # Where things stand — 2026-09-05, ~04:15
 
 Read this first. Everything below was measured, not assumed.

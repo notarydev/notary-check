@@ -5,6 +5,30 @@
 
 # Notary Check — Architecture and infrastructure progress
 
+## Development hygiene — 2026-09-05
+
+DEV-002 adds a local staged commit hook and GitHub Verify workflow configuration
+(hygiene + offline engine/server/card checks with disposable Postgres). No remote
+CI run or branch protection is claimed until pushed/configured. The change map
+owns scope-to-check routing. See [verification](work/DEV-002-hygiene/verification.md).
+No production behavior or infrastructure was changed.
+
+## Current verification — 2026-09-05 setup
+
+Lightsail API confirms engine.55 (deployment 28) and server.49 (deployment 27),
+both RUNNING. Read-only production SQL confirms `0020_diagnostics_and_page_intake.sql`.
+Engine tests pass 474/474 with live model against a separate local database;
+server 10/10, typechecks and card build pass. No runtime deploy occurred.
+
+Local monitoring fixes in this working diff: bind runs-report to loopback, return
+review status, label unassessed runs honestly, qualify follow-up heuristics, and
+show polling failures even after the loading node is removed. Production behavior
+is unchanged. Detailed [proof and limitations](work/DEV-001-baseline/verification.md).
+
+The sections below retain dated history; old image/migration/test counts do not
+override this current verification. OPERATIONS.md owns current run commands.
+
+
 *A factual snapshot of what's actually deployed and running, as of 2026-09-02. Every claim below is sourced to a real file, a live secret on disk, or a command run against the repo — not to a plan or a doc's stated intent. Where the repo's own docs contradict what's actually deployed, that's called out explicitly rather than silently resolved one way.*
 
 ## The headline gap this doc exists to close

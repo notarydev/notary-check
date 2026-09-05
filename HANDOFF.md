@@ -7,7 +7,11 @@
 
 Paste this file's contents (or point at this file) when handing the work to another coding agent (opencode or otherwise). It exists so the next session doesn't have to re-derive context from this repo's commit history.
 
-## Resume protocol — if this session ends, start here
+## Historical resume protocol
+
+The protocol below records earlier build sessions. For new work use
+[ROADMAP](ROADMAP.md) and [development workflow](docs/build/development-workflow.md);
+do not choose work from historical unchecked entries.
 
 This file is written so that **if this session dies mid-work and the next instruction is just "continue," any agent — Claude, or opencode running on DeepSeek — can pick up exactly where it left off without the person having to re-explain anything.**
 
