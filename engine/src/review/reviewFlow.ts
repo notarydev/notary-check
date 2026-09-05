@@ -275,14 +275,14 @@ const SKIPPED_ENTITY_ABSENT = "skipped_entity_absent";
  */
 async function readObservation(
   db: pg.Pool,
-  evidenceId: string,
+  textHash: string,
   field: ApplicabilityField,
 ): Promise<JudgeFieldAnswer | null> {
   try {
     const row = await db.query(
       `SELECT outcome, value, source_span, candidates FROM evidence_field_observation
-        WHERE evidence_id = $1 AND field = $2 AND prompt_version = $3 AND model = $4`,
-      [evidenceId, field, PROMPT_VERSION, DEFAULT_JUDGE_MODEL],
+        WHERE canonical_text_hash = $1 AND field = $2 AND prompt_version = $3 AND model = $4`,
+      [textHash, field, PROMPT_VERSION, DEFAULT_JUDGE_MODEL],
     );
     const r = row.rows[0];
     if (r === undefined) return null;
@@ -299,7 +299,12 @@ async function readObservation(
   }
 }
 
-async function writeObservation(db: pg.Pool, evidenceId: string, answer: JudgeFieldAnswer): Promise<void> {
+async function writeObservation(
+  db: pg.Pool,
+  textHash: string,
+  evidenceId: string,
+  answer: JudgeFieldAnswer,
+): Promise<void> {
   // Only real, completed calls are stored. A quota denial, a kill-switch
   // short-circuit or a transport error is a fact about THIS RUN, not about the
   // source, and caching one would make a temporary failure permanent.
@@ -307,10 +312,11 @@ async function writeObservation(db: pg.Pool, evidenceId: string, answer: JudgeFi
   try {
     await db.query(
       `INSERT INTO evidence_field_observation
-         (evidence_id, field, prompt_version, model, outcome, value, source_span, candidates)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       ON CONFLICT (evidence_id, field, prompt_version, model) DO NOTHING`,
+         (canonical_text_hash, evidence_id, field, prompt_version, model, outcome, value, source_span, candidates)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (canonical_text_hash, field, prompt_version, model) DO NOTHING`,
       [
+        textHash,
         evidenceId,
         answer.field,
         answer.record.promptVersion,
@@ -552,11 +558,16 @@ export async function runReview(
       };
       const others = row.residuals.filter((f) => f !== "entity");
 
+      // Keyed on the TEXT, not the row. The same document registered again in a
+      // later invocation gets a new evidence id but the same hash, which is
+      // what makes the cache survive Claude's fetch-and-recheck loop — the
+      // place the cost actually is.
+      const textHash = row.resolved.canonicalTextHash ?? sha256(text);
       const ask = async (field: ApplicabilityField): Promise<JudgeFieldAnswer> => {
-        const cached = await readObservation(db, row.evidenceId, field);
+        const cached = await readObservation(db, textHash, field);
         if (cached !== null) return cached;
         const fresh = await extractField(text, field, judgeOptions);
-        await writeObservation(db, row.evidenceId, fresh);
+        await writeObservation(db, textHash, row.evidenceId, fresh);
         return fresh;
       };
 

@@ -13,6 +13,7 @@
 import "dotenv/config";
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type pg from "pg";
 import type { JudgeCallInput, JudgeClient, JudgeCallResult } from "../judge/judgeClient.ts";
@@ -281,7 +282,16 @@ test(
       const reviewId = await createReview(pool, orgId);
       // All string fields verbatim; only the value differs — the residue is
       // exactly one field (valueUnit), resolved by the real judge.
-      const evidenceId = await seedRetrievedEvidence(pool, reviewId, CONTRADICT_TEXT);
+      //
+      // The text is made UNIQUE PER RUN on purpose. evidence_field_observation
+      // caches the judge's reading of a document (migration 0019, keyed on the
+      // canonical text hash), so a fixed fixture would be answered from cache
+      // on the second run and this test — whose whole point is that a real call
+      // happens and is metered — would pass without the judge ever running.
+      // A cache that silently satisfies a test about calling the judge is worse
+      // than no cache.
+      const uniqueText = `${CONTRADICT_TEXT} (run ${randomUUID()})`;
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, uniqueText);
 
       const result = await runReview(
         {
