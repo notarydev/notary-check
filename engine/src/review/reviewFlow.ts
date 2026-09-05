@@ -92,6 +92,7 @@ import type { ApplicabilityField, ClaimFields, EvidenceFields } from "../verific
 import { assessApplicability } from "../verification/applicability.ts";
 import type { EvidenceRelation } from "../verification/stateMachine.ts";
 import { assignState } from "../verification/stateMachine.ts";
+import { mapWithLimit } from "./concurrency.ts";
 import type { ClaimLifecycleState, NotCheckableReason } from "./lifecycle.ts";
 import { runActChallenge, runMovesForClaim } from "./actForClaim.ts";
 import type {
@@ -541,8 +542,15 @@ export async function runReview(
   // entity the judge cannot find can never be applicable, so the rest of that
   // row is skipped rather than paid for.
   const answersByRow = new Map<string, Map<ApplicabilityField, JudgeFieldAnswer>>();
-  await Promise.all(
-    rows.map(async (row) => {
+  // E13 (2026-09-05): this was `Promise.all(rows.map(...))` — unbounded, so a
+  // claim bound to many sources opened hundreds of parallel DeepSeek calls in
+  // one wave. The fan-out is now capped; results stay in input order and the
+  // semantics are unchanged (each row's work is independent).
+  const JUDGE_WAVE_CONCURRENCY = 4;
+  await mapWithLimit(
+    rows,
+    JUDGE_WAVE_CONCURRENCY,
+    async (row) => {
       const answerByField = new Map<ApplicabilityField, JudgeFieldAnswer>();
       answersByRow.set(row.evidenceId, answerByField);
 
@@ -591,7 +599,7 @@ export async function runReview(
 
       const settled = await Promise.all(others.map((f) => ask(f)));
       others.forEach((f, i) => answerByField.set(f, settled[i]));
-    }),
+    },
   );
 
   for (const row of rows) {
