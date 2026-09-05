@@ -59,16 +59,16 @@ Detailed arguments and statuses live in `docs/build/whats-left.md`
 
 | # | Item | Why | Status |
 |---|---|---|---|
-| **E9** | Real HTML parser + entity decode + table-row intake (replace regex `stripHtml`) | Regex misses escaped markup (`&lt;style&gt;` leaked in prod), has no tables → pricing runs fail. | not started |
+| ~~**E9**~~ | Real HTML parser + entity decode + table-row intake (replace regex `stripHtml`) | parse5-based `htmlToText`; entity decode + table-row text. | ✅ DONE — live engine.54 |
 | **E10** | Atomic claim decomposition + non-atom quality gate | A sentence is many claims; "not 714M"/"should be corrected" aren't checkable. Kills the noise. | not started |
 | **E11** | Core vs qualifier semantics (decision needed) | entity+metric+value match must not be annihilated by an unanchorable tier/scope qualifier. | needs owner decision |
 | **E12** | Derived-claim calculator | "$913 for 10TB" is recompute-or-say-derived, never "UNSUPPORTED". | not started |
-| **E13** | Bounded concurrency on the judge wave (and evidence fetch) | `Promise.all(rows)` is unbounded — hundreds of parallel calls at scale. | 🔨 IN PROGRESS |
+| ~~**E13**~~ | Bounded concurrency on the judge wave (and evidence fetch) | `Promise.all(rows)` is unbounded. | ✅ DONE — `mapWithLimit`, live engine.53 |
 | **E14** | Chunked/parallel claim extraction | Extraction is the remaining 8–18s tail. | not started |
 | **E15** | Normalization routing + $/GB / unit/format layer (confirm-only) | "$0.09/GB" should resolve deterministically before any judge call. | not started |
 | **E16** | Observation cache + page storage growth / eviction (ties to B4) | Unbounded storage; no TTL. | not started |
 | **E17** | Early-return / async card decision (STEP 2 of speed plan) | Users wait on full e2e; groundwork is built but inert. | needs owner decision |
-| **E18** | Regression harness over real runs (ground truth) | Without labels every fix ships unmeasured. | not started |
+| ~~**E18**~~ | Regression harness over real runs (ground truth) | `scripts/measure-cant-check.mjs`: 98 candidates / 219 unresolved across real runs. | ✅ v1 DONE |
 
 **Order:** E9 → E13 (small, de-risks) → E18 harness → E10 → E12 → E15 → E11/E17 (owner decisions) → E14 → E16.
 

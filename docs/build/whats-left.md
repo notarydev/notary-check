@@ -253,7 +253,7 @@ requires every claimed field to anchor to a literal span or the claim dies.
 The queue below fixes the unit and the gate, in dependency order. Index:
 `ROADMAP.md` Priority 1.
 
-**E9 — Real HTML parsing + entity decode + table-row awareness. IN PROGRESS.**
+**~~E9~~ — DONE, live engine.54.** parse5-based `htmlToText` (entity decode, block text, table rows as cell|cell).
 `resolveEvidence.ts`'s `stripHtml` is a regex stripper: it does not decode
 entities (escaped `<style>` leaked into a fetched CIA page in prod), and it
 flattens tables to one text blob, so pricing rows can never be matched
@@ -284,7 +284,7 @@ recomputed deterministically from the row's own rate×volume, or reported as
 "derived, not sourced" — never "UNSUPPORTED because no source states it".
 This is where the deferred arithmetic detector (S7) gets its real job.
 
-**E13 — Bounded concurrency on the judge wave and evidence fetch.** The
+**~~E13~~ — DONE, live engine.53.** `mapWithLimit` caps the judge wave at 4. The
 per-claim judge wave is `Promise.all(rows.map(...))` — unbounded; with many
 sources it opens hundreds of parallel model calls (429s, cost, latency).
 Bound it (small constant). Also bound/parallelise row resolution inside
@@ -310,7 +310,7 @@ speed plan: the read side (`/state`, `/complete`), card polling and app tool
 are built but inert — the server still waits for verification. Decide A/B/C
 (ROADMAP / speed-implementation-plan) so users stop staring at the full e2e.
 
-**E18 — Regression harness over real runs.** Snapshot today's real runs
+**~~E18~~ — v1 DONE.** `scripts/measure-cant-check.mjs`; current signal 98 candidates / 219 unresolved. Snapshot today's real runs
 (05:14/05:27/10:40/13:53/13:55/74ea42e8) with hand labels; define the
 false-"couldn't check" rate; measure every change against it. Bootstrap
 ground truth so fixes stop shipping unmeasured (until B1's annotators
