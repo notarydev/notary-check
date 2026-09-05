@@ -134,7 +134,22 @@ Verify can only speak when there is something to check against, and today
 there usually is not. It is why the source-gap ask and Act's coverage matter
 more than any additional detector.
 
-### E-MEAS — Findings are still not persisted (was S4)
+### ~~E-MEAS~~ — FIXED 2026-09-05. Findings and gaps are now persisted
+
+Migration `0017` adds `finding` and `gap`. Written on every `/detect` call,
+before Act runs so an Act failure cannot cost the measurement. Separate tables
+deliberately — a gap is not a weak finding, and one careless SELECT should not
+turn "we had nothing to check" into a defect.
+
+**Nothing reads these tables yet.** The fire-rate query they exist for still has
+to be written and run:
+
+```sql
+SELECT detector, count(*) FROM finding GROUP BY detector;
+SELECT missing, count(*) FROM gap GROUP BY missing;
+```
+
+#### Original: findings were never persisted (was S4)
 
 There is no `finding` table, so nothing measures which detectors ever fire in
 production. After 91 reviews we cannot say whether the detector bank earns its
@@ -309,7 +324,7 @@ Small or blocked items, kept here so nothing open lives only in
 | | Item |
 |---|---|
 | **O6** | Profile Preferences copy was written and tested and never added to the onboarding page — a user has never seen it. |
-| **D4** | `docs/build/engine-brief-for-external-review.md` predates migrations `0011`–`0016`, the audit fixes and Clerk. It is the document external reviewers read, so it is misleading exactly where it costs most. |
+| ~~**D4**~~ | **Handled 2026-09-05** — the brief now opens with a stale banner pointing at `MECHANISM.md`. Kept rather than rewritten, because past reviews cite its sections. |
 | **E6** | Retention — same item as **B4** above. Kept as a separate engine-queue entry in `whats-left.md`; do not treat as two pieces of work. |
 | **E7** | Decouple Verify and Act properly. Needs the revision step and a channel to update the card after first render; neither is optional. **Do not do this for latency** — E-LAT is the latency fix and dominates it. |
 | **E8** | Reconcile. Depends on E7 *and* on the invocation pivot being decided. Not before. |

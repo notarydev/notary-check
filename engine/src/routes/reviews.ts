@@ -612,6 +612,35 @@ export function reviewsRouter(database: pg.Pool): Router {
       priorContext: body.prior_context,
     });
 
+    // Persist what the bank found, BEFORE Act runs.
+    //
+    // Ordering is deliberate: Act is a model call that can fail, and a finding
+    // is a fact that was already established. Recording it after Act would mean
+    // an Act failure quietly cost us the measurement too.
+    //
+    // Never throws. This is a ledger — losing a row must not turn a completed
+    // detection into an error for the user.
+    try {
+      for (const f of detection.findings) {
+        await database.query(
+          `INSERT INTO finding
+             (review_id, claim_ref, detector, detector_version, type, owner,
+              input_provenance, boundary_text, field_deltas, basis, rank)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [reviewId, f.claimId ?? null, f.detector, f.detectorVersion, f.type, f.owner,
+           f.inputProvenance, f.boundaryText, JSON.stringify(f.fieldDeltas), JSON.stringify(f.basis), f.rank],
+        );
+      }
+      for (const g of detection.gaps) {
+        await database.query(
+          "INSERT INTO gap (review_id, claim_ref, detector, missing, unblocks) VALUES ($1,$2,$3,$4,$5)",
+          [reviewId, g.claimId ?? null, g.detector, g.missing, g.unblocks],
+        );
+      }
+    } catch (err) {
+      logEvent({ event: "finding_persist_failed", organization_id: orgId, review_id: reviewId, error_cause: String(err) });
+    }
+
     let moveResult: Awaited<ReturnType<typeof runMovesForInvocation>> | undefined;
     if (entitlement.allowed) {
       // Org feature flag, read before any client work — a disabled org costs
