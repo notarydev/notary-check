@@ -35,3 +35,12 @@ changed. Existing latest-review.ts changes and repro-pacific.ts belong to the
 owner and remain outside this commit. Local backup is preserved and ignored.
 Full product validation, E10, lifecycle triage, E11/E17 and credential chores
 remain in the roadmap. Structural checks cannot prove approval or correctness.
+
+## Remote rollout — PR 1
+
+Branch pushed and [PR #1](https://github.com/notarydev/notary-check/pull/1) opened.
+The first [CI run](https://github.com/notarydev/notary-check/actions/runs/33989012149)
+passed hygiene, engine tests/typecheck, server tests/typecheck and card build, then
+failed because the final summary used `rg`, unavailable on the runner. Replaced
+that summary with portable `grep -E`; repeat CI is required on this correction.
+No production deployment or merge occurred.

@@ -46,5 +46,5 @@ run_check engine-typecheck npm --prefix engine run typecheck
 run_check server-test npm --prefix server test
 run_check server-typecheck npm --prefix server run typecheck
 run_check ui-build npm --prefix ui run build
-rg '^# (tests|pass|fail|skipped)' "$log_dir/engine-test.log" "$log_dir/server-test.log"
+grep -E '^# (tests|pass|fail|skipped)' "$log_dir/engine-test.log" "$log_dir/server-test.log"
 printf 'Mode: %s. Local logs: %s\n' "$mode" "$log_dir"
