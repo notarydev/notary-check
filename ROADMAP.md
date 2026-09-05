@@ -86,7 +86,39 @@ check_answer` with a `</>` glyph — the raw MCP tool name. It reads
 as debug output, not a product. Needs the Notary mark (three connected circles,
 on the marketing site) and a human label.
 
-### E-EXTRACT — one claim-extraction call returned unparseable JSON
+### ~~E-EXTRACT~~ — FIXED. This was the real blocker, not a footnote.
+
+Recorded first as "low frequency". It then caused the ONLY thing the user saw
+on two consecutive real tests: `could not verify this against the supplied
+evidence` on a fully-sourced answer, with nothing downstream running at all.
+
+```
+claim_extraction_parse_failure: model output is not a valid JSON object
+claims_extracted  latency_ms: 17698  error_cause: model_output_unparseable
+```
+
+17.7 seconds of generation means it ran to the `max_tokens` ceiling and was cut
+off mid-object. One clipped claim discarded every claim that had arrived whole,
+so no claims were submitted, no evidence was checked, and the speed work,
+E-LOC and the moves fix never got a chance to run.
+
+`CLAIM_EXTRACTION_MAX_TOKENS` had already been raised once (1024 → 4096) for
+this exact failure. **Raising it again is a treadmill** — there is always a
+longer answer. The defect is losing N claims because the (N+1)th was clipped.
+
+Now salvaged: a truncated response yields every syntactically complete claim in
+it. Partial objects are DROPPED, never repaired or guessed at, and salvaged
+claims face the same schema and the same verbatim-in-the-answer check as any
+other. Genuine garbage is still a parse failure.
+
+**Still open, and worth deciding:** whether to cap the claim count in the
+prompt. ~16 claims from one answer is what produces both the truncation and the
+cartesian product with sources. A cap would bound both. It is a coverage
+tradeoff, so it is a product call rather than a bug fix.
+
+#### Original note
+
+One claim-extraction call returned unparseable JSON
 
 `claim_extraction_parse_failure: model output is not a valid JSON object`, once
 in the same run. Low frequency, but it silently drops a whole batch of claims

@@ -563,8 +563,86 @@ function toExtractedClaim(ordinal: number, item: ParsedClaimOutput): ExtractedCl
  * model-invented claim must not travel downstream — but the count of dropped
  * claims comes back with the result rather than living only in a log line.
  */
+/**
+ * Recovers the complete claims from a response that was cut off mid-JSON.
+ *
+ * WHY THIS EXISTS. max_tokens is a ceiling, and a long answer with many claims
+ * hits it. When it does, the model's last object is truncated, the whole
+ * document fails to parse, and EVERY claim is thrown away — including the
+ * fifteen that arrived intact. Observed live twice: a cloud-pricing answer
+ * generated for 17.7 seconds, hit the ceiling, and produced
+ * `model_output_unparseable`. The user saw "could not verify this against the
+ * supplied evidence" on a fully-sourced answer, and nothing downstream ran at
+ * all.
+ *
+ * The ceiling had already been raised once (1024 -> 4096) for exactly this
+ * failure. Raising it again is a treadmill: there is always a longer answer.
+ * Losing all N claims because the (N+1)th was clipped is the actual defect.
+ *
+ * WHAT IT DOES NOT DO. It does not repair, guess at, or complete a partial
+ * object — a half-written claim is discarded. It only scans for objects that
+ * are already syntactically whole and takes those. Every recovered claim still
+ * goes through the same zod schema and the same verbatim check against the
+ * answer as any other, so nothing reaches the pipeline on a weaker footing
+ * than normal.
+ */
+function salvageTruncatedClaims(rawAnswer: string): unknown | undefined {
+  const start = rawAnswer.indexOf('"claims"');
+  if (start === -1) return undefined;
+  const arrayStart = rawAnswer.indexOf("[", start);
+  if (arrayStart === -1) return undefined;
+
+  // Walk the array counting braces, respecting strings and escapes, and keep
+  // every object that closed cleanly.
+  const objects: string[] = [];
+  let depth = 0;
+  let objStart = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = arrayStart + 1; i < rawAnswer.length; i++) {
+    const ch = rawAnswer[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+
+    if (ch === "{") {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && objStart !== -1) {
+        objects.push(rawAnswer.slice(objStart, i + 1));
+        objStart = -1;
+      }
+    } else if (ch === "]" && depth === 0) {
+      break;
+    }
+  }
+
+  if (objects.length === 0) return undefined;
+
+  const claims: unknown[] = [];
+  for (const text of objects) {
+    try {
+      claims.push(JSON.parse(text));
+    } catch {
+      // A malformed object among well-formed ones: skip it, keep the rest.
+    }
+  }
+  if (claims.length === 0) return undefined;
+
+  logEvent({
+    event: "claim_extraction_salvaged",
+    error_cause: "output truncated at max_tokens; recovered the complete claims",
+    claim_count: claims.length,
+  });
+  return { claims };
+}
+
 export function parseExtractionOutput(rawAnswer: string, answerText: string): ExtractClaimsResult {
-  const json = extractJsonObject(rawAnswer);
+  const json = extractJsonObject(rawAnswer) ?? salvageTruncatedClaims(rawAnswer);
   if (json === undefined) {
     logEvent({ event: "claim_extraction_parse_failure", error_cause: "model output is not a valid JSON object" });
     return { ok: false, reason: "model_output_unparseable", detail: "model output is not a valid JSON object" };

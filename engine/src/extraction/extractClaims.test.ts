@@ -369,3 +369,50 @@ test("extraction asks for a ceiling far above the client default", async () => {
     "must clear the largest output observed on real data (3027 tokens), or truncation returns",
   );
 });
+
+// --- truncation salvage ---------------------------------------------------
+//
+// Live failure this guards: a long answer generated for 17.7 seconds, hit
+// max_tokens mid-object, and every claim was discarded. The user saw "could not
+// verify this against the supplied evidence" on a fully-sourced answer.
+
+const TRUNCATED_ANSWER = "AWS egress costs $0.09/GB. Azure egress costs $0.087/GB. GCP egress costs $0.12/GB.";
+
+test("a response cut off mid-object still yields the claims that arrived whole", () => {
+  const raw = `{"claims":[
+    {"reasoning":"r","text":"AWS egress costs $0.09/GB.","materiality":true,"claim_fields":{}},
+    {"reasoning":"r","text":"Azure egress costs $0.087/GB.","materiality":true,"claim_fields":{}},
+    {"reasoning":"r","text":"GCP egress costs $0.12/GB.","materiality":true,"claim_fi`;
+  const result = parseExtractionOutput(raw, TRUNCATED_ANSWER);
+  assert.equal(result.ok, true, "two complete claims must not be lost because a third was clipped");
+  if (!result.ok) return;
+  assert.equal(result.claims.length, 2);
+  assert.deepEqual(result.claims.map((c) => c.text), [
+    "AWS egress costs $0.09/GB.",
+    "Azure egress costs $0.087/GB.",
+  ]);
+});
+
+test("salvage never invents or completes a partial claim", () => {
+  // The clipped third object must be DROPPED, not guessed at.
+  const raw = `{"claims":[{"reasoning":"r","text":"AWS egress costs $0.09/GB.","materiality":true,"claim_fields":{}},{"text":"Azu`;
+  const result = parseExtractionOutput(raw, TRUNCATED_ANSWER);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.claims.length, 1, "only the whole object survives");
+});
+
+test("salvaged claims still face the verbatim check", () => {
+  // A recovered claim gets no easier a ride than a normally-parsed one.
+  const raw = `{"claims":[{"reasoning":"r","text":"Oracle egress costs $0.05/GB.","materiality":true,"claim_fields":{}},{"reasoning":"r","text":"AWS egress costs $0.09/GB.","materiality":true,"claim_fields":{}},{"text":"trunc`;
+  const result = parseExtractionOutput(raw, TRUNCATED_ANSWER);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.claims.map((c) => c.text), ["AWS egress costs $0.09/GB."],
+    "a claim not present in the answer is dropped whether it was salvaged or not");
+});
+
+test("genuine garbage is still a parse failure, not a salvage", () => {
+  const result = parseExtractionOutput("I'm sorry, I can't do that.", TRUNCATED_ANSWER);
+  assert.equal(result.ok, false);
+});
