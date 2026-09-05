@@ -49,16 +49,19 @@
 <div class="runs" id="runs"></div>
 <div id="panel"><div class="card"><div class="note" id="loading">Loading…</div></div></div>
 <script>
-let DATA=[], cur=null, st='All', q='';
-const PILL={ok:['p-ok','CORRECT'],wrong:['p-wrong','WRONG'],mid:['p-mid',"COULDN'T CHECK"],gen:['p-gen','GENERIC'],none:['p-none','NONE']};
-const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const pill=k=>{const c=(PILL[k]||PILL.none);return `<span class="pill ${c[0]}">${c[1]}</span>`};
-const statePill=s=>`<span class="pillstate st-${s}">${s}</span>`;
-function renderButtons(){
- const keep=cur&&DATA.some(r=>r.rid===cur);
- if(!keep) cur = DATA.length? DATA[DATA.length-1].rid : null;
- document.getElementById('runs').innerHTML=DATA.map(r=>`<button class="runbtn ${r.rid===cur?'on':''}" onclick="pick('${r.rid}')">${esc(r.name||r.rid)}<small>${esc(r.created)}${r.judge_calls?' · '+r.judge_calls+' judge':''}</small></button>`).join('');
-}
+ let DATA=[], cur=null, st='All', q='', VISIBLE=5;
+ const PILL={ok:['p-ok','CORRECT'],wrong:['p-wrong','WRONG'],mid:['p-mid',"COULDN'T CHECK"],gen:['p-gen','GENERIC'],none:['p-none','NONE']};
+ const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+ const pill=k=>{const c=(PILL[k]||PILL.none);return `<span class="pill ${c[0]}">${c[1]}</span>`};
+ const statePill=s=>`<span class="pillstate st-${s}">${s}</span>`;
+ function shownRuns(){return DATA.slice(-VISIBLE)}
+ function renderButtons(){
+  const shown=shownRuns();
+  const keep=cur&&shown.some(r=>r.rid===cur);
+  if(!keep) cur = shown.length? shown[shown.length-1].rid : null;
+  document.getElementById('runs').innerHTML=shown.map(r=>`<button class="runbtn ${r.rid===cur?'on':''}" onclick="pick('${r.rid}')">${esc(r.name||r.rid)}<small>${esc(r.created)}${r.judge_calls?' · '+r.judge_calls+' judge':''}</small></button>`).join('')
+   +`<button class="runbtn" style="font-size:12px;color:var(--mut)" onclick="VISIBLE=VISIBLE===5?40:5;renderButtons()">${VISIBLE===5?'show all':'show last 5'}</button>`;
+ }
 function pick(rid){cur=rid;try{history.replaceState(null,'','#run='+rid)}catch(e){};renderButtons();renderPanel()}
 function flowHTML(r){
  if(r.wall==null) return '<div class="flow"><div class="seg s-fin" style="width:100%"><span>no timing recorded</span></div></div>';
