@@ -139,35 +139,33 @@ too. See F3 for the prompts written to test them.
 Picked up mid-stream on 2026-09-04. None of it is blocked on a decision; it is
 blocked on finishing.
 
-### F1 — main is AHEAD of production, and this list goes stale — check it, don't trust it
+### F1 — ~~main is ahead of production~~ CLOSED 2026-09-05
+
+Everything on `main` is deployed: `:notary-check-api.engine.39` /
+`:notary-check-mcp.server.40` (deployments 16 and 24). No migration was needed.
+
+Verified against production, not against the deploy's exit code:
+
+- version numbers incremented (a failed Lightsail deploy rolls back silently)
+- the detector bank and Act both answer live
+- **the invocation path now persists** — `act_invocation` rows with
+  `claim_id IS NULL` went 0 → 2, with 3 moves attached. Every move shown to a
+  user before this deploy was unrecorded.
+- `POST /v1/move-events` returns 401 unauthenticated, so it is routed and
+  auth-gated rather than missing.
+
+`act_move_event` is still 0 rows, which is correct: events come from the card,
+and the smoke test renders no card. **The first real conversation through the
+connector should produce them — that is the thing to check next, and if it
+stays 0 the card wiring is wrong even though the endpoint works.**
+
+Re-check this any time with:
 
 ```bash
-# what is actually live
 aws lightsail get-container-services --region us-east-2 \
   --query 'containerServices[].{n:containerServiceName,v:currentDeployment.version,img:currentDeployment.containers.*.image}'
-# what is on main but not in that image (3522d31 built engine.37 / server.38)
-git log --oneline 3522d31..HEAD
+git log --oneline <commit-that-built-the-live-image>..HEAD
 ```
-
-As of 2026-09-04 the live images are `:notary-check-api.engine.37` and
-`:notary-check-mcp.server.38` (deployments 15 and 23). **They DO include** the
-Verify/Act rename, migration `0016`, claim-level source gaps, Act's restored
-context (E5a) and `inputProvenance`.
-
-**They do NOT include** anything committed after `3522d31` — at time of writing
-six commits, most importantly:
-
-| | Not live |
-|---|---|
-| `13a9144` | **Move interaction telemetry.** The `record_move_event` tool, `POST /v1/move-events`, and the invocation path persisting at all. Until this ships `act_move_event` stays empty and every move shown to a user is unrecorded. |
-| `61d79c7` | Retired vocabulary in `ui/src/index.css` (cosmetic; rides along with any build). |
-| others | Docs and tests only — no runtime effect. |
-
-No migration needed. `./scripts/deploy.sh both` is the whole job.
-
-> This entry was itself stale within a day of being written — it said "two
-> commits" while six had landed. That is why it now leads with the commands
-> rather than a list. **Run them; do not trust the prose.**
 
 ### F2 — The deploy gate fails and has not been reproduced
 

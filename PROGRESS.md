@@ -13,7 +13,7 @@
 
 Found while wiring the boundary check: **`npm test` never ran `detect/` or `middleware/`** — the entire Verify detector bank had never executed in the suite. Fixed with a glob. Engine **439 tests / 435 pass / 0 fail** (was 391 — 103 were silently skipping), server **10/10**, all against real Postgres.
 
-**Not fully shipped — see `ROADMAP.md` § In flight.** Move telemetry (`13a9144`) is committed and NOT deployed, the deploy's test gate is failing unreproduced, and the live connector test run is underway. Below is what DID ship.
+**Fully shipped 2026-09-05**: `:notary-check-api.engine.39` / `:notary-check-mcp.server.40` (deployments 16 and 24). Nothing on `main` is undeployed. Move telemetry is live — the invocation path now persists (`act_invocation` rows with no claim_id went 0 → 2) and `POST /v1/move-events` is routed and auth-gated. `act_move_event` fills on the first real conversation, not on a smoke test.
 
 **Deployed 2026-09-04.** `:notary-check-api.engine.37` (deployment 15) and `:notary-check-mcp.server.38` (deployment 23), both RUNNING. Migration `0016` applied to production after a verified 223KB backup; `act_invocation`/`act_move`/`act_move_event` present, the `advance_*` tables gone. Live smoke: a real contradiction returns `CONTRADICTED` with 1 move and cost accruing; the zero-claim/zero-source case returns 2 moves; self-contradiction returns 1 finding + 2 source gaps.
 
