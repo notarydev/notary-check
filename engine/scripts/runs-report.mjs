@@ -82,12 +82,15 @@ async function loadRuns() {
     // the one legacy baseline. Capped at the 40 most recent.
     const { rows } = await pool.query(`
       SELECT r.id::text rid, to_char(r.created_at,'YYYY-MM-DD HH24:MI') created,
+        EXTRACT(EPOCH FROM r.created_at)::int ts, r.status status, o.name org, o.act_moves_enabled act_enabled,
         EXTRACT(EPOCH FROM (r.completed_at - r.created_at))::numeric wall_s,
-        (SELECT json_agg(json_build_object('ordinal',c.ordinal,'text',c.text,'state',c.state,'lifecycle',c.lifecycle_state,'detail',c.lifecycle_detail) ORDER BY c.ordinal) FROM claim c WHERE c.review_id=r.id) claims,
+        (SELECT json_agg(json_build_object('ordinal',c.ordinal,'text',c.text,'state',c.state,'lifecycle',c.lifecycle_state,'detail',c.lifecycle_detail,
+                                           'fields',c.claim_fields,'rejected',c.rejected_candidates) ORDER BY c.ordinal) FROM claim c WHERE c.review_id=r.id) claims,
         (SELECT json_agg(json_build_object('url',coalesce(e.canonical_url,e.submitted_url),'provenance',e.text_provenance,'len',length(e.resolved_text),'has_excerpt',(e.caller_excerpt IS NOT NULL),'parse',e.parse_status)) FROM evidence e WHERE e.review_id=r.id) evidence,
         (SELECT json_agg(json_build_object('type',u.event_type,'in',u.input_tokens,'out',u.output_tokens,'cost_mc',u.estimated_cost_millicents) ORDER BY u.created_at) FROM usage_event u WHERE u.review_id=r.id) usage,
         (SELECT EXTRACT(EPOCH FROM max(u.created_at)-r.created_at)*1000::int FROM usage_event u WHERE u.review_id=r.id AND u.event_type='judge_call') jl_ms,
         (SELECT json_agg(json_build_object('move',m.move,'label',m.short_label,'prompt',m.prompt) ORDER BY m.ordinal) FROM act_invocation i JOIN act_move m ON m.invocation_id=i.id WHERE i.review_id=r.id) moves,
+        (SELECT count(*) FROM act_invocation i WHERE i.review_id=r.id) act_invocations,
         (SELECT json_agg(json_build_object('detector',f.detector,'type',f.type,'text',f.boundary_text)) FROM finding f WHERE f.review_id=r.id) findings,
         (SELECT json_agg(json_build_object('detector',g.detector,'missing',g.missing,'unblocks',g.unblocks)) FROM gap g WHERE g.review_id=r.id) gaps
       FROM (
@@ -98,7 +101,32 @@ async function loadRuns() {
         LIMIT 40
       ) recent
       JOIN review r ON r.id = recent.id
+      LEFT JOIN organization o ON o.id = r.organization_id
       ORDER BY r.created_at ASC`);
+    // Second-trip detection: consecutive reviews from the same org within 25
+    // minutes are one conversational chain (Claude re-invokes Notary after a
+    // finding/ask). ordinal>0 = a second+ trip; same sources then hit the cache.
+    const CHAIN_GAP_S = 25 * 60;
+    {
+      const byOrg = new Map(); // org -> {lastTs, chain}
+      for (const row of rows) {
+        const key = row.org ?? row.organization_id ?? "?";
+        const prev = byOrg.get(key);
+        const same = prev !== undefined && row.ts - prev.lastTs <= CHAIN_GAP_S;
+        if (same) {
+          prev.lastTs = row.ts;
+          prev.chain += 1;
+          row._chain = { ordinal: prev.chain, len: 0 };
+        } else {
+          byOrg.set(key, { lastTs: row.ts, chain: 0 });
+          row._chain = { ordinal: 0, len: 0 };
+        }
+      }
+      // chain length = 1 + trailing zeros count backwards per org
+      const last = new Map();
+      for (let i = rows.length - 1; i >= 0; i--) last.set(rows[i].org ?? rows[i].organization_id ?? "?", rows[i]._chain.ordinal);
+      for (const row of rows) row._chain.len = (last.get(row.org ?? row.organization_id ?? "?") ?? 0) + 1;
+    }
     return rows.map((r) => {
       const rid = r.rid.slice(0, 8);
       const judge = (r.usage ?? []).filter((u) => u.type === "judge_call");
@@ -106,13 +134,28 @@ async function loadRuns() {
       const a = ASSESSMENTS[rid] ?? NEUTRAL;
       const wall = r.wall_s === null ? null : Number(r.wall_s);
       const jl = r.jl_ms === null ? null : Number(r.jl_ms);
+      const claims = (r.claims ?? []).map((c) => {
+        let asserted = 0, unestablished = [];
+        if (c.fields && typeof c.fields === "object") {
+          asserted = Object.keys(c.fields).length;
+          const rejected = Array.isArray(c.rejected) ? c.rejected : [];
+          const mism = new Set();
+          for (const rc of rejected) for (const f of rc.mismatchedFields ?? []) mism.add(f);
+          if (c.lifecycle === "not_checkable" && c.detail) unestablished.push(c.detail);
+          unestablished = [...mism];
+        }
+        return { ordinal: c.ordinal, text: c.text, state: c.state, lifecycle: c.lifecycle,
+                 detail: c.detail, asserted, rejectedOn: unestablished };
+      });
       return {
-        rid, created: r.created, wall,
+        rid, created: r.created, wall, org: r.org ?? null, actEnabled: r.act_enabled === true,
+        chain: r._chain ?? null,
         verify_ms: jl ?? (wall !== null ? Math.round(wall * 1000) : null),
         finalize_ms: wall !== null && jl !== null ? Math.round(wall * 1000) - jl : 0,
         extract: EXTRACT_KNOWN[rid] ?? null,
-        claims: r.claims ?? [], evidence: r.evidence ?? [], usage: r.usage ?? [],
+        claims, evidence: r.evidence ?? [], usage: r.usage ?? [],
         moves: r.moves ?? [], findings: r.findings ?? [], gaps: r.gaps ?? [],
+        act_invocations: r.act_invocations ?? 0,
         judge_calls: judge.length, cost_cents: Math.round(costMc) / 1000,
         ...a, name: a.name ?? `${rid} · ${r.created}`,
       };
