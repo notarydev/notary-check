@@ -187,11 +187,11 @@ have changed, or may never re-fetch. That reasoning is sound for provenance and
 wrong for verification, because verification needs context the excerpt does not
 carry.
 
-**Proposed fix, NOT yet made — it changes what counts as evidence:** when a URL
-is present, fetch it and verify against the document, keeping the excerpt as a
-locator hint and as the fallback when the fetch fails or the text no longer
-contains it. That uses both rather than reverting the earlier decision. Fetches
-measured 10–250ms, so the latency cost is small.
+**Proposed fix — NOW IMPLEMENTED AND DEPLOYED (2026-09-05, engine.52).** When a URL
+is present, review-time resolution fetches the page and verifies against it,
+keeping the excerpt as `evidence.caller_excerpt` and as the fallback when the
+fetch fails or yields no text; a caller excerpt with no URL is unchanged.
+Fetches measure 10–250ms, so the latency cost is small.
 **Full design, sequencing, and the second two fixes (the scope judge contract
 and normalization routing): [`docs/guide/proposals/evidence-index-and-retrieval.md`](docs/guide/proposals/evidence-index-and-retrieval.md).**
 

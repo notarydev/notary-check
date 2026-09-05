@@ -151,8 +151,8 @@ one — see `docs/build/speed-implementation-plan.md`.
 ## 2026-09-05, later same day — measured in production, and a correction
 
 Prod moved again within hours of the engine.48 deploy: live at last check is
-`:notary-check-api.engine.51` (deployment 24) / `:notary-check-mcp.server.49`
-(deployment 27), migrations through `0019`. 0019 re-keys the observation cache
+`:notary-check-api.engine.52` (deployment 25) / `:notary-check-mcp.server.49`
+(deployment 27), migrations through `0020`. 0019 re-keys the observation cache
 on `canonical_text_hash` so it survives Claude's fetch-and-recheck loop
 (re-registering the same URL creates a new `evidence_id`, not a new question);
 0018 had been deployed without `--migrate` and silently no-oped until 0019
@@ -629,3 +629,24 @@ Everything in this repo's earlier snapshots about `server/`'s live status was in
 3. Update `engine/README.md`'s two stale "what does NOT exist" claims (OAuth, metrics/alerting) — both are now false.
 4. ~~Confirm whether `DD_API_KEY` is actually set on Lightsail~~ — done 2026-09-02, confirmed set on `notary-check-api`. Remaining open question: whether Datadog is actually ingesting the shipped logs (not checked from this repo).
 5. Treat the 20 draft eval cases' independent annotation and adjudication as the real gate before any "validated" claim is made publicly — this is the one gap that most directly matters for the honesty principle Part I of the Canonical Product Definition holds the whole product to.
+
+## 2026-09-05, deploy — steps 0–2 live (engine.52)
+
+`engine.52` (deployment 25), migrations through `0020`, verified with
+`prod-smoke.ts` on both cases (exact + paraphrase → CONTRADICTED, lifecycle
+completed, cost accruing):
+
+- **Step 0 (0020):** `claim.claim_fields` and `claim.rejected_candidates`
+  persisted so a claim's state is explainable from the DB without a replay.
+- **Step 1 (E-EVIDENCE):** a row registered with both a caller excerpt and a
+  URL is now resolved against the fetched page; the excerpt is retained as
+  `evidence.caller_excerpt` and used only when the page is unreachable or
+  unparseable (provenance stays `caller_supplied`). Fixes the Pacific
+  false-negative class (900530a5).
+- **Step 2:** an unanchored judge `present` is recorded as an abstained
+  required field (`required_field_unresolved`), not a locator failure; the
+  scope criterion forbids fused readings; judge prompt v4.
+
+Not yet live: a real connector conversation through the new intake (the smoke
+seeds evidence directly), and the Step-3 normalization routing / retrieval of
+the proposal.
