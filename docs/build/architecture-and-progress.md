@@ -667,3 +667,11 @@ the proposal.
   (Clerk user `user_3IuXV…`, org `88a5e76d`); the deployed
   `CLERK_SECRET_KEY` was found invalid (stale) — local `server/.env` holds a
   valid one; rotation tracked as an operator chore in ROADMAP.
+
+## 2026-09-05, later deploys — engine.53 → engine.55 (E13, E9, E10-mini)
+
+- **engine.53** (dep 26): E13 — bounded judge-wave concurrency (`mapWithLimit`, cap 4). Was `Promise.all(rows)` (unbounded).
+- **engine.54** (dep 27): E9 — real HTML parsing (`parse5`) replaces regex `stripHtml`: character references decoded (fixes `&lt;style&gt;` leakage seen on a CIA page), table rows emitted as `cell | cell | cell` so a tier's rate stays adjacent.
+- **engine.55** (dep 28): E10-mini — precision hedges (approximately/about/roughly/~) no longer extracted as `modality` (they fabricated fields that sank verbatim matches; seen live on Earth-diameter runs).
+
+Prod smoke (exact + paraphrase) green after each. **Pricing-class finding (review `79202c0c`, 16:36):** 8/8 claims still `required_field_unresolved` despite figures being verbatim on fetched pages — `scope` is being stuffed with full qualifier clauses ("first 100 GB/month, free, all customers") and `metric` uses paraphrases the page never states ("egress data volume" vs "data transfer out to the internet"). Both are extraction-discipline bugs (E10 slice 2) that the table-intake work (E9b) also touches.

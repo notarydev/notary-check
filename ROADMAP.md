@@ -24,7 +24,7 @@ facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code layout is in
 
 Notary Check works. The engine verifies claims against evidence deterministically,
 Act suggests next moves, the card renders, Clerk OAuth is live, and the whole
-thing runs in production on Lightsail (engine.52 / server.49 as of 2026-09-05,
+thing runs in production on Lightsail (engine.55 / server.49 as of 2026-09-05,
 455 engine tests / 451 passing per the latest commits' runs).
 
 **Speed is solved; correctness is not.** The E-LAT cost/latency fixes are
@@ -60,7 +60,7 @@ Detailed arguments and statuses live in `docs/build/whats-left.md`
 | # | Item | Why | Status |
 |---|---|---|---|
 | ~~**E9**~~ | Real HTML parser + entity decode + table-row intake (replace regex `stripHtml`) | parse5-based `htmlToText`; entity decode + table-row text. | ✅ DONE — live engine.54 |
-| **E10** | Atomic claim decomposition + non-atom quality gate | Hedge-as-modality fixed (E10-mini, live engine.55). Full atom split + non-atom gate still open. | partial |
+| **E10** | Atomic claim decomposition + non-atom quality gate | E10-mini (hedges) live engine.55. **Slice 2 (open): scope must be a short canonical noun, not a qualifier clause; governed metric synonyms** — pricing run `79202c0c` is 8/8 couldn't-check with figures verbatim. | partial |
 | **E11** | Core vs qualifier semantics (decision needed) | entity+metric+value match must not be annihilated by an unanchorable tier/scope qualifier. | needs owner decision |
 | **E12** | Derived-claim calculator | "$913 for 10TB" is recompute-or-say-derived, never "UNSUPPORTED". | not started |
 | ~~**E13**~~ | Bounded concurrency on the judge wave (and evidence fetch) | `Promise.all(rows)` is unbounded. | ✅ DONE — `mapWithLimit`, live engine.53 |
@@ -73,9 +73,11 @@ Detailed arguments and statuses live in `docs/build/whats-left.md`
 **Order:** E9 → E13 (small, de-risks) → E18 harness → E10 → E12 → E15 → E11/E17 (owner decisions) → E14 → E16.
 
 ### The two immediate operator chores (before more test runs)
-- Rotate the invalid `CLERK_SECRET_KEY` in the deployed server env and the
-  invalid `DEEPSEEK_API_KEY` in local `engine/.env`; close F4 (live keys in
-  `.claude/settings.local.json`).
+- Rotate the invalid `CLERK_SECRET_KEY` in the deployed server env (it is
+  `clerk_key_invalid`) and the invalid `DEEPSEEK_API_KEY` in local
+  `engine/.env`; close F4 (live keys in `.claude/settings.local.json`).
+- Publish the Clerk **Account portal** (`clerk.getnotary.ai/sign-in` 404s) or
+  OAuth browser sign-in stays blocked. Details: OPERATIONS.md § Clerk.
 - Decide E11/E17 — the two decisions every other correctness/latency item
   depends on.
 

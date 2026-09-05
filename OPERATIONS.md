@@ -171,3 +171,24 @@ tests fail with `ECONNREFUSED` and nothing else explains why.
 
 `engine/.env.example` and `server/.env.example` list every variable each service
 reads. Both are current.
+
+## 2026-09-05 ops addendum — Clerk/identity, local tooling, current prod (for the next agent)
+
+### Current prod (verified 2026-09-05 against Lightsail)
+- Engine: `:notary-check-api.engine.55` (deployment 28) — migrations through `0020`.
+- Server/MCP: `:notary-check-mcp.server.49` (deployment 27). No server behaviour change deployed after it; `server/src/engineClient.ts` has only comment/doc edits on main since.
+- `main` is ahead of prod only by: server comments, local tools under `engine/scripts/` (not in the runtime image path used in prod review flows), and unlanded E17.
+
+### Clerk — how identity actually works (painfully learned 2026-09-05)
+- **Instance/domain:** `clerk.getnotary.ai` (publishable key base64-decodes to this). Auth = Clerk is the OAuth **authorization server**; `server/` is the MCP **resource server** and serves `/.well-known/oauth-authorization-server` + `oauth-protected-resource` via `@clerk/mcp-tools/express`.
+- **Keys (never commit values):** `CLERK_PUBLISHABLE_KEY` (public) and `CLERK_SECRET_KEY` are in local `server/.env` (VALID — used for all admin API calls) and in the deployed `notary-check-mcp` container env (**the deployed CLERK_SECRET_KEY is INVALID/stale** — Clerk returns `clerk_key_invalid`; rotate it in the container env and redeploy the server before relying on refresh flows).
+- **OAuth application for Claude:** name "Claude (Notary connector)", confidential, `client_id = sI6NaxPkmPcFC49O`, callback `https://claude.ai/api/mcp/auth_callback`, scopes `openid email profile public_metadata private_metadata offline_access`. The secret was ROTATED 2026-09-05 (old one invalidated); current value is only in this session's output — re-rotate via `POST /v1/oauth_applications/{id}/rotate_secret` with the valid key if needed. Do NOT register Claude with the publishable key as client_id (`invalid_client`) and do NOT create a second public OAuth app with the wrong scope set (`invalid_scope`).
+- **Account portal is NOT published** — `clerk.getnotary.ai/sign-in` and `/sign-up` 404, so a browser sign-in inside the OAuth flow fails with an `ofid_…` reference until the dashboard owner publishes the portal (Clerk Dashboard → Account portal). Only dashboard access can fix that; no API.
+- **Orgs (engine DB `organization`):** `1cde4d65…` Notary (production, no clerk link, used by prod smoke), `898a0428…` "Notary user user_3Ip9iXL" (primary tester), `88a5e76d…` "Notary user user_3IuXVpb" = second identity `hms7tab@gmail.com` (Clerk user `user_3IuXV…`, created 2026-09-05 via admin API; temp password shown once, not stored in repo). New orgs ship `act_moves_enabled=false` (Act dark) — enable via `UPDATE organization SET act_moves_enabled=true WHERE id='…'` when a tester should see moves. Org → API keys auto-provision on first tool call via `POST /v1/internal/resolve-organization` (`INTERNAL_SERVICE_SECRET` on the server).
+- **Admin API pattern** (valid secret from `server/.env`): users, invitations, oauth_applications, rotate_secret all via `api.clerk.com` with `Authorization: Bearer <sk>`.
+
+### Local tooling a new agent should know
+- **runs-report dashboard:** `cd engine && node scripts/runs-report.mjs` (or leave running) → http://localhost:8123. Local, read-only, auto-polls every 20s; shows the last 5 runs by default (toggle to all); per-run: flow bar (extract/verify/finalise), Verify & Track-2 verdict cards, Comms-with-Claude, second-trip, and full plumbing (claims incl persisted `claim_fields`/`rejected_candidates`, evidence provenance+lengths, usage, moves, findings/gaps). Restart after editing `runs-report.{mjs,html}`.
+- **Regression harness:** `cd engine && node scripts/measure-cant-check.mjs` — flags claims whose value is verbatim on a fetched source yet ended UNSUPPORTED/INDETERMINATE (E18 baseline: 98 candidates / 219 unresolved).
+- **Prod DB read pattern:** psql via `docker run --rm postgres:16-alpine psql …`; the prod URL from the Lightsail engine env carries `uselibpqcompat=true`, which libpq rejects — strip it first (see deploy.sh `libpq_url`). Everything is read-only from this repo unless you intend a deploy.
+- **Key hygiene still open:** rotate the invalid deployed `CLERK_SECRET_KEY`; fix the invalid local `engine/.env` `DEEPSEEK_API_KEY` (breaks the engine test gate when present); close F4 (live keys in `.claude/settings.local.json`).

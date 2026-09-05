@@ -165,3 +165,19 @@ instead of a clean UNSUPPORTED because claim hedges ("approximately"/"about")
 were extracted as modality. E10-mini fixes that (hedges → unasserted), so such
 runs now resolve cleanly. Act did not show because the new test org ships with
 `act_moves_enabled=false` — enabled on `88a5e76d` and the API-test org.
+
+**2026-09-05 — handoff record (moving this session's context to Claude).** Engine
+live engine.55 / server.49; migrations through `0020`; suite 474/466/0.
+Deployed today: E13 (bounded judge wave, engine.53), E9 (parse5 HTML +
+entity-decode + table-row text, engine.54), E10-mini (hedges ≠ modality,
+engine.55); Act enabled on test orgs `88a5e76d` + `f4c5d020`. Tools: local
+runs-report dashboard (`engine/scripts/runs-report.mjs`, http://localhost:8123,
+last-5 default, functional cards), E18 harness `measure-cant-check.mjs`
+(98 verbatim-but-not-supported / 219 unresolved). Docs synced: ROADMAP/
+whats-left/PROGRESS/arch; **OPERATIONS.md § Clerk & identity** added for the
+next agent (instance, OAuth app `sI6NaxPkmPcFC49O`, invalid deployed
+CLERK_SECRET_KEY, unpublished account portal, org↔Clerk-user map, second
+account hms7tab@gmail.com, admin-API patterns). Open: E10 slice 2 (scope
+clause bloat + metric synonyms — pricing run `79202c0c` 8/8 couldn't-check
+with verbatim figures), E9b table-row intake, E11/E17 decisions, E12/E14/E15/
+E16. E17 (early-return card) approved, not yet implemented.

@@ -263,7 +263,7 @@ structured units (cells per row) so later steps can match claim↔row instead
 of claim↔page-blob. Unit tests; keep the existing `stripHtml` test fixtures
 green.
 
-**E10 — Atomic claim decomposition + non-atom gate. PARTIAL (E10-mini live engine.55): precision hedges (approximately/about/~) no longer become modality — they were fabricating fields that sank verbatim matches (live 64bc7b05).** A sentence carries
+**E10 — Atomic claim decomposition + non-atom gate. PARTIAL. E10-mini live engine.55 (hedges ≠ modality; live 64bc7b05). Slice 2 (open, 2026-09-05): `scope` is being extracted as full qualifier clauses ("first 100 GB/month, free, all customers") and `metric` as paraphrases pages never state ("egress data volume" vs "data transfer out to the internet") — review `79202c0c` is 8/8 couldn't-check with figures verbatim on fetched pages. Scope must be a short canonical noun (tier/region/segment only); tier-band/free-allowance facts belong to their own fields; metric needs a governed synonym set.** A sentence carries
 several independently-checkable atoms; Verify should check atoms, and things
 that are not claims at all ("not 714 million", "the figure should be
 corrected to 670M", "AWS $913, Azure $882, GCP $1,137" as one row) must be
