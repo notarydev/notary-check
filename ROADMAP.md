@@ -38,6 +38,60 @@ engine — it is everything around the engine.
 wrong, slow, or expensive.** Everything here is measured from production
 rows, not inferred.
 
+### E-LOC — Verify cannot complete on real web pages. **This is the top bug.**
+
+Found 2026-09-05 on the first real multi-source test. Review `9cf6a001`:
+16 claims, 8 sources, all fetched cleanly (5k–28k chars of text each), and
+**every single claim came back `INDETERMINATE / checks_did_not_complete`**. The
+card said "Could not verify this against the supplied evidence." Nothing was
+verified, nothing was contradicted, 358 judge calls were paid for.
+
+**Cause, from the logs:** `judge_value_not_found_in_canonical_text:metric`, five
+times in the visible log window. The judge extracts a field value, and
+`evidence/locators.ts:146` then tries to find it in the retained text with
+
+```ts
+haystack.toLowerCase().indexOf(needle.toLowerCase())
+```
+
+Case-insensitive, and otherwise **byte-exact**. HTML-to-text extraction collapses
+whitespace, introduces non-breaking spaces, and breaks lines — so a value that is
+genuinely present fails to locate over a single whitespace difference. When it
+fails, `hadUnresolvedLocator` is set, `checksCompleted` becomes false, and the
+claim is forced to INDETERMINATE.
+
+**Why `metric` specifically:** entity, period and value are short or single-token
+and survive. `metric` is a multi-word phrase ("data egress pricing", "internet
+egress rate") and therefore spans whitespace — the field most likely to break on
+exactly this.
+
+**Candidate fix.** Locate against a whitespace-normalized projection of the
+canonical text while still returning offsets into the ORIGINAL text. This keeps
+the authority rule intact — the passage really is there, we are not accepting a
+model assertion in place of evidence — while surviving the whitespace noise that
+HTML extraction unavoidably produces.
+
+Do NOT fix it by adding `metric` to `CLOSED_VOCABULARY_FIELDS`. That exemption
+exists for derived values with no literal span; `metric` is open-vocabulary and
+should be quotable.
+
+**This likely explains E-RATIO too.** A locator that fails on multi-word fields
+would push claims toward INDETERMINATE and UNSUPPORTED regardless of what the
+source says.
+
+### E-UI — the card looks like a dev tool, and has no logo
+
+Reported 2026-09-05. The collapsed state renders as `Notary
+review_source_backed_answer` with a `</>` glyph — the raw MCP tool name. It reads
+as debug output, not a product. Needs the Notary mark (three connected circles,
+on the marketing site) and a human label.
+
+### E-EXTRACT — one claim-extraction call returned unparseable JSON
+
+`claim_extraction_parse_failure: model output is not a valid JSON object`, once
+in the same run. Low frequency, but it silently drops a whole batch of claims
+when it happens.
+
 ### ~~E-LAT~~ — FIXED 2026-09-05, awaiting production measurement
 
 Both halves shipped. **Re-measure before believing the numbers below are gone.** The prod smoke test
