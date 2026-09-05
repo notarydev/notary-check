@@ -416,3 +416,45 @@ test("genuine garbage is still a parse failure, not a salvage", () => {
   const result = parseExtractionOutput("I'm sorry, I can't do that.", TRUNCATED_ANSWER);
   assert.equal(result.ok, false);
 });
+
+test("precision hedges are not modality (E10-mini, 2026-09-05): approximately/about/roughly become unasserted", () => {
+  const raw = JSON.stringify({
+    claims: [
+      {
+        reasoning: "r",
+        text: "The average diameter of Earth is approximately 12,742 kilometers.",
+        materiality: true,
+        claim_fields: { entity: "Earth", metric: "diameter", value_unit: { value: "12,742", unit: "kilometers" }, modality: "approximately" },
+      },
+      {
+        reasoning: "r",
+        text: "This is about 42 kilometers.",
+        materiality: true,
+        claim_fields: { entity: "Earth", metric: "diameter", value_unit: { value: "42", unit: "kilometers" }, modality: "about" },
+      },
+    ],
+  });
+  const res = parseExtractionOutput(raw, "The average diameter of Earth is approximately 12,742 kilometers. This is about 42 kilometers.");
+  assert.ok(res.ok);
+  if (!res.ok) return;
+  assert.equal(res.claims.length, 2);
+  assert.equal(res.claims[0].claimFields.modality, undefined, "approximately must not become a modality");
+  assert.equal(res.claims[1].claimFields.modality, undefined, "about must not become a modality");
+});
+
+test("a real modality (projected/forecast/actual) is still kept", () => {
+  const raw = JSON.stringify({
+    claims: [
+      {
+        reasoning: "r",
+        text: "Revenue is projected to grow 12% next year.",
+        materiality: true,
+        claim_fields: { entity: "Acme", metric: "revenue", operator: "increase", value_unit: { value: "12", unit: "%" }, modality: "projected" },
+      },
+    ],
+  });
+  const res = parseExtractionOutput(raw, "Revenue is projected to grow 12% next year.");
+  assert.ok(res.ok);
+  if (!res.ok) return;
+  assert.equal(res.claims[0].claimFields.modality, "projected");
+});

@@ -714,6 +714,18 @@ function cleanOptional(value: string | undefined): string | undefined {
   return trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
 }
 
+// Precision hedges ("approximately", "about", "roughly", "~") are NOT modality.
+// Modality is actual/projected/forecast/target/bound — a claim's epistemic
+// status. A hedge qualifies the precision of the figure; treating it as
+// modality fabricates a field the evidence can never establish (a source says
+// "12,742 km", the claim says "approximately 12,742 km", and the fabricated
+// modality makes the row "couldn't check" instead of SUPPORTED). Observed live
+// 2026-09-05 (review 64bc7b05, Earth diameter). Drop them to unasserted.
+const PRECISION_HEDGES = new Set([
+  "approximately", "about", "roughly", "around", "nearly", "almost",
+  "circa", "approx", "approx.", "~", "≈",
+]);
+
 /** Maps the model's snake_case claim_fields to the camelCase ClaimFields
  * vocabulary fixed in applicability.ts. Only fields the claim actually asserts
  * become own keys — an unasserted field stays absent (matching how
@@ -732,7 +744,9 @@ function toClaimFields(fields: ParsedClaimOutput["claim_fields"]): ClaimFields {
   if (metric !== undefined) claimFields.metric = metric;
   if (fields.operator !== undefined) claimFields.operator = fields.operator;
   if (comparatorBaseline !== undefined) claimFields.comparatorBaseline = comparatorBaseline;
-  if (modality !== undefined) claimFields.modality = modality;
+  // A precision hedge is not a modality (see PRECISION_HEDGES) — leave it
+  // unasserted so it can never sink an otherwise verbatim match.
+  if (modality !== undefined && !PRECISION_HEDGES.has(modality.toLowerCase())) claimFields.modality = modality;
   if (scope !== undefined) claimFields.scope = scope;
   if (fields.value_unit !== undefined) {
     const value = fields.value_unit.value.trim();
