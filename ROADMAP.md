@@ -38,7 +38,26 @@ engine — it is everything around the engine.
 wrong, slow, or expensive.** Everything here is measured from production
 rows, not inferred.
 
-### E-LAT — One answer cost 286 model calls, 94 seconds and 9.5¢, and produced nothing
+### ~~E-LAT~~ — FIXED 2026-09-05, awaiting production measurement
+
+Both halves shipped. **Re-measure before believing the numbers below are gone** —
+query `usage_event` grouped by `review_id` after a real multi-claim answer and
+compare judge calls per claim. The original measurement is kept for that
+comparison.
+
+- **E-LAT-a — entity fail-fast.** Entity is asked first and alone; a row whose
+  entity comes back `absent` skips its remaining fields. Implemented as an
+  ordering change, NOT a substring pre-filter, so `"Acme, Inc."` vs `"ACME INC"`
+  still resolves through normalization.
+- **E-LAT-b — the rest in parallel.** Independent questions about the same text.
+
+The subtle part, and the reason this could have been a regression: skipped
+fields must not set `hadAbstainedRequiredField`, or a claim flips from
+UNSUPPORTED to INDETERMINATE ("checks did not complete") when the checks
+completed fine and simply did not apply. Guarded by a distinct sentinel, with a
+regression test asserting both the call count AND the unchanged verdict.
+
+#### Original measurement — One answer cost 286 model calls, 94 seconds and 9.5¢
 
 Measured on review `f6dd5300` (2026-09-04), the first real-world test:
 

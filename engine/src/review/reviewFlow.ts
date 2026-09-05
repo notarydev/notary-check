@@ -226,6 +226,15 @@ function deterministicPass(claimFields: ClaimFields, resolvedText: string | null
  * shape/spirit as killSwitch.ts's short-circuit: no network call, logged by the
  * caller, resolves to cannot_be_determined. Used for the quota-denied path.
  */
+/**
+ * Marks a residual field we deliberately did not ask about, because the row's
+ * entity was absent and the row therefore cannot be applicable. Distinct from
+ * every other non-answer so the processing loop can tell "we chose not to ask"
+ * from "the judge could not tell", which are different facts with different
+ * consequences for the claim's state.
+ */
+const SKIPPED_ENTITY_ABSENT = "skipped_entity_absent";
+
 function noCallAnswer(field: ApplicabilityField, error: string): JudgeFieldAnswer {
   return {
     field,
@@ -456,21 +465,88 @@ export async function runReview(
     const judgeRecordByField: Partial<Record<ApplicabilityField, JudgeCallRecord>> = {};
     const judgePresentFields = new Set<ApplicabilityField>();
 
-    for (const field of row.residuals) {
-      let answer: JudgeFieldAnswer;
-      if (quotaDeniedReason !== null) {
-        answer = noCallAnswer(field, `quota_${quotaDeniedReason}`);
-      } else {
-        answer = await extractField(canonicalText, field, {
-          organizationId,
-          evidenceLocator: sourceDisplayLocator(row.resolved, row.payloadHash) ?? undefined,
-        });
+    // ── The judge calls for this row, fetched BEFORE the processing loop ──
+    //
+    // WHY THIS IS SEPARATED. This used to be `await extractField(...)` inside
+    // the loop below, so every field of every evidence row of every claim was
+    // one sequential network round trip. Measured on a real answer: 14 claims
+    // x 4 evidence rows x ~5 residual fields = 286 judge calls, 94 seconds of
+    // a blocked Claude turn, 9.5 cents — and ZERO evidence matches. The whole
+    // cartesian product was paid for and none of it mattered.
+    //
+    // Two changes, and the first is the one that matters:
+    //
+    //   FAIL FAST ON ENTITY. assessApplicability requires entity agreement, so
+    //   a row whose entity the judge cannot find in the source can never be
+    //   applicable — every other field for that pair is spend on a foregone
+    //   conclusion. Entity is asked FIRST, alone; if it does not resolve, the
+    //   rest of the row is skipped.
+    //
+    //   NOT a substring pre-filter on entity, deliberately. That is the
+    //   tempting version and it breaks "Acme, Inc." vs "ACME INC" — exactly the
+    //   normalization case E1 exists to fix. The judge still decides; it just
+    //   decides this field first.
+    //
+    //   THEN PARALLEL. The remaining fields are independent questions about the
+    //   same text, so they go out together.
+    //
+    // Entity is only in `residuals` when the claim ASSERTS an entity and the
+    // deterministic pass could not find it literally — so the fast path costs
+    // nothing on claims that never had one.
+    const judgeOptions = {
+      organizationId,
+      evidenceLocator: sourceDisplayLocator(row.resolved, row.payloadHash) ?? undefined,
+    };
+    const answerByField = new Map<ApplicabilityField, JudgeFieldAnswer>();
+
+    if (quotaDeniedReason !== null) {
+      for (const field of row.residuals) answerByField.set(field, noCallAnswer(field, `quota_${quotaDeniedReason}`));
+    } else {
+      const others = row.residuals.filter((f) => f !== "entity");
+      let entityForeclosed = false;
+
+      if (row.residuals.includes("entity")) {
+        const entityAnswer = await extractField(canonicalText, "entity", judgeOptions);
+        answerByField.set("entity", entityAnswer);
+        // Only `absent` is added here. `cannot_be_determined` already sets
+        // hadAbstainedRequiredField below and drives the claim to
+        // INDETERMINATE on its own, and `ambiguous` may still turn out
+        // immaterial — neither is ours to foreclose.
+        entityForeclosed = entityAnswer.outcome === "absent";
       }
+
+      if (entityForeclosed) {
+        for (const field of others) answerByField.set(field, noCallAnswer(field, SKIPPED_ENTITY_ABSENT));
+        logEvent({
+          event: "judge_fields_skipped_entity_absent",
+          organization_id: organizationId,
+          review_id: reviewId,
+          skipped_field_count: others.length,
+        });
+      } else {
+        const settled = await Promise.all(others.map((f) => extractField(canonicalText, f, judgeOptions)));
+        others.forEach((f, i) => answerByField.set(f, settled[i]));
+      }
+    }
+
+    for (const field of row.residuals) {
+      const answer = answerByField.get(field) ?? noCallAnswer(field, "missing_answer");
 
       // A field the claim ASSERTS that the judge could not settle is one of the
       // four material conditions § step 8 separates INDETERMINATE by. Before
       // this, an abstention was indistinguishable from a completed check that
       // found nothing, so it fell through to UNSUPPORTED.
+      // A field skipped because entity was absent is NOT an abstention. The row
+      // is already inapplicable on entity alone, and letting the skip set
+      // hadAbstainedRequiredField would flip the claim to INDETERMINATE
+      // ("checks did not complete") when the checks completed fine and simply
+      // did not apply. That would be a state change dressed up as an
+      // optimisation.
+      if (answer.record.error === SKIPPED_ENTITY_ABSENT) {
+        judgeRecordByField[field] = answer.record;
+        continue;
+      }
+
       if (answer.outcome === "ambiguous" || answer.outcome === "cannot_be_determined") {
         // ...UNLESS the ambiguity cannot change the verdict. Observed live:
         // "The Statue of Liberty is 500 feet tall" against a passage giving

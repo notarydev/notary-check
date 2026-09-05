@@ -588,6 +588,64 @@ test(
 );
 
 test(
+  "wrong entity: the judge is asked ONCE, not once per field — and the verdict is unchanged",
+  { ...judgeSkip },
+  async () => {
+    // E-LAT-a. A real answer cost 286 judge calls, 94 seconds and 9.5 cents and
+    // produced zero matches: every field of every evidence row of every claim
+    // was asked, including for pairs that could never be applicable.
+    //
+    // assessApplicability requires entity agreement, so a row whose entity the
+    // judge cannot find can never match. Entity is now asked first and alone,
+    // and the rest of the row is skipped when it comes back absent.
+    //
+    // The assertion that matters is the SECOND one: skipping must not change
+    // the outcome. An optimisation that quietly moves a claim from UNSUPPORTED
+    // to INDETERMINATE would be a regression wearing a speedup's clothes.
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      // Globex's passage matches the claim on period, metric, operator and
+      // value — every field EXCEPT entity, which never appears. Before this
+      // change all of them were asked; now the row dies on the first.
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, WRONG_ENTITY_GLOBEX_TEXT, "https://example.com/globex");
+
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [evidenceId],
+        },
+        pool,
+      );
+
+      const calls = await countUsageEvents(pool, orgId, reviewId);
+      assert.ok(
+        calls <= 2,
+        `a foreclosed row must cost about one judge call, not one per residual field — got ${calls}`,
+      );
+
+      assert.equal(result.matches.length, 0, "a wrong-entity row must never produce a match");
+      assert.equal(
+        result.rejectedCandidates.length,
+        1,
+        "and it must still be REPORTED as rejected — skipping the remaining fields must not hide the row",
+      );
+      assert.ok(
+        result.state === "UNSUPPORTED" || result.state === "INDETERMINATE",
+        `state must be unchanged by the skip, got ${result.state}`,
+      );
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
   "all bound rows inapplicable (wrong entity) under a denied quota → matches empty, state INDETERMINATE, rejectedCandidates has one entry per inapplicable row",
   { ...dbSkip },
   async () => {
