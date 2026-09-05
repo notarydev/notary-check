@@ -377,6 +377,32 @@ function toCardRejectedCandidates(
 const CLAIM_CONCURRENCY = 4;
 
 /**
+ * How long Notary may spend checking claims before it stops and reports what
+ * it has.
+ *
+ * WHY A DEADLINE AT ALL. Notary's work is proportional to claims x sources,
+ * and BOTH are chosen by the caller. Without a bound, latency is a property of
+ * whatever Claude happened to send rather than a property of Notary — which is
+ * how one answer took two minutes, and how a much larger one would take far
+ * longer. No amount of parallelism fixes an unbounded input; only a bound does.
+ *
+ * RUNNING OUT OF TIME IS NOT A FAILURE, IT IS A GAP. "I could not check that"
+ * is already a first-class output of this system. So the deadline degrades to
+ * the honest thing: check what fits, then say plainly how many claims were not
+ * reached. "12 of 40 checked" is a legitimate answer; a spinner at two minutes
+ * is not.
+ *
+ * This is deliberately NOT claim-capping. Nothing is silently skipped — the
+ * unchecked count is stated on the card, and because Claude re-invokes on the
+ * next turn, the remainder gets picked up rather than lost.
+ *
+ * Set generously on purpose: this is a backstop for pathological inputs, not
+ * the common path. If it starts firing on ordinary answers, that is a signal
+ * to make the engine faster, not to raise the number.
+ */
+const CLAIM_BUDGET_MS = Number(process.env.NOTARY_CLAIM_BUDGET_MS ?? 25_000);
+
+/**
  * Runs `fn` over `items` with at most `limit` in flight, returning results in
  * INPUT ORDER regardless of completion order.
  *
@@ -800,9 +826,30 @@ export async function reviewAnswer(
     // reproduction would stop being a reproduction. So the fan-out only
     // gathers results; the loop that fills the caps runs afterwards, strictly
     // in claim order, exactly as it did when this was serial.
-    const outcomes = await mapWithConcurrency(materialClaims, CLAIM_CONCURRENCY, (claim) =>
-      submitClaim(reviewId, claim, evidenceIds, apiKey, userRequest),
-    );
+    // The deadline is checked BEFORE each submission rather than enforced with
+    // a timeout on the request. A submission already in flight is allowed to
+    // finish: it has been paid for, and abandoning it would waste the spend and
+    // lose a result we already have.
+    const claimDeadline = Date.now() + CLAIM_BUDGET_MS;
+    let skippedForBudget = 0;
+    const outcomes = await mapWithConcurrency(materialClaims, CLAIM_CONCURRENCY, (claim) => {
+      if (Date.now() > claimDeadline) {
+        skippedForBudget++;
+        return Promise.resolve(undefined);
+      }
+      return submitClaim(reviewId, claim, evidenceIds, apiKey, userRequest);
+    });
+    if (skippedForBudget > 0) {
+      console.warn(
+        JSON.stringify({
+          event: "claim_budget_exhausted",
+          review_id: reviewId,
+          checked: materialClaims.length - skippedForBudget,
+          skipped: skippedForBudget,
+          budget_ms: CLAIM_BUDGET_MS,
+        }),
+      );
+    }
 
     for (let i = 0; i < materialClaims.length; i++) {
       const claim = materialClaims[i];
@@ -813,6 +860,14 @@ export async function reviewAnswer(
       // resolves, another's submission fails) could still fall through to
       // `no_issue` below. It must always produce an explicit "not checkable"
       // finding that participates in the completeness logic.
+      // Undefined means the deadline passed before this claim was submitted —
+      // NOT that submission failed. The two are different facts and only one is
+      // a defect. A budget skip is already counted and stated in the scope line
+      // ("12 of 40 checked"), so recording it here as unsubmittable would both
+      // misdescribe it and flip the whole card to could_not_check, hiding the
+      // twelve claims that WERE checked.
+      if (outcome === undefined) continue;
+
       if (!outcome.ok) {
         uncheckedFindings.push({
           label: claim.text,
@@ -864,7 +919,7 @@ export async function reviewAnswer(
     const grounded = new Map<number, boolean>();
     for (let i = 0; i < materialClaims.length; i++) {
       const o = outcomes[i];
-      if (o.ok) {
+      if (o?.ok) {
         claimIds.set(materialClaims[i].ordinal, o.result.claim.id);
         grounded.set(materialClaims[i].ordinal, !o.result.claim.no_source);
       }
@@ -894,7 +949,7 @@ export async function reviewAnswer(
     // Honest scope: how many claims there were, and how many had ANY source to
     // check against. The resting line never carries a count for this reason —
     // "5 claims checked" is a lie when four of them had nothing to check.
-    const checkableCount = outcomes.filter((o) => o.ok && !o.result.claim.no_source).length;
+    const checkableCount = outcomes.filter((o) => o?.ok && !o.result.claim.no_source).length;
     const scopeDetail = {
       claims: materialClaims.length,
       checkable: checkableCount,
@@ -906,7 +961,15 @@ export async function reviewAnswer(
       moves.push(...invocationMoves);
     }
 
-    const scope = `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;
+    // When the budget ran out, the scope line SAYS SO. The whole point of a
+    // deadline is that the shortfall is reported rather than hidden — a card
+    // claiming "40 claims reviewed" when 12 were checked would be worse than
+    // being slow.
+    const checkedCount = materialClaims.length - skippedForBudget;
+    const scope =
+      skippedForBudget > 0
+        ? `${checkedCount} of ${materialClaims.length} material claims checked against ${evidenceIds.length} source${evidenceIds.length === 1 ? "" : "s"} — ${skippedForBudget} not reached in time.`
+        : `${materialClaims.length} material claim${materialClaims.length === 1 ? "" : "s"} reviewed against ${evidenceIds.length} accessible source${evidenceIds.length === 1 ? "" : "s"}.`;
     const challengesField = challenges.length > 0 ? challenges : undefined;
     const movesField = moves.length > 0 ? moves : undefined;
 

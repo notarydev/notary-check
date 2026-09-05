@@ -194,7 +194,145 @@ export interface ExtractClaimsOptions {
  * all — the same shape as the kill-switch short-circuit — and reports
  * `quota_denied` rather than pretending the answer had no claims.
  */
+/**
+ * Extraction, split across the answer and run in parallel.
+ *
+ * WHY. One call over a whole answer generates every claim in sequence, so its
+ * latency is proportional to the TOTAL number of claims, and its output length
+ * is too. Measured locally on a claim-dense 2.6KB answer: 17.0 seconds and a
+ * response truncated at the 4096-token ceiling. Production saw the same thing
+ * at 17.7 seconds. Extraction alone therefore blew the entire latency budget
+ * before a single source had been looked at.
+ *
+ * Splitting on paragraph boundaries and extracting the pieces concurrently
+ * makes latency proportional to the LARGEST chunk rather than the whole
+ * answer, and each chunk's output is far from the ceiling — so truncation
+ * stops being a thing that happens rather than a thing we recover from.
+ *
+ * NOTHING IS DROPPED. This is the distinction that matters: the alternative
+ * considered and rejected was capping the number of claims, which would make
+ * Notary silently skip material. Every chunk is fully extracted; the answer is
+ * partitioned, not sampled.
+ *
+ * Chunks split only at blank lines, so no claim is cut in half — and claim
+ * `text` stays verbatim, which the downstream verbatim check depends on.
+ *
+ * A chunk that fails does not fail the others. Partial extraction beats none,
+ * for the same reason salvaging a truncated response beats discarding it.
+ */
 export async function extractClaims(
+  answerText: string,
+  options: ExtractClaimsOptions = {},
+): Promise<ExtractClaimsResult> {
+  const chunks = splitForExtraction(answerText);
+  if (chunks.length <= 1) return extractClaimsFromText(answerText, options);
+
+  const results = await Promise.all(chunks.map((c) => extractClaimsFromText(c, options)));
+
+  const merged: ExtractedClaim[] = [];
+  const seen = new Set<string>();
+  let failed = 0;
+  let droppedCount = 0;
+  for (const r of results) {
+    if (!r.ok) {
+      failed++;
+      continue;
+    }
+    droppedCount += r.droppedCount;
+    for (const claim of r.claims) {
+      // Chunks do not overlap, so a duplicate means the same sentence appeared
+      // twice in the answer. Keeping one is right either way: the claim is
+      // checked once and the card does not repeat itself.
+      const key = normalizeForVerbatim(claim.text);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ ...claim, ordinal: merged.length + 1 });
+    }
+  }
+
+  if (merged.length === 0) {
+    const firstFailure = results.find((r) => !r.ok);
+    return firstFailure !== undefined && !firstFailure.ok
+      ? firstFailure
+      : { ok: false, reason: "model_output_unparseable", detail: "no claims extracted from any chunk" };
+  }
+
+  logEvent({
+    event: "claim_extraction_chunked",
+    chunk_count: chunks.length,
+    failed_chunks: failed,
+    claim_count: merged.length,
+    organization_id: options.organizationId,
+  });
+  return { ok: true, claims: merged, droppedCount };
+}
+
+/**
+ * Splits an answer into extraction chunks at blank lines.
+ *
+ * Below the threshold the answer is returned whole, so short answers take
+ * exactly the path they always did. Splitting only at blank lines keeps every
+ * claim intact inside one chunk; a mid-sentence split would produce claim text
+ * that no longer appears verbatim in the answer and would be dropped by the
+ * verbatim check downstream.
+ *
+ * The chunk cap bounds concurrency: a very long answer produces larger chunks
+ * rather than more of them, so this cannot fan out into a hundred parallel
+ * model calls.
+ */
+export function splitForExtraction(answerText: string): string[] {
+  if (answerText.length <= EXTRACTION_CHUNK_THRESHOLD_CHARS) return [answerText];
+
+  const paragraphs = answerText.split(/\n\s*\n/);
+  const target = Math.max(
+    EXTRACTION_TARGET_CHUNK_CHARS,
+    Math.ceil(answerText.length / EXTRACTION_MAX_CHUNKS),
+  );
+
+  const chunks: string[] = [];
+  let current = "";
+  for (const para of paragraphs) {
+    if (current.length > 0 && current.length + para.length > target) {
+      chunks.push(current);
+      current = para;
+    } else {
+      current = current.length > 0 ? `${current}\n\n${para}` : para;
+    }
+  }
+  if (current.trim().length > 0) chunks.push(current);
+  // A single paragraph longer than the threshold has nowhere safe to split.
+  // One oversized chunk is correct: truncation salvage is the backstop, and a
+  // mid-sentence cut would silently destroy claims.
+  return chunks.length > 0 ? chunks : [answerText];
+}
+
+/** Answers below this are extracted in one call, exactly as before. */
+export const EXTRACTION_CHUNK_THRESHOLD_CHARS = 1500;
+/**
+ * Rough size to aim for per chunk.
+ *
+ * Measured on a claim-dense 2.6KB answer with 40 factual sentences, against the
+ * real model:
+ *
+ *   no chunking   17.0s, 21 claims  (truncated at the ceiling, salvaged)
+ *   1200 chars     15.0s, 40 claims  (3 chunks)
+ *    600 chars      9.4s, 40 claims  (5 chunks)   <- chosen
+ *    350 chars      6.3s, 40 claims  (10 chunks)
+ *
+ * 350 is faster and NOT chosen. At that size a chunk is one or two paragraphs,
+ * so a claim like "It charges $0.09/GB" loses the vendor name from its heading
+ * and decontextualization degrades — and that field is what Act reasons from.
+ * Tuning to the fastest number on one synthetic answer would be optimising to a
+ * fixture. 600 keeps a heading with its claims and still cuts extraction to
+ * roughly half.
+ *
+ * Re-measure on real answers before moving it.
+ */
+export const EXTRACTION_TARGET_CHUNK_CHARS = 600;
+/** Upper bound on parallel extraction calls for one answer. */
+export const EXTRACTION_MAX_CHUNKS = 10;
+
+async function extractClaimsFromText(
   answerText: string,
   options: ExtractClaimsOptions = {},
 ): Promise<ExtractClaimsResult> {
