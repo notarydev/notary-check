@@ -284,6 +284,21 @@ not — that path needs only S1–S3 and O5.
 
 ---
 
+## Everything else still open
+
+Small or blocked items, kept here so nothing open lives only in
+`docs/build/whats-left.md`. Detail and full argument are there.
+
+| | Item |
+|---|---|
+| **O6** | Profile Preferences copy was written and tested and never added to the onboarding page — a user has never seen it. |
+| **D4** | `docs/build/engine-brief-for-external-review.md` predates migrations `0011`–`0016`, the audit fixes and Clerk. It is the document external reviewers read, so it is misleading exactly where it costs most. |
+| **E6** | Retention — same item as **B4** above. Kept as a separate engine-queue entry in `whats-left.md`; do not treat as two pieces of work. |
+| **E7** | Decouple Verify and Act properly. Needs the revision step and a channel to update the card after first render; neither is optional. **Do not do this for latency** — E-LAT is the latency fix and dominates it. |
+| **E8** | Reconcile. Depends on E7 *and* on the invocation pivot being decided. Not before. |
+
+---
+
 ## Open questions that redirect the work
 
 Not tasks — answers here change what gets built.
