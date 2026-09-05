@@ -2,7 +2,6 @@
 
 One page. What stands between the thing that works today and a product a
 stranger can pay for and rely on.
-
 ## Which document does what — read this first
 
 There are four status files and they have different jobs. Confusion between
@@ -10,7 +9,7 @@ them has been a real cost, so:
 
 | File | Job | Time |
 |---|---|---|
-| **`ROADMAP.md`** (this) | The milestone view. What's left, grouped by what it unblocks. **The index — start here.** | future |
+| **`ROADMAP.md`** (this) | The priority list. **Engine correctness and cost is priority 1; open issues are priority 2.** The index — start here. | future |
 | `docs/build/whats-left.md` | The detailed queue, with stable IDs (`B1`, `O4`, `E5`…) and the full argument for each. **This file cites those IDs; it does not restate them.** | future |
 | `PROGRESS.md` | The audit trail. Every review pass, every bug found. Append-only history. | past |
 | `docs/build/architecture-and-progress.md` | What is *actually* built and live right now, including infra. | present |
@@ -19,7 +18,6 @@ Operational facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code
 layout is in `MODULES.md`. Vocabulary is in `CLAUDE.md`.
 
 ---
-
 ## Where we actually are
 
 Notary Check works. The engine verifies claims against evidence deterministically,
@@ -32,7 +30,109 @@ engine — it is everything around the engine.
 
 ---
 
-## In flight right now — read this before starting anything else
+## PRIORITY 1 — The engine: correctness and cost
+
+**This is the top of the list. Nothing below it matters if the engine is
+wrong, slow, or expensive.** Everything here is measured from production
+rows, not inferred.
+
+### E-LAT — One answer cost 286 model calls, 94 seconds and 9.5¢, and produced nothing
+
+Measured on review `f6dd5300` (2026-09-04), the first real-world test:
+
+| | |
+|---|---|
+| Claims extracted | 14 |
+| Evidence rows | 4 |
+| Judge calls | **286** |
+| Evidence matches produced | **0** |
+| Wall clock | **94s** — the tool call blocks Claude's turn the whole time |
+| Cost | 9.5¢ for a single answer |
+
+286 ≈ 14 claims × 4 evidence rows × ~5 residual fields. It is a **cartesian
+product**, and on this review every single call was wasted — not one match
+survived applicability.
+
+`review/reviewFlow.ts:459` is `for (const field of row.residuals) { await
+extractField(...) }` — fully sequential, nested inside a sequential loop over
+evidence rows. Claims run 4-wide (that was E2), which is the only reason this
+was 94 seconds rather than ten minutes. **E2 parallelised across claims, not
+the inner field loop** — an external reviewer flagged exactly this and was
+right.
+
+Two fixes, in value order:
+
+**E-LAT-a — fail fast on entity.** The bigger win, because it removes calls
+rather than speeding them up. Entity disagreement alone disqualifies a
+claim-evidence pair, so extract entity FIRST; if the judge cannot find it in
+that source, skip the remaining ~4 fields for that pair.
+
+> **Do not implement this as a substring pre-filter on entity.** That is the
+> tempting version and it breaks `"Acme, Inc."` vs `"ACME INC"` — precisely the
+> normalization case E1 exists to fix. The judge must still decide; it just
+> decides that field first.
+
+Caveat to write down when doing it: skipped fields must be recorded explicitly
+(`skipped_entity_mismatch`), not left silently blank, or `rejectedCandidates`
+detail in L3 quietly thins out. The claim's STATE is unchanged either way —
+entity mismatch drops the row regardless.
+
+**E-LAT-b — parallelise the residual fields.** They are independent questions
+about the same text. Bounded `Promise.all`.
+
+Expected together: 286 → ~60 calls, 94s → ~15s. Both numbers should be
+re-measured from `usage_event`, not assumed.
+
+### E-RATIO — UNSUPPORTED is 45.6% of all claims, 3.5× SUPPORTED
+
+Production distribution over 114 claims:
+
+```
+UNSUPPORTED     52  (45.6%)   all "no_support_after_completed_checks"
+INDETERMINATE   35  (30.7%)   30 of them no_source
+SUPPORTED       15  (13.2%)
+CONTRADICTED    12  (10.5%)
+```
+
+Either Claude genuinely makes that many unsupported claims, or the
+applicability comparator is too strict and is rejecting valid claim-evidence
+relationships. The same external review flagged this risk independently.
+
+**Answerable today from rows already in the database** — no new instrumentation
+needed. Start with the `rejectedCandidates` on UNSUPPORTED claims and look at
+which field caused the rejection.
+
+The state machine itself is confirmed CORRECT: no claim is reported
+UNSUPPORTED when the truth is "no source" — unsourced claims route to
+INDETERMINATE. That was checked directly and is not the concern here.
+
+### E-EVID — Only 27 evidence matches for 114 claims
+
+Most claims never get a source at all. This is the product's real ceiling:
+Verify can only speak when there is something to check against, and today
+there usually is not. It is why the source-gap ask and Act's coverage matter
+more than any additional detector.
+
+### E-MEAS — Findings are still not persisted (was S4)
+
+There is no `finding` table, so nothing measures which detectors ever fire in
+production. After 91 reviews we cannot say whether the detector bank earns its
+place. `detection.outcomes` is now logged (`detect_completed`), which is a
+start but is not queryable state.
+
+Related and now closed: move interaction telemetry exists in code — see F1, it
+is built and not deployed.
+
+### E-VERIFY — Two fixes are proven only by unit test
+
+The **claim-level source gap** and **Act's restored context** both ship in
+`engine.37` and neither has live evidence. The smoke test cannot exercise the
+first, because all its claims are ungrounded and the old code would pass it
+too. See F3 for the prompts written to test them.
+
+---
+
+## PRIORITY 2 — Open issues, half-finished work
 
 Picked up mid-stream on 2026-09-04. None of it is blocked on a decision; it is
 blocked on finishing.
@@ -99,26 +199,7 @@ here and is the only one with a security consequence.
 
 ---
 
-## M1 — A stranger can sign up and pay
-
-Nothing here is hard. It is simply absent, and it is the whole difference
-between a demo and a business.
-
-| | What's missing | Detail |
-|---|---|---|
-| **S1** | **There is no sign-up flow.** Every call to action on `getnotary.ai` goes to a contact form. No sign-up, no pricing page, no checkout. | `OPERATIONS.md` |
-| **S2** | **The dashboard is deployed nowhere.** `app.` and `dashboard.getnotary.ai` do not resolve. The Next.js app exists and builds. | `OPERATIONS.md` |
-| **S3** | **Stripe is in test mode.** The live-key swap is env-only, but no live payment has ever been taken end to end. | `whats-left.md` § Billing |
-| **O5** | Clerk Restricted sign-up mode not confirmed — the IdP-level half of the signup gate. Manual dashboard action. | `whats-left.md` |
-| **L1** | **Terms and Privacy Policy do not exist.** Needs a lawyer. The Privacy Policy must disclose that evidence text goes to a third-party model. | `whats-left.md` § Legal |
-| **B4** | **Retention violates our own canonical rule** — `claim.text` and `evidence.resolved_text` are kept indefinitely, no consent, no TTL. Blocks L1, because the policy would have to describe a retention rule that doesn't exist. | `whats-left.md` |
-
-**M1 is blocked on L1/B4 for *public* self-serve.** An invited, paid pilot is
-not — that path needs only S1–S3 and O5.
-
----
-
-## M2 — We can honestly say it works
+## PRIORITY 3 — Proving it works
 
 Today "it works" rests on a passing test suite and hand-checked examples.
 That is not the same claim.
@@ -138,7 +219,7 @@ were built, deployed, confirmed live, and silently inert.
 
 ---
 
-## M3 — It's useful often enough to keep
+## PRIORITY 4 — Making it useful more often
 
 Measurement says Verify alone has something to say on at most ~19% of real
 turns. Act was built to cover the rest. Making both fire more often, and more
@@ -154,7 +235,26 @@ usefully, is the product work.
 
 ---
 
-## M4 — It can be operated by someone who isn't us
+## PRIORITY 5 — Someone can pay for it
+
+Nothing here is hard. It is simply absent, and it is the whole difference
+between a demo and a business.
+
+| | What's missing | Detail |
+|---|---|---|
+| **S1** | **There is no sign-up flow.** Every call to action on `getnotary.ai` goes to a contact form. No sign-up, no pricing page, no checkout. | `OPERATIONS.md` |
+| **S2** | **The dashboard is deployed nowhere.** `app.` and `dashboard.getnotary.ai` do not resolve. The Next.js app exists and builds. | `OPERATIONS.md` |
+| **S3** | **Stripe is in test mode.** The live-key swap is env-only, but no live payment has ever been taken end to end. | `whats-left.md` § Billing |
+| **O5** | Clerk Restricted sign-up mode not confirmed — the IdP-level half of the signup gate. Manual dashboard action. | `whats-left.md` |
+| **L1** | **Terms and Privacy Policy do not exist.** Needs a lawyer. The Privacy Policy must disclose that evidence text goes to a third-party model. | `whats-left.md` § Legal |
+| **B4** | **Retention violates our own canonical rule** — `claim.text` and `evidence.resolved_text` are kept indefinitely, no consent, no TTL. Blocks L1, because the policy would have to describe a retention rule that doesn't exist. | `whats-left.md` |
+
+**M1 is blocked on L1/B4 for *public* self-serve.** An invited, paid pilot is
+not — that path needs only S1–S3 and O5.
+
+---
+
+## PRIORITY 6 — Someone else can operate it
 
 | | What's missing |
 |---|---|
