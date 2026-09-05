@@ -151,13 +151,19 @@ more than any additional detector.
 
 ### ~~E-MEAS~~ — FIXED 2026-09-05. Findings and gaps are now persisted
 
+**Live and verified in production 2026-09-05** (`engine.42`): a detect run wrote
+1 finding and 2 gaps, with `detector = self_contradiction`, `missing =
+addressable_source`, and `input_provenance = model_reported` all recorded
+correctly.
+
 Migration `0017` adds `finding` and `gap`. Written on every `/detect` call,
 before Act runs so an Act failure cannot cost the measurement. Separate tables
 deliberately — a gap is not a weak finding, and one careless SELECT should not
 turn "we had nothing to check" into a defect.
 
-**Nothing reads these tables yet.** The fire-rate query they exist for still has
-to be written and run:
+**Nothing reads these tables yet, and they hold one real row.** The fire-rate
+query they exist for is written below but is not worth running until real
+traffic has accumulated:
 
 ```sql
 SELECT detector, count(*) FROM finding GROUP BY detector;
@@ -190,8 +196,8 @@ blocked on finishing.
 
 ### F1 — ~~main is ahead of production~~ CLOSED 2026-09-05
 
-Everything on `main` is deployed: `:notary-check-api.engine.39` /
-`:notary-check-mcp.server.40` (deployments 16 and 24). No migration was needed.
+Everything on `main` is deployed: `:notary-check-api.engine.42` /
+`:notary-check-mcp.server.40` (deployments 18 and 24), including migration `0017`.
 
 Verified against production, not against the deploy's exit code:
 
