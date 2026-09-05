@@ -181,6 +181,61 @@ architecture cleanup; it is actually the latency answer.
    results land. Use the existing `record_move_event` app-tool pattern for the
    call — the card already talks to its own server that way.
 
+### DONE so far
+
+- `GET /v1/reviews/:id/state` — cheap poll, org-scoped, 404 not 403.
+- `POST /v1/reviews/:id/complete` — idempotent; finally uses `review.status`,
+  which had defaulted to 'processing' on all 104 production reviews and been
+  moved by nothing.
+- `ReviewCardData` carries `review_id` and `complete`.
+- `get_review_state` app tool; the card polls every 1500ms and MERGES.
+
+**All of it is inert.** The server still waits for verification, so every card
+arrives `complete` and nothing polls.
+
+### THE REMAINING DECISION — needs the owner, not an engineer
+
+Returning early changes what **Claude** receives, not just what the user sees.
+That is a product decision.
+
+The order today is: extract → register evidence → **verify claims (slow)** →
+detector bank + Act → return. The bank's `source_gap` detector needs per-claim
+grounding, which only exists after verification, and Act consumes the bank's
+gaps. So "return before verifying" is not a free reordering.
+
+**Option A — return after the bank, minus source gaps.**
+Run `self_contradiction` and `self_report` (neither needs evidence) plus Act,
+return, verify in the background, then add source gaps and Verify results to
+the card.
+
+- Claude gets contradictions, self-report mismatches and moves in ~10s
+  instead of ~21s.
+- Claude does NOT get evidence-verification results or source gaps.
+- In every real test so far this loses almost nothing, because Verify returned
+  only INDETERMINATE and the bank finding was the actionable output. **That may
+  stop being true once Verify works well** — and then Claude stops seeing
+  CONTRADICTED, which is the product's strongest signal.
+
+**Option B — keep Claude's response as it is, let only the card stream.**
+The user sees progress and late results; Claude's latency is unchanged.
+
+- No capability regression.
+- Does not fix the thing that prompted this work.
+
+**Option C — return early only when there is no resolvable evidence.**
+Verification cannot say anything useful without a source, so nothing is lost by
+not waiting for it. Full behaviour when sources exist.
+
+- Narrow, safe, and covers the ~37% of answers with no sources at all.
+- Does not help the case that actually hurt: many claims AND many sources.
+
+**Recommendation: A, once Verify is reliably producing SUPPORTED and
+CONTRADICTED rather than INDETERMINATE.** Until then A costs nothing real. Take
+C now if a decision is needed before that evidence exists.
+
+Whichever is chosen is a small change at the `runDetection` call site in
+`server/src/engineClient.ts` — everything else is built.
+
 ### Constraints
 
 - A poll must be cheap: read persisted rows, never recompute.
