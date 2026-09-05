@@ -137,21 +137,35 @@ too. See F3 for the prompts written to test them.
 Picked up mid-stream on 2026-09-04. None of it is blocked on a decision; it is
 blocked on finishing.
 
-### F1 — Two commits are built and NOT deployed
+### F1 — main is AHEAD of production, and this list goes stale — check it, don't trust it
 
-`origin/main` is ahead of production. Live is `:notary-check-api.engine.37` /
-`:notary-check-mcp.server.38` (deployments 15 and 23), which **does** include
-the Verify/Act rename, migration `0016`, claim-level source gaps, Act's
-restored context, and `inputProvenance`.
+```bash
+# what is actually live
+aws lightsail get-container-services --region us-east-2 \
+  --query 'containerServices[].{n:containerServiceName,v:currentDeployment.version,img:currentDeployment.containers.*.image}'
+# what is on main but not in that image (3522d31 built engine.37 / server.38)
+git log --oneline 3522d31..HEAD
+```
 
-It does **not** include:
+As of 2026-09-04 the live images are `:notary-check-api.engine.37` and
+`:notary-check-mcp.server.38` (deployments 15 and 23). **They DO include** the
+Verify/Act rename, migration `0016`, claim-level source gaps, Act's restored
+context (E5a) and `inputProvenance`.
 
-| Commit | What is not live |
+**They do NOT include** anything committed after `3522d31` — at time of writing
+six commits, most importantly:
+
+| | Not live |
 |---|---|
-| `13a9144` | Move interaction telemetry — the `record_move_event` tool, `POST /v1/move-events`, and the invocation path persisting at all. Until this ships, `act_move_event` stays empty and every move shown to a user is still unrecorded. |
-| `5c07734` | Quota test fix (test-only, no runtime effect). |
+| `13a9144` | **Move interaction telemetry.** The `record_move_event` tool, `POST /v1/move-events`, and the invocation path persisting at all. Until this ships `act_move_event` stays empty and every move shown to a user is unrecorded. |
+| `61d79c7` | Retired vocabulary in `ui/src/index.css` (cosmetic; rides along with any build). |
+| others | Docs and tests only — no runtime effect. |
 
-No migration is needed. `./scripts/deploy.sh both` is the whole job.
+No migration needed. `./scripts/deploy.sh both` is the whole job.
+
+> This entry was itself stale within a day of being written — it said "two
+> commits" while six had landed. That is why it now leads with the commands
+> rather than a list. **Run them; do not trust the prose.**
 
 ### F2 — The deploy gate fails and has not been reproduced
 
