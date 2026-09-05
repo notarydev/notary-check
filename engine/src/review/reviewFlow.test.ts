@@ -212,7 +212,7 @@ test(
       // version is the point of this assertion: answers stored under v2 were
       // produced by a prompt that could not report them, so the two are not
       // comparable and must not silently share a version.
-      assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v3");
+      assert.equal(matches.evaluator_version, "deepseek-v4-flash:judge-field-extraction-v4");
       // A contradiction is a POSITIVE finding about the evidence, so it may
       // only be persisted with a locator that actually dereferenced.
       assert.equal(matches.locator_resolved, true);
@@ -1143,6 +1143,129 @@ test(
       );
 
       assert.equal(moveCalls, 1, "the default preserves behaviour for a caller that never calls /detect");
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "STEP 0: claim_fields and rejected_candidates are persisted so a state is explainable from the DB alone",
+  { ...dbSkip },
+  async () => {
+    const originalLimit = process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+    process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = "0";
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const globexId = await seedRetrievedEvidence(pool, reviewId, WRONG_ENTITY_GLOBEX_TEXT, "https://example.com/globex-report");
+
+      const result = await runReview(
+        {
+          organizationId: orgId,
+          reviewId,
+          claimText: "Acme's revenue grew 17% in FY25.",
+          ordinal: 1,
+          claimFields: CLAIM_FIELDS,
+          evidenceIds: [globexId],
+        },
+        pool,
+      );
+
+      assert.ok(result.rejectedCandidates.length >= 1, "the wrong-entity row must be a rejected candidate");
+
+      const row = (
+        await pool.query("SELECT claim_fields, rejected_candidates FROM claim WHERE id = $1", [result.claimId])
+      ).rows[0] as { claim_fields: unknown; rejected_candidates: unknown };
+      const claimFields = row.claim_fields as { entity: string; metric: string };
+      assert.equal(claimFields.entity, "Acme");
+      assert.equal(claimFields.metric, "revenue");
+
+      const rejected = row.rejected_candidates as Array<{ evidenceId: string; mismatchedFields: string[] }>;
+      assert.equal(rejected.length, result.rejectedCandidates.length);
+      assert.equal(rejected[0].evidenceId, globexId);
+      assert.deepEqual(rejected[0].mismatchedFields, ["entity"]);
+    } finally {
+      if (originalLimit === undefined) delete process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS;
+      else process.env.NOTARY_ORG_MONTHLY_LIMIT_CENTS = originalLimit;
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "STEP 2: a judge 'present' value that cannot be anchored degrades to an abstention (required_field_unresolved), not a locator failure",
+  { ...dbSkip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      // Every field is deterministically present EXCEPT scope: the claim
+      // asserts "Enterprise segment", which never appears in the text.
+      const evidenceText = "Acme's revenue increased 17% in FY25, compared to the prior year, actual company-wide figures.";
+      const evidenceId = await seedRetrievedEvidence(pool, reviewId, evidenceText);
+
+      const originalKey = process.env.DEEPSEEK_API_KEY;
+      const originalFetch = globalThis.fetch;
+      process.env.DEEPSEEK_API_KEY = "test-key-for-mocked-judge";
+      // The judge answers scope: present with a FUSED, non-contiguous value —
+      // exactly the live failure on the mixed Premium/Standard tier passage.
+      globalThis.fetch = (async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.startsWith("https://api.deepseek.com/")) {
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      reasoning: "The passage names the company and the revenue figure.",
+                      outcome: "present",
+                      value: "Acme enterprise and consumer",
+                      source_span: "Acme enterprise and consumer",
+                    }),
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        const result = await runReview(
+          {
+            organizationId: orgId,
+            reviewId,
+            claimText: "Acme's revenue grew 17% in FY25.",
+            ordinal: 1,
+            claimFields: { ...CLAIM_FIELDS, scope: "Enterprise segment" },
+            evidenceIds: [evidenceId],
+          },
+          pool,
+        );
+
+        // The fused scope cannot be pointed at in the retained text, so the
+        // field is not establishable. The truthful mechanism is an abstained
+        // required field, NOT a locator failure.
+        assert.equal(result.state, "INDETERMINATE");
+        assert.equal(result.lifecycle, "not_checkable");
+        assert.equal(result.lifecycleDetail, "required_field_unresolved");
+        assert.equal(result.checksCompleted, false);
+        assert.deepEqual(result.matches, []);
+
+        const rejected = result.rejectedCandidates;
+        assert.equal(rejected.length, 1, "the row is rejected as inapplicable on the unestablishable scope");
+        assert.deepEqual(rejected[0].mismatchedFields, ["scope"]);
+      } finally {
+        if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+        else process.env.DEEPSEEK_API_KEY = originalKey;
+        globalThis.fetch = originalFetch;
+      }
     } finally {
       await pool.end();
     }

@@ -293,7 +293,11 @@ test(
       assert.equal(result.state, "INDETERMINATE");
       assert.equal(result.stateReason, "checks_did_not_complete");
       assert.equal(result.lifecycle, "not_checkable");
-      assert.equal(result.lifecycleDetail, "locator_unresolved");
+      // STEP 2 (2026-09-05): an unanchored judge `present` is now recorded as
+      // the truthful mechanism — the field could not be established from the
+      // retained text — so it is an abstained required field rather than a
+      // locator failure. The refusal is unchanged; only the label is honest.
+      assert.equal(result.lifecycleDetail, "required_field_unresolved");
       assert.equal(result.matches.length, 0);
       const matchCount = await pool.query("SELECT count(*)::int AS n FROM evidence_match WHERE claim_id = $1", [result.claimId]);
       assert.equal(matchCount.rows[0].n, 0, "no evidence_match row may be written without a resolvable locator");

@@ -164,3 +164,58 @@ test(
     }
   },
 );
+
+test(
+  "E-EVIDENCE: payload + submitted_url registers 'pending' with the excerpt retained as caller_excerpt (page will be fetched at review time)",
+  { ...skip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const reviewId = await createReview(server.pool, orgId);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+
+      const excerpt = "The Pacific Ocean contains approximately 714 million cubic kilometers of water.";
+      const res = await postEvidence(server, {
+        bearer: plaintextKey,
+        reviewId,
+        body: { payload: excerpt, submitted_url: "https://example.com/pacific" },
+      });
+      assert.equal(res.status, 201);
+      const json = (await res.json()) as { evidence: { id: string; retrieval_status: string } };
+      assert.equal(json.evidence.retrieval_status, "pending", "a row with both excerpt and URL must be resolved against the page");
+
+      const row = (
+        await server.pool.query("SELECT caller_excerpt, resolved_text, text_provenance FROM evidence WHERE id = $1", [json.evidence.id])
+      ).rows[0] as { caller_excerpt: string; resolved_text: string; text_provenance: string };
+      assert.equal(row.caller_excerpt, excerpt, "the excerpt must be retained as the fallback");
+      assert.equal(row.text_provenance, "caller_supplied", "the retained excerpt must never claim to be fetched");
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "excerpt with NO url stays 'retrieved' as before (nothing to fetch)",
+  { ...skip },
+  async () => {
+    const server = await startServer();
+    try {
+      const orgId = await createOrganization(server.pool);
+      const reviewId = await createReview(server.pool, orgId);
+      const { plaintextKey } = await issueApiKey(orgId, server.pool);
+      const res = await postEvidence(server, {
+        bearer: plaintextKey,
+        reviewId,
+        // Override the shared base body's submitted_url so the row has NO url.
+        body: { payload: "a caller excerpt with no url", submitted_url: undefined },
+      });
+      assert.equal(res.status, 201);
+      const json = (await res.json()) as { evidence: { retrieval_status: string } };
+      assert.equal(json.evidence.retrieval_status, "retrieved");
+    } finally {
+      await server.close();
+    }
+  },
+);

@@ -140,6 +140,7 @@ interface EvidenceRow {
   parse_status: string;
   parse_error: string | null;
   page_ranges: PageRange[] | null;
+  caller_excerpt: string | null;
 }
 
 /** Builds the ResolvedEvidence for an already-resolved row, from the row itself. */
@@ -204,7 +205,7 @@ export async function resolveEvidenceRow(
     const result = await client.query(
       `SELECT id, retrieval_status, submitted_url, canonical_url, payload_hash, resolved_text,
               access_revoked_at, content_kind, text_provenance, canonical_text_hash,
-              parse_status, parse_error, page_ranges
+              parse_status, parse_error, page_ranges, caller_excerpt
        FROM evidence
        WHERE id = $1
        FOR UPDATE`,
@@ -251,7 +252,52 @@ export async function resolveEvidenceRow(
     }
 
     const fetched = await fetchSource(row.submitted_url, options.fetchOptions);
+
+    // E-EVIDENCE fallback (2026-09-05): a row registered with BOTH a caller
+    // excerpt and a URL is 'pending' and gets here to have the page fetched.
+    // When the fetch is unreachable/unsafe — the paywalled or moved page the
+    // excerpt comment always warned about — the caller's own text is still
+    // legitimate evidence and stays usable. It is persisted with provenance
+    // 'caller_supplied' so nothing downstream mistakes it for fetched content.
+    const persistExcerptFallback = async (): Promise<ResolvedEvidence> => {
+      const excerpt = row.caller_excerpt as string;
+      const excerptHash = sha256Text(excerpt);
+      await client.query(
+        `UPDATE evidence
+         SET retrieval_status = 'retrieved',
+             retrieved_at = now(),
+             canonical_url = NULL,
+             resolved_text = $2,
+             content_kind = 'inline_excerpt',
+             text_provenance = 'caller_supplied',
+             canonical_text_hash = $3,
+             parse_status = 'parsed',
+             parse_error = NULL,
+             page_ranges = NULL
+         WHERE id = $1`,
+        [evidenceId, excerpt, excerptHash],
+      );
+      await client.query("COMMIT");
+      return {
+        status: "retrieved",
+        resolvedText: excerpt,
+        locator: null,
+        contentKind: "inline_excerpt",
+        provenance: "caller_supplied",
+        canonicalTextHash: excerptHash,
+        parseStatus: "parsed",
+        parseError: null,
+        pageRanges: null,
+        fetched: false,
+        parsed: true,
+        usableForClaim: true,
+      };
+    };
+
     if (fetched.status === "unavailable") {
+      if (row.caller_excerpt !== null && row.caller_excerpt.length > 0) {
+        return persistExcerptFallback();
+      }
       await client.query(
         `UPDATE evidence SET retrieval_status = 'unavailable', retrieved_at = now() WHERE id = $1`,
         [evidenceId],
@@ -297,6 +343,24 @@ export async function resolveEvidenceRow(
     }
 
     const textHash = resolvedText !== null ? sha256Text(resolvedText) : null;
+
+    // E-EVIDENCE fallback for a fetched-but-unparseable page (empty text from
+    // the HTML stripper, or a PDF with no extractable text). The page could
+    // not be read; the caller's own excerpt still can be, so it becomes the
+    // verification text — with caller_supplied provenance, never 'fetched'.
+    let provenance: LocatorProvenance = "fetched";
+    let canonicalUrl: string | null = fetched.finalUrl;
+    if (resolvedText === null && row.caller_excerpt !== null && row.caller_excerpt.length > 0) {
+      resolvedText = row.caller_excerpt;
+      payloadHash = sha256Text(row.caller_excerpt);
+      contentKind = "inline_excerpt";
+      parseStatus = "parsed";
+      parseError = null;
+      pageRanges = null;
+      provenance = "caller_supplied";
+      canonicalUrl = null;
+    }
+
     await client.query(
       `UPDATE evidence
        SET retrieval_status = 'retrieved',
@@ -305,7 +369,7 @@ export async function resolveEvidenceRow(
            payload_hash = $3,
            resolved_text = $4,
            content_kind = $5,
-           text_provenance = 'fetched',
+           text_provenance = $10,
            canonical_text_hash = $6,
            parse_status = $7,
            parse_error = $8,
@@ -313,7 +377,7 @@ export async function resolveEvidenceRow(
        WHERE id = $1`,
       [
         evidenceId,
-        fetched.finalUrl,
+        canonicalUrl,
         payloadHash,
         resolvedText,
         contentKind,
@@ -321,6 +385,7 @@ export async function resolveEvidenceRow(
         parseStatus,
         parseError,
         pageRanges === null ? null : JSON.stringify(pageRanges),
+        provenance,
       ],
     );
     await client.query("COMMIT");
@@ -329,14 +394,14 @@ export async function resolveEvidenceRow(
     return {
       status: "retrieved",
       resolvedText,
-      locator: fetched.finalUrl ?? row.submitted_url,
+      locator: canonicalUrl ?? row.submitted_url,
       contentKind,
-      provenance: "fetched",
+      provenance,
       canonicalTextHash: textHash,
       parseStatus,
       parseError,
       pageRanges,
-      fetched: true,
+      fetched: provenance === "fetched",
       parsed,
       usableForClaim: parsed && resolvedText !== null && resolvedText.length > 0,
     };

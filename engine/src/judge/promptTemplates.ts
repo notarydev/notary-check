@@ -31,7 +31,7 @@ import type { ApplicabilityField } from "../verification/applicability.ts";
 
 /** Version string persisted with every judge call (§ requirement #6). Bump on
  * any change to the prompt text or the output schema. */
-export const PROMPT_VERSION = "judge-field-extraction-v3";
+export const PROMPT_VERSION = "judge-field-extraction-v4";
 
 interface FieldCriterion {
   /** The narrow extraction question asked for this field. */
@@ -121,7 +121,8 @@ const FIELD_CRITERIA: Record<ApplicabilityField, FieldCriterion> = {
       "- present: a scope qualifier is stated — extract it as written.\n" +
       "- absent: no scope qualifier.\n" +
       "- ambiguous: several scopes are named and it is unclear which the figure covers.\n" +
-      "- cannot_be_determined: no scope can be recovered from the usable text.",
+      "- cannot_be_determined: no scope can be recovered from the usable text.\n" +
+      "NEVER fuse two scopes into one 'present' value. If the passage names more than one scope for the figures — two tiers, two plans, two products, two segments ('Premium Tier' and 'Standard Tier', or 'GCP' beside 'AWS') — that is ambiguous with each scope listed separately as written. A single 'present' value that spans or elides a gap ('Premium and Standard Tier') is an invention: you may only report text that is actually contiguous in the passage, and you may never insert connecting words. When in doubt, ambiguous is safer than present.",
   },
 };
 

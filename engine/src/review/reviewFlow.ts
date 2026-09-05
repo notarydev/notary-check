@@ -722,11 +722,22 @@ export async function runReview(
           // That is not an establishable field: allowing it through would let a
           // model assertion stand in for evidence, which is the one thing this
           // codebase must never do. Drop the answer (so it never reaches
-          // EvidenceFields) and record the incompleteness.
-          hadUnresolvedLocator = true;
+          // EvidenceFields).
+          //
+          // STEP 2 (2026-09-05): this used to set hadUnresolvedLocator, which
+          // reported the claim as `locator_unresolved`. The truthful mechanism
+          // is that the field could NOT be established from the retained text —
+          // an abstention, not a locator failure. The locator worked; the text
+          // simply does not contain what the judge claimed to see (often a
+          // fused or paraphrased reading — measured live on `scope`, e.g.
+          // "internet egress at Premium Tier and Standard Tier"). It now
+          // records the field as an unresolved required field so the claim's
+          // lifecycle_detail says `required_field_unresolved`, and the field
+          // is never allowed to support or contradict.
+          hadAbstainedRequiredField = true;
           logEvent({
-            event: "review_flow_locator_unresolved",
-            error_cause: `judge_value_not_found_in_canonical_text:${field}`,
+            event: "judge_field_present_not_anchored",
+            error_cause: `judge_present_value_not_found_in_canonical_text:${field}`,
             organization_id: organizationId,
             review_id: reviewId,
           });
@@ -951,8 +962,8 @@ export async function runReview(
   try {
     await client.query("BEGIN");
     const claimResult = await client.query(
-      `INSERT INTO claim (review_id, ordinal, text, decontextualized_form, materiality, state, no_source, state_reason, policy_version, lifecycle_state, lifecycle_detail)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'orchestrator-v1', $9, $10)
+      `INSERT INTO claim (review_id, ordinal, text, decontextualized_form, materiality, state, no_source, state_reason, policy_version, lifecycle_state, lifecycle_detail, claim_fields, rejected_candidates)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'orchestrator-v1', $9, $10, $11, $12)
        RETURNING id`,
       [
         reviewId,
@@ -965,6 +976,11 @@ export async function runReview(
         assigned.reason,
         lifecycle,
         lifecycleDetail,
+        // STEP 0 — persist what this claim asserted and which evidence rows
+        // rejected it, so the state is explainable from the DB alone without
+        // replaying the review (migration 0020).
+        JSON.stringify(claimFields),
+        JSON.stringify(rejectedCandidates),
       ],
     );
     claimId = claimResult.rows[0].id as string;

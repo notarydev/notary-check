@@ -290,3 +290,83 @@ test("an already-unavailable row is returned as-is without throwing", { ...skip 
     await pool.end();
   }
 });
+
+test(
+  "E-EVIDENCE: a pending row with a caller excerpt falls back to the excerpt when the URL is unreachable",
+  { ...skip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      // A server that is closed before resolution -> connection refused -> unavailable.
+      const s = await startServer((_req, res) => res.end("never reached"));
+      const deadUrl = `${s.baseUrl}/gone`;
+      await s.close();
+
+      const excerpt = "The Pacific Ocean volume is 171 million cubic miles (714 million cubic kilometers).";
+      const inserted = await pool.query(
+        `INSERT INTO evidence (review_id, origin, submitted_url, resolved_text, content_kind,
+                              text_provenance, canonical_text_hash, parse_status, retrieval_status, caller_excerpt)
+         VALUES ($1, 'answer_citation', $2, $3, 'inline_excerpt', 'caller_supplied', $4, 'parsed', 'pending', $3)
+         RETURNING id`,
+        [reviewId, deadUrl, excerpt, sha256(excerpt)],
+      );
+      const evidenceId = inserted.rows[0].id as string;
+
+      const resolved = await resolveEvidenceRow(evidenceId, pool, { fetchOptions: { isPrivateIp: allowLoopback } });
+      assert.equal(resolved.status, "retrieved");
+      assert.equal(resolved.resolvedText, excerpt, "the caller excerpt must survive an unreachable page");
+      assert.equal(resolved.provenance, "caller_supplied", "fallback text must never claim to be fetched");
+      assert.equal(resolved.usableForClaim, true);
+
+      const row = (
+        await pool.query("SELECT retrieval_status, text_provenance, resolved_text, canonical_url FROM evidence WHERE id = $1", [evidenceId])
+      ).rows[0] as { retrieval_status: string; text_provenance: string; resolved_text: string; canonical_url: string | null };
+      assert.equal(row.retrieval_status, "retrieved");
+      assert.equal(row.text_provenance, "caller_supplied");
+      assert.equal(row.resolved_text, excerpt);
+      assert.equal(row.canonical_url, null, "no canonical URL may be claimed for an unfetched page");
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
+  "E-EVIDENCE: a pending row with a caller excerpt verifies against the FETCHED page, not the excerpt",
+  { ...skip },
+  async () => {
+    const pool = await freshPool();
+    try {
+      const orgId = await createOrganization(pool);
+      const reviewId = await createReview(pool, orgId);
+      const pageText = "The Pacific Ocean contains approximately 714 million cubic kilometers of water. It is the largest ocean.";
+      const s = await startServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(`<html><body><p>${pageText}</p></body></html>`);
+      });
+      try {
+        const excerpt = "714 million cubic kilometers";
+        const inserted = await pool.query(
+          `INSERT INTO evidence (review_id, origin, submitted_url, resolved_text, content_kind,
+                                text_provenance, canonical_text_hash, parse_status, retrieval_status, caller_excerpt)
+           VALUES ($1, 'answer_citation', $2, $3, 'inline_excerpt', 'caller_supplied', $4, 'parsed', 'pending', $3)
+           RETURNING id`,
+          [reviewId, `${s.baseUrl}/pacific`, excerpt, sha256(excerpt)],
+        );
+        const evidenceId = inserted.rows[0].id as string;
+
+        const resolved = await resolveEvidenceRow(evidenceId, pool, { fetchOptions: { isPrivateIp: allowLoopback } });
+        assert.equal(resolved.status, "retrieved");
+        assert.equal(resolved.provenance, "fetched", "a reachable page must be verified against the page, not the excerpt");
+        assert.equal(resolved.resolvedText, pageText, "resolved text is the fetched page");
+        assert.equal(resolved.usableForClaim, true);
+      } finally {
+        await s.close();
+      }
+    } finally {
+      await pool.end();
+    }
+  },
+);

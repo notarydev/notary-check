@@ -201,19 +201,39 @@ export function evidenceRouter(database: pg.Pool): Router {
     // had proved it appears at that URL. (The inverse bug, dropping the
     // excerpt in favour of an unresolved URL, is in HANDOFF.md; neither
     // direction is acceptable.)
+    //
+    // E-EVIDENCE (2026-09-05, migration 0020): a 19–224 character excerpt is
+    // too thin to establish entity/period/metric and produced live false
+    // negatives (review 900530a5) and INDETERMINATE floods. So when a row
+    // carries BOTH a caller excerpt AND a URL, it is now registered `pending`
+    // — resolution at review time will FETCH the cited page and verify against
+    // it, keeping the excerpt as `caller_excerpt` for provenance and as the
+    // fallback when the fetch is unreachable or unparseable. Registration
+    // stays fetch-free (resolveEvidence.ts documents why); only the status
+    // and the extra column changed.
     let contentKind: string | null = null;
     let textProvenance: string | null = null;
     let canonicalTextHash: string | null = null;
     let parseStatus = "not_attempted";
+    let callerExcerpt: string | null = null;
     if (payload !== undefined) {
       payloadHash = createHash("sha256").update(payload, "utf8").digest("hex");
       resolvedText = payload;
-      retrievalStatus = "retrieved";
       retrievedAt = new Date().toISOString();
       contentKind = "inline_excerpt";
       textProvenance = "caller_supplied";
       canonicalTextHash = payloadHash; // sha256 of the exact text retained
       parseStatus = "parsed"; // the text IS the canonical text; nothing to parse
+      if (submitted_url !== undefined) {
+        // Both present: keep the excerpt, but let review-time resolution try
+        // the page first (E-EVIDENCE). The excerpt remains the fallback and
+        // the provenance record.
+        callerExcerpt = payload;
+        retrievalStatus = "pending";
+      } else {
+        // Excerpt alone (no URL): nothing to fetch; it is 'retrieved' as-is.
+        retrievalStatus = "retrieved";
+      }
     }
 
     // canonical_url and locator_scheme are left null: assigning an immutable
@@ -224,9 +244,10 @@ export function evidenceRouter(database: pg.Pool): Router {
          review_id, origin, submitted_url, canonical_url, payload_ref, payload_hash,
          retrieval_status, retrieved_at, locator_scheme, retention_until,
          submitted_by, snapshot_reuse_policy, access_revoked_at, resolved_text,
-         content_kind, text_provenance, canonical_text_hash, parse_status
+         content_kind, text_provenance, canonical_text_hash, parse_status,
+         caller_excerpt
        )
-       VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULL, $8, $9, $10, NULL, $11, $12, $13, $14, $15)
+       VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULL, $8, $9, $10, NULL, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         review_id,
@@ -244,6 +265,7 @@ export function evidenceRouter(database: pg.Pool): Router {
         textProvenance,
         canonicalTextHash,
         parseStatus,
+        callerExcerpt,
       ],
     );
 
