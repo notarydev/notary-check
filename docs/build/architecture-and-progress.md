@@ -114,6 +114,38 @@ Both live AWS Lightsail container services, region `us-east-2`, both currently `
 | `notarycheck.ai` | `dashboard/src/app/account/page.tsx` (`sales@notarycheck.ai` mailto) | Does not resolve (`dig` returned nothing, 2026-09-02) — this mailto address's domain is not live. |
 
 
+
+## Correction — how Verify and Act actually run today (2026-09-04)
+
+Dated entries above describe per-claim Move, which was the wiring when they
+were written. They are left unedited because a dated log that gets rewritten
+stops being a record. This is the current fact:
+
+- **Verify runs per claim.** Claims fan out 4-wide from the connector; each
+  submission resolves evidence, runs the residual judge calls, and assigns a
+  state. This is the only path that may call `assignState()`.
+- **Act runs ONCE per invocation**, through `POST /v1/reviews/:id/detect` →
+  `runMovesForInvocation`. It is independent of Verify's verdicts — zero claims
+  and zero findings are valid inputs and it still runs, which is the ~37% of
+  answers where Act is the entire product.
+- **Per-claim Move is disabled in production.** `server/src/engineClient.ts`
+  sets `skip_claim_moves: true`. The code path still exists for direct API
+  callers; it does not fire for the connector.
+- **Still sequential, and this is the open gap:** `/detect` runs AFTER the claim
+  loop finishes, not alongside it. See `ROADMAP.md` § E-LAT.
+
+### One naming wrinkle worth knowing before it confuses someone
+
+`detect/` is **Verify's** detector bank — it emits findings and gaps, which are
+facts. But the HTTP endpoint named `/detect` runs that bank *and* Act's Move
+call, so the word "detect" now straddles the Verify/Act line that the rest of
+the vocabulary keeps clean.
+
+The module is named correctly; the **endpoint** is not. It should probably be
+`/analyze` or split in two. Not renamed yet — it is a wire-format change and
+would have to ship with a matching connector deploy, so it is recorded here
+rather than done in passing.
+
 ## 2026-09-04, third session — the Verify / Act rename and the module split
 
 Nothing about behaviour changed in this session. Everything in it was aimed at
@@ -194,7 +226,7 @@ Both live Lightsail container services were redeployed with the current checkout
 - **`notary-check-api`** (engine): new image `:notary-check-api.engine.11`, deployment version 5. Ships all 5 audit-P0 fixes, the entitlement gate, live-mode-ready billing lifecycle, ops groundwork (rate limiting, backup/restore, kill-switch runbook) — all previously committed but not yet deployed — plus the new Move wiring (below). `INTERNAL_SERVICE_SECRET` added to its env (previously unset, meaning `/v1/internal/resolve-organization` was failing closed).
 - **`notary-check-mcp`** (server): new image `:notary-check-mcp.server.10`, deployment version 7. Clerk auth (`clerkMiddleware`, `mcpAuthClerk`) is now live-gating both MCP routes — confirmed via a real unauthenticated `POST /mcp` returning `401` with a working `WWW-Authenticate` challenge. `INTERNAL_SERVICE_SECRET` and live Clerk keys added to its env (previously absent).
 - **Production database**: a `pg_dump` backup was taken and verified restorable (`pg_restore --list` confirmed real table data) immediately before running migrations. Migrations `0007`–`0013` were then applied via `engine/src/migrate.ts` against the live DB — each runs in its own transaction, all applied cleanly.
-- **Move (Act v2) wired into the product for the first time**: previously an isolated, unwired module (`engine/src/act/`). Now: new persistence tables (migration `0013`), the MCP tool schema accepts an optional `user_request` field (Move is skipped, not guessed, when absent), Move runs concurrently with Verify and Act/Challenge inside `reviewFlow.ts` — strictly after Verify's result is committed, never gating or altering it — and is now kill-switch- and quota-gated (previously a known gap). The review response carries `moves` separately from `challenges`; the UI renders it through the existing pill mechanism.
+- **Move (Act v2) wired into the product for the first time**: previously an isolated, unwired module (`engine/src/act/`). Now: new persistence tables (migration `0013`), the MCP tool schema accepts an optional `user_request` field (Move is skipped, not guessed, when absent), Move runs concurrently with Verify and Act/Challenge inside `reviewFlow.ts` **[corrected 2026-09-04: this describes the wiring as deployed that day. Per-claim Move is now OFF — the connector sets `skip_claim_moves: true` and Act runs once per invocation via `/detect`. Left unedited as a dated record; see the correction block below.]** — strictly after Verify's result is committed, never gating or altering it — and is now kill-switch- and quota-gated (previously a known gap). The review response carries `moves` separately from `challenges`; the UI renders it through the existing pill mechanism.
 - **Verified post-deploy**: `GET /.well-known/oauth-protected-resource/mcp` resolves real Clerk metadata; unauthenticated `POST /mcp` gets a real `401`; an authenticated `POST /v1/reviews` against the live engine successfully created a real review row, confirming DB connectivity and the entitlement check both work post-migration.
 - ~~**Not yet re-verified live**~~ — **done, same day.** A real Claude.ai session against the deployed connector produced a live end-to-end `tools/call` returning both a `CONTRADICTED` Verify finding and a real `moves` payload. Move is confirmed working through the deployed path, not only locally.
 
@@ -246,7 +278,7 @@ Fixed with a new, deliberately asymmetric rule in `verification/normalization.ts
 - `--case paraphrase` — "declined 12 percent in fiscal 2025" vs claim "grew 17% in FY25" (the case that was broken)
 - `--case exact` — "increased 12%" vs "grew 17%" (regression check on the path that already worked)
 
-**E2 — claim loop parallelised.** Claims were submitted one at a time, each round trip internally running a judge call and a Move call, so a five-claim answer was five sequential waits while the MCP tool call blocked Claude's turn. Now bounded-concurrent at 4 in flight. Execution fans out; **accumulation stays in claim order**, because the challenge and Move caps are first-come and accumulating by completion would let network timing decide which claim's moves survive.
+**E2 — claim loop parallelised.** Claims were submitted one at a time, each round trip internally running a judge call and a Move call **[corrected 2026-09-04: per-claim Move is now off — see the correction block below]**, so a five-claim answer was five sequential waits while the MCP tool call blocked Claude's turn. Now bounded-concurrent at 4 in flight. Execution fans out; **accumulation stays in claim order**, because the challenge and Move caps are first-come and accumulating by completion would let network timing decide which claim's moves survive.
 
 **Also now live:** the `not_checked` card state (previously committed but undeployed), so an unsourced claim no longer reports as a Notary malfunction.
 

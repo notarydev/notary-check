@@ -784,7 +784,9 @@ export async function reviewAnswer(
     // split matters.
     //
     // Concurrency: each submitClaim is a network round trip that internally
-    // runs a judge call and a Move call, and claims are fully independent
+    // runs a judge call — and, when this comment was written, a Move call too.
+    // Per-claim Move is now OFF (skip_claim_moves below); Act runs once per
+    // invocation via /detect. Claims are fully independent
     // — nothing about claim 2 depends on claim 1. Serially, a five-claim
     // answer was five sequential round trips while the MCP tool call blocked
     // Claude's turn, so the user watched a spinner for the sum rather than

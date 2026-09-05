@@ -200,10 +200,10 @@ body {
   margin-bottom: 4px;
 }
 
-/* Track 2 / Challenge layer — deliberately visually subordinate to the
+/* Act / Challenge layer — deliberately visually subordinate to the
    evidence record above it: smaller type, muted color, no severity styling,
    never first in the card. See docs/build/tier-1-build-and-operating-plan.md's
-   "Track 2 / Challenge layer" section. */
+   "Act / Challenge layer" section. */
 .notary-challenges {
   margin-top: 10px;
 }
@@ -233,7 +233,7 @@ body {
   color: var(--color-text-tertiary, light-dark(#aaa, #7a7a76));
 }
 
-/* Advance (Track 2 v2) — its own section, visually distinct from Track 2/
+/* Move (Act v2) — its own section, visually distinct from Act/
    Challenge above it: this is a proposed NEXT MOVE about the user's broader
    task, not a question about the finding on this card. Same subordinate
    treatment, its own top margin so the two registers never visually blend

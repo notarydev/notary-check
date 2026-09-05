@@ -170,17 +170,19 @@ never mattered. Fixed in `verification/normalization.ts` with a deliberately
 asymmetric rule (see the build plan). Live-verified on both cases.
 
 **~~E2~~ — DONE 2026-09-04.** Parallelise the claim loop. `engineClient.ts` submits claims
-serially and each submission internally runs a judge call and a Move
+serially and each submission internally runs a judge call and (at the time) a Move
 call, so a five-claim answer is five sequential round trips while the tool
 call blocks Claude's turn. Claims are fully independent. Bounded
 `Promise.all`. **Biggest latency win available, and it is a precondition
 for anything that adds per-claim work.**
 
-**Outcome.** Bounded concurrency of 4. The subtlety worth keeping: execution
+**Outcome.** Bounded concurrency of 4. **Superseded — per-claim Move is OFF.** The connector sets `skip_claim_moves: true`; Act now runs ONCE per invocation via `/detect` → `runMovesForInvocation`, after the claim loop and independent of Verify's verdicts. The caps described below therefore apply to a path that no longer fires in production. The subtlety worth keeping: execution
 fans out, accumulation stays in claim order, because the challenge/Move
 caps are first-come and accumulating by completion would let network timing
 decide which claim's moves survive. Regression test makes completion
 order the exact reverse of claim order.
+
+**~~E3~~ — DONE, live in `server.34`.** The tool description now says what Notary IS, no longer gates the trigger on having a source, and the trailing reminder is gone. `task_mode` was deliberately NOT added — see `act/intent.ts`: inferring intent is Act's own job, and asking Claude for it in an optional field it skips 19% of the time would make the classification unauditable. Original text follows.
 
 **E3 — Fix the four invocation defects.** `user_request` is optional and
 its own description tells the model it may be omitted; the trailing
@@ -200,6 +202,11 @@ could not be checked, plus a card button calling `sendMessage()` so the
 the `(organization_id, hash(claim_text))` record for boundedness and a
 **hard refusal of pasted excerpts on this path**. Full design and the
 known weaknesses: § Asking for a missing source in the build plan.
+
+**E5 — PARTIALLY DONE. Split, because striking it whole would tidy away work that never shipped.**
+
+- **~~E5a~~ — DONE** (`engine.37`). The sealed constraint carries `field_deltas`, so Act can tell a wrong period from a wrong entity from a wrong number instead of inferring it from one sentence. Act also now receives `claude_answer`, `prior_attempts`, `explicit_constraints` and `prior_context`, which the MCP tool had been collecting and the engine had been discarding.
+- **E5b — OPEN.** The constraint still carries no `state` or `state_reason`, and `act/prompt.ts` contains ZERO per-state guidance (verified: no occurrence of CONTRADICTED / UNSUPPORTED / INDETERMINATE). The adversarial re-run this step requires has not happened either. Original text follows.
 
 **E5 — Give Move a real view of the finding.** It currently sees one
 sealed sentence and has to infer what kind of mismatch occurred. Widen the

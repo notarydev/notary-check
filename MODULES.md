@@ -61,7 +61,7 @@ and `quotas/usage.ts`'s `ModelCallRecord` — both are that fix, applied).
 | 0 | `observability/` | Structured logging. | — |
 | 0 | `middleware/` | Rate limiting. | — |
 | 0 | `test/` | Test-only DB helpers. | — |
-| 1 | `detect/` | **Verify's detector bank** — findings (blatantly wrong) and gaps (couldn't check). Deliberately has no `state`/`verdict`/`confidence` field; a test asserts this. | `verification`, `observability` |
+| 1 | `detect/` | **Verify's detector bank** (note: the HTTP endpoint `/detect` runs this bank *and* Act's Move call, so the endpoint name straddles the Verify/Act line even though the module does not — see `docs/build/architecture-and-progress.md` § Correction) — findings (blatantly wrong) and gaps (couldn't check). Deliberately has no `state`/`verdict`/`confidence` field; a test asserts this. | `verification`, `observability` |
 | 1 | `ingestion/` | Fetching sources safely, resolving them to canonical text, delimiting untrusted text before it reaches a model. | `evidence` |
 | 2 | `judge/` | **The model transport.** DeepSeek client, kill switch, field extraction, prompt templates — plus `challengeGeneration.ts`/`challengePrompts.ts`, which are Act's Challenge layer. | `ingestion`, `quotas`, `verification`, `observability` |
 | 3 | `extraction/` | Pulling material claims out of a Claude answer. | `judge`, `quotas`, `verification`, `observability` |

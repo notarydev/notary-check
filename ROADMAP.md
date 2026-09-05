@@ -228,7 +228,7 @@ usefully, is the product work.
 | | What's missing |
 |---|---|
 | **E4** | **Ask for a missing source**, two ways — response text plus a card button. Needs an **ask ledger**: today an ignored gap would repeat on every single invocation. |
-| **E5** | **Give Move a real view of the finding.** It sees one sealed sentence and must infer what kind of mismatch happened. |
+| **E5b** | **Give Move the finding's STATE.** (E5a — the field-delta handoff — shipped in `engine.37`.) `act/prompt.ts` contains zero per-state guidance; verified, not assumed. It sees one sealed sentence and must infer what kind of mismatch happened. |
 | **S5** | **The intent classifier is weak** — it defaults to `general` on obviously classifiable input, which resolves to the full move set and constrains nothing. |
 | **S6** | **Act has no detector bank of its own** (deferred deliberately). Verify has three detectors; Act has none. |
 | **S7** | Deferred Verify detectors: arithmetic (6.7% of turns), requirement (2.3%), drift, overreach. |
