@@ -685,6 +685,21 @@ async function runDetection(
  * A failure here loses one data point, which is strictly better than a user
  * seeing an error because we could not write a row about their click.
  */
+/**
+ * Marks a review finished, so a polling card knows to stop.
+ *
+ * Fire-and-forget: a lost completion costs a card that keeps polling a finished
+ * review, which is wasteful and harmless. Failing the user's review because a
+ * status flag did not stick would not be.
+ */
+async function markReviewComplete(reviewId: string, apiKey: string): Promise<void> {
+  try {
+    await engineFetch(`/v1/reviews/${reviewId}/complete`, { method: "POST", body: "{}" }, apiKey);
+  } catch {
+    // See above.
+  }
+}
+
 export async function recordMoveEvent(
   moveId: string,
   eventType: "shown" | "revealed" | "committed" | "dismissed",
@@ -926,6 +941,12 @@ export async function reviewAnswer(
     }
     const detection = await runDetection(reviewId, answerText, materialClaims, claimIds, grounded, apiKey, extras);
 
+    // Everything that will ever be written for this review has been written.
+    // Marked HERE rather than at each return below, because there are several
+    // and a status that depends on which branch was taken would be wrong on the
+    // one somebody forgets.
+    await markReviewComplete(reviewId, apiKey);
+
     // Bank findings are deliberately NOT pushed into issueFindings.
     //
     // They used to be, and it produced a genuinely misleading card: a bank
@@ -980,6 +1001,8 @@ export async function reviewAnswer(
     if (issueFindings.length > 0 || bankFindingsDetail.length > 0) {
       return {
         status: "issue_found",
+        review_id: reviewId,
+        complete: true,
         scope,
         findings: issueFindings.length > 0 ? issueFindings : undefined,
         actions: ["Open evidence", "Qualify", "Dismiss", "Recheck"],
@@ -1002,6 +1025,8 @@ export async function reviewAnswer(
     if (uncheckedFindings.length > 0) {
       return {
         status: "could_not_check",
+        review_id: reviewId,
+        complete: true,
         scope: uncheckedFindings[0].text,
         actions: [],
         // Moves ride along here too, and this is the case where they matter
@@ -1029,6 +1054,8 @@ export async function reviewAnswer(
     if (noSourceFindings.length > 0 && noSourceFindings.length === materialClaims.length) {
       return {
         status: "not_checked",
+        review_id: reviewId,
+        complete: true,
         scope: `No inspectable source was supplied for ${materialClaims.length === 1 ? "this claim" : `these ${materialClaims.length} claims`}.`,
         actions: [],
         moves: movesField,
@@ -1040,6 +1067,8 @@ export async function reviewAnswer(
     }
     return {
       status: "no_issue",
+        review_id: reviewId,
+        complete: true,
       scope,
       actions: [],
       moves: movesField,

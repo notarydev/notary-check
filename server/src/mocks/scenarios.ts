@@ -91,6 +91,27 @@ export type ReviewCardData = {
   // separate rules that force this state to exist.
   status: "no_issue" | "issue_found" | "could_not_check" | "not_checked";
   scope: string;
+
+  /**
+   * The review this card is about, so the card can poll for its own updates.
+   *
+   * Verification takes seconds to tens of seconds. Until now the connector
+   * blocked for all of it and the card only ever saw a finished result, so the
+   * user watched nothing happen and then a card appeared. With this the card
+   * can render early and fill itself in.
+   *
+   * Optional because the mocked scenarios and the early-failure paths (a review
+   * that was never created, extraction that failed outright) have no review to
+   * poll. A card without it simply does not poll.
+   */
+  review_id?: string;
+
+  /**
+   * False while verification is still running. A card that is not complete must
+   * never present itself as a finished verdict — "checking" is honest, an empty
+   * findings list rendered as "nothing flagged" is not.
+   */
+  complete?: boolean;
   claim?: string;
   findings?: Array<{
     label: string;
