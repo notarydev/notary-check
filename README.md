@@ -11,6 +11,7 @@ constraint shapes most of the design — see `docs/` below.
 
 | If you want to | Read |
 |---|---|
+| Understand how it works end to end | [`MECHANISM.md`](MECHANISM.md) — **start here** |
 | Know what the words mean | [`CLAUDE.md`](CLAUDE.md) — Verify / Act / Challenge / Move, and the one authority rule |
 | Find your way around the code | [`MODULES.md`](MODULES.md) — what each directory owns and what it may import |
 | Know what's actually live | [`docs/build/architecture-and-progress.md`](docs/build/architecture-and-progress.md) |

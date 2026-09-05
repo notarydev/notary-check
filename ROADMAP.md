@@ -9,13 +9,15 @@ them has been a real cost, so:
 
 | File | Job | Time |
 |---|---|---|
+| `MECHANISM.md` | How it works right now, end to end. Not a plan and not history — if it is out of date that is a bug. | present |
 | **`ROADMAP.md`** (this) | The priority list. **Engine correctness and cost is priority 1; open issues are priority 2.** The index — start here. | future |
 | `docs/build/whats-left.md` | The detailed queue, with stable IDs (`B1`, `O4`, `E5`…) and the full argument for each. **This file cites those IDs; it does not restate them.** | future |
 | `PROGRESS.md` | The audit trail. Every review pass, every bug found. Append-only history. | past |
 | `docs/build/architecture-and-progress.md` | What is *actually* built and live right now, including infra. | present |
 
-Operational facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code
-layout is in `MODULES.md`. Vocabulary is in `CLAUDE.md`.
+How the system actually works, end to end, is in `MECHANISM.md`. Operational
+facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code layout is in
+`MODULES.md`. Vocabulary is in `CLAUDE.md`.
 
 ---
 ## Where we actually are

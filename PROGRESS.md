@@ -11,7 +11,7 @@
 
 **Last updated**: 2026-09-04 (third session) — **repo made handoff-ready.** No behaviour changed. The Track 1/Track 2/Advance vocabulary is retired for **Verify / Act**, with Act's two layers keeping the names **Challenge** and **Move** (migration `0016`, 53 files). Two dependency cycles broken. `reviewFlow.ts` split 1341 → 872 lines. The layering is now enforced by `engine/scripts/check-boundaries.ts` in `npm test` rather than described in prose. New `MODULES.md`; `README.md` rewritten; `CLAUDE.md` gained the glossary.
 
-Found while wiring the boundary check: **`npm test` never ran `detect/` or `middleware/`** — the entire Verify detector bank had never executed in the suite. Fixed with a glob. Engine **428/428** (was 391), server **10/10**, all against real Postgres.
+Found while wiring the boundary check: **`npm test` never ran `detect/` or `middleware/`** — the entire Verify detector bank had never executed in the suite. Fixed with a glob. Engine **439 tests / 435 pass / 0 fail** (was 391 — 103 were silently skipping), server **10/10**, all against real Postgres.
 
 **Not fully shipped — see `ROADMAP.md` § In flight.** Move telemetry (`13a9144`) is committed and NOT deployed, the deploy's test gate is failing unreproduced, and the live connector test run is underway. Below is what DID ship.
 

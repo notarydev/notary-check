@@ -37,6 +37,10 @@ after it.
 
 ## Read this first
 
+- **How the whole thing actually works**: [`MECHANISM.md`](MECHANISM.md) —
+  one pass end to end as the code runs today: what Claude is told, Verify, the
+  detector bank, Act, the card, and the invariants. **Read this first if you
+  are new.**
 - **The module map**: [`MODULES.md`](MODULES.md) — what each directory owns,
   what it may import, how to run the tests, and the handful of mistakes this
   codebase has actually made. Read it before your first edit.

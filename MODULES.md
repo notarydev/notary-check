@@ -1,5 +1,6 @@
 # The module map
 
+For how the system actually runs end to end, see `MECHANISM.md`.
 For infrastructure, domains and deploys, see `OPERATIONS.md`.
 
 Read `CLAUDE.md` first for the vocabulary (Verify / Act / Challenge / Move) and
@@ -102,7 +103,7 @@ Split out of a single 1341-line file so each piece answers one question:
 ## Running things
 
 ```bash
-cd engine && npm test          # boundaries check, then 428 tests
+cd engine && npm test          # boundaries check, then 439 tests
 cd engine && npm run boundaries # just the layer rules
 cd engine && npx tsc --noEmit
 cd server && npm test
