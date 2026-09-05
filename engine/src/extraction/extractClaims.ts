@@ -521,6 +521,19 @@ const FIELD_DECOMPOSITION =
   '- "comparator_baseline": what the figure is relative to ("prior year", "the industry average"). Omit when no reference is stated.\n' +
   '- "modality": "actual" for a plain assertion, otherwise the marker the claim states ("estimated", "projected", "forecast", "target", "at least", "up to").\n' +
   '- "scope": ONLY a restriction that narrows WHAT IS BEING MEASURED — the population or segment the figure covers ("North America", "excluding one-time items", "enterprise customers only", "all products"). Set it only when removing the phrase would make the claim cover MORE than it does.\n' +
+  // TIERS, PLANS AND VARIANTS. A live false positive: two rows of a pricing
+  // table, "GCP (Premium Tier) $0.12" and "GCP (Standard Tier) $0.085", were
+  // reported as a self-contradiction. They are two products, not a conflict.
+  //
+  // selfContradiction.ts already guards this — couldCompare refuses to compare
+  // claims whose scopes differ. The guard could not fire because the tier was
+  // in the claim TEXT and never reached the scope FIELD, so two claims about
+  // different things looked comparable. Claude acted on the finding and ran an
+  // unnecessary search.
+  //
+  // A tier is a narrowing of what is being measured in exactly the sense this
+  // field means, so it belongs here; it was simply not among the examples.
+  '  A tier, plan, variant, edition or product line IS a scope — "Premium Tier", "Standard Tier", "on-demand", "reserved", "first 10 TB". Two figures that differ only by one of these are two products, not a contradiction, and scope is what tells them apart.\n' +
   '  Do NOT set "scope" for language that explains, attributes a cause, emphasises, or frames — "driven by enterprise demand", "overall", "in short", "as a result", "notably", "looking at the full year". Those describe WHY or HOW something is said, not WHAT is measured, and they must leave scope unset.\n' +
   '  When in doubt, omit it. An unset scope is compared as the general case; a wrongly-set one makes two claims about the same measure look like claims about different things.\n' +
   "A field the claim does not actually assert stays ABSENT from the JSON — never invent one, never infer one from surrounding sentences.";

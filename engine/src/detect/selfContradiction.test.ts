@@ -151,3 +151,58 @@ test("no claims at all is not_applicable, never missing_input", () => {
   const out = selfContradictionDetector.run(input([]));
   assert.equal(out.status, "not_applicable");
 });
+
+// --- the live false positive -----------------------------------------------
+//
+// Production, 2026-09-05: two rows of a pricing table were reported as a
+// self-contradiction —
+//
+//   "| **GCP** (Premium Tier) | $0.12 | 1 GB/month | ..."
+//   "| **GCP** (Standard Tier) | $0.085 | 200 GB/month | ..."
+//
+// They are two products, not a conflict. Claude acted on the finding and ran an
+// unnecessary search, which is worse than saying nothing.
+//
+// The guard was always here — couldCompare refuses to compare claims whose
+// scopes differ. It could not fire because the tier lived in the claim TEXT and
+// never reached the scope FIELD. The extraction prompt now states that a tier,
+// plan or variant IS a scope; this asserts the detector half.
+
+test("two pricing tiers of the same product are not a contradiction", () => {
+  const out = selfContradictionDetector.run(
+    input([
+      {
+        text: "| **GCP** (Premium Tier) | $0.12 | 1 GB/month |",
+        fields: { entity: "GCP", period: "FY25", metric: "egress pricing", scope: "Premium Tier", valueUnit: { value: "0.12", unit: "/GB" } },
+      },
+      {
+        text: "| **GCP** (Standard Tier) | $0.085 | 200 GB/month |",
+        fields: { entity: "GCP", period: "FY25", metric: "egress pricing", scope: "Standard Tier", valueUnit: { value: "0.085", unit: "/GB" } },
+      },
+    ]),
+  );
+  assert.equal(out.status, "ran");
+  if (out.status !== "ran") return;
+  assert.equal(out.findings.length, 0, "differing scopes must never be compared — they measure different things");
+});
+
+test("but the same tier with two different prices IS still a contradiction", () => {
+  // The guard must not become a blanket excuse. Same scope, same everything,
+  // conflicting values — this must still fire, or the fix has disarmed the
+  // detector rather than corrected it.
+  const out = selfContradictionDetector.run(
+    input([
+      {
+        text: "GCP Premium Tier egress is $0.12/GB.",
+        fields: { entity: "GCP", period: "FY25", metric: "egress pricing", scope: "Premium Tier", valueUnit: { value: "0.12", unit: "/GB" } },
+      },
+      {
+        text: "GCP Premium Tier egress is $0.15/GB.",
+        fields: { entity: "GCP", period: "FY25", metric: "egress pricing", scope: "Premium Tier", valueUnit: { value: "0.15", unit: "/GB" } },
+      },
+    ]),
+  );
+  assert.equal(out.status, "ran");
+  if (out.status !== "ran") return;
+  assert.equal(out.findings.length, 1, "a real conflict within one scope must still be caught");
+});

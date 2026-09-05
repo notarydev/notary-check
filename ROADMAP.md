@@ -138,9 +138,15 @@ to beat: 21 claims, 5 sources, 270 judge calls, 21s.
 
 **Correctness comes before speed in that plan**, because two things are known
 broken: 18 of 21 claims return `checks_did_not_complete`, and a live
-self-contradiction finding was a FALSE POSITIVE that Claude acted on (two GCP
-pricing tiers read as a conflict, because the tier qualifier never reached
-`scope`). A fast wrong answer is worse than a slow one.
+self-contradiction finding was a FALSE POSITIVE that Claude acted on.
+
+**Both moved 2026-09-05.** The false positive is FIXED — a tier, plan or variant
+is now extracted into `scope`, which is what `couldCompare` needs to refuse the
+comparison; two regression tests assert both halves (tiers do not conflict, the
+same tier at two prices still does). And `checks_did_not_complete` is very
+likely the same root cause as the call volume: making `deterministicPass`
+whitespace-tolerant produced SUPPORTED on a local run where everything used to
+abstain. **Needs confirming against production.**
 
 ### Speed — the option set
 
