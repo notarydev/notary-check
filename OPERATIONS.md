@@ -192,3 +192,31 @@ reads. Both are current.
 - **Regression harness:** `cd engine && node scripts/measure-cant-check.mjs` — flags claims whose value is verbatim on a fetched source yet ended UNSUPPORTED/INDETERMINATE (E18 baseline: 98 candidates / 219 unresolved).
 - **Prod DB read pattern:** psql via `docker run --rm postgres:16-alpine psql …`; the prod URL from the Lightsail engine env carries `uselibpqcompat=true`, which libpq rejects — strip it first (see deploy.sh `libpq_url`). Everything is read-only from this repo unless you intend a deploy.
 - **Key hygiene still open:** rotate the invalid deployed `CLERK_SECRET_KEY`; fix the invalid local `engine/.env` `DEEPSEEK_API_KEY` (breaks the engine test gate when present); close F4 (live keys in `.claude/settings.local.json`).
+
+## Environment & access for a fresh agent — session-start checklist
+
+Run these before claiming you can operate anything; each documents what it proves.
+
+```bash
+git ls-remote origin -h refs/heads/main      # GitHub push/pull works
+aws sts get-caller-identity                  # AWS CLI authenticated (IAM `Opencode_Notary`)
+docker info >/dev/null 2>&1 && echo docker-ok  # Docker daemon running (test PG, prod-DB psql, amd64 image builds)
+aws lightsail get-container-services --region us-east-2 \
+  --query 'containerServices[].{n:containerServiceName,v:currentDeployment.version}' --output text  # reach Lightsail
+```
+
+- **Prod DB URL + engine env**: fetch from the Lightsail `notary-check-api` container env
+  (`aws lightsail get-container-services … --query 'containerServices[0].currentDeployment.containers.engine.environment'`).
+  The engine's deployed `DEEPSEEK_API_KEY` there is VALID — use it for local live-judge tests; the local
+  `engine/.env` key is stale/invalid (a known chore). psql via a throwaway `postgres:16-alpine` container
+  (strip `uselibpqcompat` — see deploy.sh `libpq_url`).
+- **Local test Postgres**: `docker run -d --name notary-pg -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=notary_check postgres:16` + `CREATE ROLE $USER LOGIN SUPERUSER;`; engine tests auto-migrate.
+- **Clerk admin**: valid secret in local `server/.env` (`CLERK_SECRET_KEY`) → `api.clerk.com`. The secret in the
+  **deployed** server env is INVALID (`clerk_key_invalid`) — a chore.
+- **Local tools**: runs-report dashboard (`engine/scripts/runs-report.mjs`, localhost:8123) and harness
+  (`engine/scripts/measure-cant-check.mjs`) both need only prod DB access.
+
+**Owner-only (agent cannot do these — they are the access backlog):**
+Clerk Dashboard (publish Account portal so `/sign-in` resolves; rotate the invalid deployed `CLERK_SECRET_KEY`;
+approve OAuth-app changes), Stripe live keys + webhook, Google Cloud OAuth console, marketing site / Cloudflare,
+driving a real `claude.ai` session, and any decision gated as "owner decision" in ROADMAP (E11, E17).

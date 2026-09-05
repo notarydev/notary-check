@@ -132,6 +132,15 @@ should see Act/Move needs
 scripts/runs-report.mjs` → http://localhost:8123, read-only, auto-poll) and
 the regression harness (`node scripts/measure-cant-check.mjs`).
 
+**Access — verify before you claim you can operate anything.** Run the
+session-start checklist in `OPERATIONS.md` § "Environment & access for a
+fresh agent" (git remote, `aws sts get-caller-identity`, `docker info`,
+Lightsail reachability). Source every credential from where the checklist
+says — never assume AWS/Clerk/Docker access exists, and never guess a key.
+Owner-only capabilities (Clerk Dashboard portal publish, secret rotation,
+Stripe live, claude.ai sessions, E11/E17 decisions) are a backlog you cannot
+close yourself; say "needs owner" rather than improvising around them.
+
 **Docs discipline when you act:** update
 `docs/build/architecture-and-progress.md` **in the same commit** as the
 schema/deploy/auth change it describes; keep ROADMAP's "In flight right now"
