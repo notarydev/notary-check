@@ -45,6 +45,7 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 import type { LocatorContentKind, LocatorProvenance, PageRange } from "../evidence/locators.ts";
+import { htmlToText } from "./htmlToText.ts";
 import { extractPdfText } from "./parsePdf.ts";
 import { fetchSource } from "./safeFetch.ts";
 import type { SafeFetchOptions } from "./safeFetch.ts";
@@ -315,7 +316,11 @@ export async function resolveEvidenceRow(
 
     if (fetched.mimeType === "text/html") {
       contentKind = "html";
-      resolvedText = stripHtml(fetched.body);
+      // E9 (2026-09-05): real HTML parsing (parse5) — character references are
+      // decoded, non-content subtrees are removed, and table rows are emitted
+      // as "cell | cell | cell". The old regex stripper leaked entity-encoded
+      // markup and flattened tables.
+      resolvedText = htmlToText(fetched.body);
       payloadHash = sha256Text(resolvedText);
       // The stripper cannot fail, but it can legitimately produce nothing (a
       // page that is all script/style/markup). Empty text is NOT parsed
@@ -411,18 +416,4 @@ export async function resolveEvidenceRow(
   } finally {
     client.release();
   }
-}
-
-/**
- * A deliberately simple, regex-based HTML-to-text stripper — NOT a full HTML
- * parser (matching safeFetch.ts's documented scope boundary). `<script>` and
- * `<style>` blocks are removed ENTIRELY first (their content is never page
- * text), then all remaining tags are stripped, then whitespace is collapsed.
- */
-function stripHtml(body: Buffer): string {
-  let text = body.toString("utf8");
-  text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ");
-  text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ");
-  text = text.replace(/<[^>]*>/g, " ");
-  return text.replace(/\s+/g, " ").trim();
 }
