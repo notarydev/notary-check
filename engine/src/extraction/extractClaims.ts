@@ -280,10 +280,50 @@ export async function extractClaims(
  * rather than more of them, so this cannot fan out into a hundred parallel
  * model calls.
  */
+/**
+ * Breaks an oversized block into target-sized pieces at single newlines.
+ *
+ * Only used for blocks that already exceed the target — a table, a long list,
+ * or prose written without blank lines. A line longer than the target on its
+ * own is returned whole rather than cut, because splitting mid-line would
+ * produce claim text that no longer appears verbatim in the answer and would
+ * be dropped downstream.
+ */
+function splitLongBlock(block: string): string[] {
+  const lines = block.split("\n");
+  const out: string[] = [];
+  let current = "";
+  for (const line of lines) {
+    if (current.length > 0 && current.length + line.length > EXTRACTION_TARGET_CHUNK_CHARS) {
+      out.push(current);
+      current = line;
+    } else {
+      current = current.length > 0 ? `${current}\n${line}` : line;
+    }
+  }
+  if (current.trim().length > 0) out.push(current);
+  return out.length > 0 ? out : [block];
+}
+
 export function splitForExtraction(answerText: string): string[] {
   if (answerText.length <= EXTRACTION_CHUNK_THRESHOLD_CHARS) return [answerText];
 
-  const paragraphs = answerText.split(/\n\s*\n/);
+  // Split at blank lines FIRST, then split any resulting block that is still
+  // over target at single newlines.
+  //
+  // WHY THE SECOND PASS EXISTS. Blank lines alone are not enough on real
+  // answers. A markdown table has no blank lines inside it, so a 12-row
+  // comparison table is one "paragraph" and lands whole in a single chunk —
+  // which then carries nearly every claim in the answer. Measured live: four
+  // chunks at 708ms, 9982ms, 12308ms and 13204ms. Parallelism was working
+  // perfectly and buying almost nothing, because one chunk held all the work.
+  //
+  // Single newlines are still a safe boundary: a table row, a list item or a
+  // sentence on its own line is a complete unit, and claim text stays verbatim
+  // because nothing is cut mid-line.
+  const paragraphs = answerText
+    .split(/\n\s*\n/)
+    .flatMap((block) => (block.length > EXTRACTION_TARGET_CHUNK_CHARS ? splitLongBlock(block) : [block]));
   const target = Math.max(
     EXTRACTION_TARGET_CHUNK_CHARS,
     Math.ceil(answerText.length / EXTRACTION_MAX_CHUNKS),
@@ -307,7 +347,7 @@ export function splitForExtraction(answerText: string): string[] {
 }
 
 /** Answers below this are extracted in one call, exactly as before. */
-export const EXTRACTION_CHUNK_THRESHOLD_CHARS = 1500;
+export const EXTRACTION_CHUNK_THRESHOLD_CHARS = 1200;
 /**
  * Rough size to aim for per chunk.
  *
@@ -520,6 +560,17 @@ const OUTPUT_FORMAT =
   "Output format — strict JSON, no prose around it. Emit exactly ONE JSON object with a single key \"claims\", holding an array of claim objects. Each claim object has exactly these keys:\n" +
   '- "reasoning": a string containing your numbered step-by-step reasoning.\n' +
   '- "text": the verbatim claim sentence/clause exactly as it appears in the answer text.\n' +
+  // TABLES. Measured live: on a table-heavy answer 6 of 15 extracted claims
+  // were discarded because the model had turned a table row into a prose
+  // sentence ("AWS charges $0.09/GB for the first 10 TB") that appears nowhere
+  // in the answer. 40% of the claims in a comparison answer were silently lost.
+  //
+  // The verbatim rule is a safety property and is not being relaxed — it is
+  // what stops an invented claim entering the pipeline. What was missing is
+  // that a table ROW is the verbatim span for a tabular fact, and the readable
+  // sentence belongs in decontextualized_form, which already exists for exactly
+  // this purpose.
+  '  If the fact comes from a table, "text" MUST be the table row copied character-for-character, pipes and all — not a sentence written from it. Put the readable sentence in "decontextualized_form".\n' +
   '- "decontextualized_form": an optional string — the claim restated so it stands alone. Omit when the raw text already stands alone.\n' +
   '- "materiality": a boolean — true when a Notary review should surface this claim if wrong, false for minor/incidental details.\n' +
   '- "claim_fields": an object with AT MOST these keys — "entity", "period", "metric", "operator" (exactly one of "increase", "decrease", "no_change"), "value_unit" (an object with "value" and optional "unit"), "comparator_baseline", "modality", "scope". Include only the keys the claim actually asserts.\n' +
