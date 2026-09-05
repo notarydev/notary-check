@@ -45,12 +45,14 @@
  .tinyli{color:#666;font-size:11.5px}
 </style></head><body>
 <h1>Notary run review — live <span class="ref" id="stamp"></span></h1>
-<p class="sub">Auto-refreshes every 20s. New runs appear on their own. Select a run; Verify / Track 2 verdicts + Plumbing.</p>
+<p class="sub">Auto-refreshes every 20s. New runs appear on their own. Select a run; Verify / Act verdicts + Plumbing.</p>
+<p class="sub">Timing bars are estimates; historical verdict notes are manual assessments. Nearby runs are only a possible follow-up, not a confirmed conversation link.</p>
+<div role="alert" id="poll-error" style="color:#b3261e"></div>
 <div class="runs" id="runs"></div>
 <div id="panel"><div class="card"><div class="note" id="loading">Loading…</div></div></div>
 <script>
  let DATA=[], cur=null, st='All', q='', VISIBLE=5;
- const PILL={ok:['p-ok','CORRECT'],wrong:['p-wrong','WRONG'],mid:['p-mid',"COULDN'T CHECK"],gen:['p-gen','GENERIC'],none:['p-none','NONE']};
+ const PILL={ok:['p-ok','CORRECT'],wrong:['p-wrong','WRONG'],mid:['p-mid',"COULDN'T CHECK"],gen:['p-gen','GENERIC'],none:['p-none','NONE'],unassessed:['p-none','NOT ASSESSED']};
  const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
  const pill=k=>{const c=(PILL[k]||PILL.none);return `<span class="pill ${c[0]}">${c[1]}</span>`};
  const statePill=s=>`<span class="pillstate st-${s}">${s}</span>`;
@@ -124,9 +126,9 @@ function commsHTML(r){
 }
 function tripHTML(r){
  const ch=r.chain;
- let head='First trip in this thread';
- if(ch && ch.ordinal>0) head='<span style="color:#b3261e">SECOND+ trip</span> — #'+(ch.ordinal+1)+' of '+ch.len;
- const note = (ch && ch.ordinal>0) ? 'Re-invocation after a finding/ask — same sources hit the observation cache, so verify is near-free.' : (r.judge_calls===0?'No judge calls — observation cache served every field.':'');
+ let head='No nearby preceding run observed';
+ if(ch && ch.ordinal>0) head='<span style="color:#b3261e">POSSIBLE follow-up</span> — #'+(ch.ordinal+1)+' of '+ch.len;
+ const note = (ch && ch.ordinal>0) ? 'Same organization within 25 minutes; conversation linkage and cache hits are not proven.' : (r.judge_calls===0?'No judge calls recorded; this alone does not prove a cache hit.':'');
  return `<div class="card"><h2>4 · Second trip?</h2><div class="found">${head}</div><div class="note">${esc(note)}</div><div class="meta">${esc(r.org||'')} · ${esc(r.created)} · status ${esc(r.status||'')}</div></div>`;
 }
 function renderPanel(){
@@ -142,7 +144,7 @@ function renderPanel(){
   <div class="verdict">
    <div class="card"><h2>1 · Verify</h2><div class="found">${esc(r.verify??'—')}</div>${pill(r.vpill||'none')}<div class="note">${esc(r.vnote??'')}</div>
      <div class="meta">engine: ${esc(r.engine??'?')} · ${r.judge_calls} judge calls · ${r.cost_cents}¢ · wall ${r.wall!=null?r.wall+'s':'—'}</div></div>
-   <div class="card"><h2>2 · Track 2 (Move)</h2><div class="found">${esc(r.move??'—')}</div>${pill(r.mpill||'none')}<div class="note">${esc(r.mnote??'')}</div>
+   <div class="card"><h2>2 · Act (Move)</h2><div class="found">${esc(r.move??'—')}</div>${pill(r.mpill||'none')}<div class="note">${esc(r.mnote??'')}</div>
      ${(r.moves||[]).length?`<div class="meta">${r.moves.map(m=>'<b>'+esc(m.move)+'</b> — '+esc(m.label)).join('<br>')}</div>`:''}</div>
    <div class="card"><h2>3 · What the user saw</h2><div class="note">${esc(r.shown??'')}</div><div class="meta">created ${esc(r.created)}</div></div>
   </div>
@@ -176,12 +178,13 @@ async function refresh(){
   const res=await fetch('/api/runs',{cache:'no-store'});
   if(!res.ok) throw new Error('HTTP '+res.status);
   DATA=await res.json();
+  document.getElementById('poll-error').textContent='';
   const h=(location.hash.match(/run=([0-9a-f]{8})/)||[])[1];
   if(h&&DATA.some(r=>r.rid===h))cur=h;
   document.getElementById('stamp').textContent='updated '+new Date().toLocaleTimeString();
   renderButtons();renderPanel();
  }catch(e){
-  document.getElementById('loading').textContent='Could not reach the runs server: '+e.message;
+  document.getElementById('poll-error').textContent='Updates failed; displayed data may be stale. '+e.message;
  }
 }
 refresh(); setInterval(refresh, 20000);

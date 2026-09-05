@@ -103,8 +103,13 @@ Split out of a single 1341-line file so each piece answers one question:
 
 ## Running things
 
+Prefer the guarded root command in [development workflow](docs/build/development-workflow.md).
+2026-09-05 baseline: 474 tests, all pass live; offline 466 pass and 8 skip.
+Historical flake notes below are diagnostic context, not an excuse to ignore a failure.
+
+
 ```bash
-cd engine && npm test          # boundaries check, then 439 tests
+cd engine && npm test          # boundaries + tests; set an isolated local DB first
 cd engine && npm run boundaries # just the layer rules
 cd engine && npx tsc --noEmit
 cd server && npm test

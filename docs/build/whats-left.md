@@ -290,10 +290,10 @@ sources it opens hundreds of parallel model calls (429s, cost, latency).
 Bound it (small constant). Also bound/parallelise row resolution inside
 step 1 so N sources don't serialize on N×10s fetches.
 
-**E14 — Chunked/parallel claim extraction.** Extraction is the remaining
-8–18s tail on every run (engine.48 showed 17.0s→8.3s locally splitting at
-blank lines). Make production run the chunked path and parallelise with
-verify once E17 lands.
+**E14 — Chunked extraction implemented; overlap pending.** The extraction route
+calls `extractClaims`, whose chunked path is implemented (`a40a8a9`, `f9ca156`),
+confirmed in code on 2026-09-05. Parallel overlap with verification is separate,
+not evidence that chunking itself remains unbuilt.
 
 **E15 — Normalization routing + $/GB unit/format layer (confirm-only).**
 "0.09/GB", "$0.09 per GB", "100 GB free" should resolve through one
@@ -305,7 +305,12 @@ only, never reject — before any residual reaches the judge. Extends
 cache and retained `resolved_text` grow without bound. Needs an eviction/TTL
 policy consistent with the retention decision (B4).
 
-**E17 — Early-return / async card. NEEDS OWNER DECISION.** STEP 2 of the
+**E17 — Early-return / async card. APPROVAL SCOPE NEEDS EVIDENCE.**
+The roadmap handoff says approved/unbuilt, while the older entry below requests
+A/B/C. Recover the recorded choice; do not infer a choice or reopen an evidenced
+approval. The feature remains inactive.
+
+Historical decision request: STEP 2 of the
 speed plan: the read side (`/state`, `/complete`), card polling and app tool
 are built but inert — the server still waits for verification. Decide A/B/C
 (ROADMAP / speed-implementation-plan) so users stop staring at the full e2e.

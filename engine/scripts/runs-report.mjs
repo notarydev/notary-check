@@ -50,7 +50,7 @@ const ASSESSMENTS = {
   "8b41051d": { name: "13:53 new user \u00b7 Step 1 live", when: "Pacific figure, cited CIA page", engine: "Step 1 fetch ON",
     verify: "3 UNSUPPORTED + 1 INDETERMINATE (4 claims)", vpill: "ok",
     vnote: "Checked against the FETCHED 3,411-char CIA page \u2014 a farewell article with no Pacific figures. UNSUPPORTED is the truth.",
-    move: "none", mpill: "none", mnote: "Track 2 ships dark for new orgs (act_moves_enabled=false).",
+    move: "none", mpill: "none", mnote: "Act ships dark for new orgs (act_moves_enabled=false).",
     shown: "Truthful \u201cno supplied evidence supports this claim\u201d." },
   cd46912c: { name: "13:55 same source re-check", when: "Pacific figure, same CIA page", engine: "Step 1 \u00b7 cache hit",
     verify: "3 UNSUPPORTED \u00b7 0 judge calls", vpill: "ok",
@@ -58,8 +58,8 @@ const ASSESSMENTS = {
     move: "none", mpill: "none", mnote: "Same as above.",
     shown: "Truthful card at ~free cost." },
 };
-const NEUTRAL = { name: null, when: null, engine: null, verify: null, vpill: "mid",
-  vnote: "Not assessed yet \u2014 read the plumbing to judge this run.", move: null, mpill: "none",
+const NEUTRAL = { name: null, when: null, engine: null, verify: null, vpill: "unassessed",
+  vnote: "Not assessed yet \u2014 read the plumbing to judge this run.", move: null, mpill: "unassessed",
   mnote: null, shown: null };
 const EXTRACT_KNOWN = { "9f3958a6": 13738, "891ee8f5": 17615, "900530a5": 4202, "8b41051d": 8771, cd46912c: 11381 };
 
@@ -148,7 +148,7 @@ async function loadRuns() {
                  detail: c.detail, asserted, rejectedOn: unestablished };
       });
       return {
-        rid, created: r.created, wall, org: r.org ?? null, actEnabled: r.act_enabled === true,
+        rid, created: r.created, status: r.status, wall, org: r.org ?? null, actEnabled: r.act_enabled === true,
         chain: r._chain ?? null,
         verify_ms: jl ?? (wall !== null ? Math.round(wall * 1000) : null),
         finalize_ms: wall !== null && jl !== null ? Math.round(wall * 1000) - jl : 0,
@@ -182,4 +182,4 @@ const server = createServer(async (req, res) => {
     res.end("error: " + (err.message ?? err));
   }
 });
-server.listen(PORT, () => console.log(`runs dashboard: http://localhost:${PORT}`));
+server.listen(PORT, "127.0.0.1", () => console.log(`runs dashboard: http://127.0.0.1:${PORT}`));

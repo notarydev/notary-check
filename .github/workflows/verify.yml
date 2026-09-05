@@ -1,0 +1,42 @@
+name: Verify
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  local-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: notary_check_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix engine && npm ci --prefix server && npm ci --prefix ui
+      - run: node --test scripts/check-hygiene.test.mjs
+      - name: Diff hygiene
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if test -z "$BASE_REF" || test "$BASE_REF" = 0000000000000000000000000000000000000000; then
+            BASE_REF=$(git rev-list --max-parents=0 HEAD)
+          fi
+          node scripts/check-hygiene.mjs "$BASE_REF"
+      - name: Engine, server and card
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test-only@127.0.0.1:5432/notary_check_test
+        run: scripts/verify-local.sh

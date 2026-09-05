@@ -1,3 +1,7 @@
+> Development starts at [AGENTS.md](AGENTS.md) and [ROADMAP.md](ROADMAP.md).
+> For current verification and commands see [development workflow](docs/build/development-workflow.md).
+> Older Phase 0 instructions below are historical where they conflict with OPERATIONS.md.
+
 # Notary Check
 
 An MCP connector that checks the claims in a Claude answer and shows only what
