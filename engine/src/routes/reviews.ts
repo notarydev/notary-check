@@ -702,6 +702,103 @@ export function reviewsRouter(database: pg.Pool): Router {
   });
 
   /**
+   * GET /v1/reviews/:id/state — the cheap poll behind an updating card.
+   *
+   * WHY IT EXISTS. Verification of a real answer takes seconds to tens of
+   * seconds, and until now the connector blocked for all of it, so the user
+   * watched nothing happen and then saw a finished card. This lets the card
+   * render immediately and fill itself in.
+   *
+   * DELIBERATELY CHEAP. It reads persisted rows and computes nothing. A poll
+   * that recomputed would multiply the very cost it exists to hide — so no
+   * model call, no evidence resolution, no applicability, no joins beyond what
+   * the card needs.
+   *
+   * `complete` comes from the review's own status rather than from counting
+   * claims. The writer declares it done; a reader guessing from row counts
+   * cannot tell "finished" from "still going" and would flicker between them.
+   */
+  router.get("/v1/reviews/:id/state", async (req, res) => {
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      return res.status(401).json({ error: "missing Authorization: Bearer <api-key> header" });
+    }
+    const auth = await verifyApiKey(authHeader.slice(BEARER_PREFIX.length).trim(), database);
+    if (!auth.ok) return res.status(401).json({ error: "invalid or revoked API key" });
+    const orgId = auth.organizationId;
+
+    const { id } = req.params;
+    if (!z.string().uuid().safeParse(id).success) {
+      return res.status(400).json({ error: "invalid review id" });
+    }
+
+    const review = await database.query(
+      "SELECT status FROM review WHERE id = $1 AND organization_id = $2",
+      [id, orgId],
+    );
+    // 404 rather than 403 — whether a review exists in another org is not this
+    // caller's business, the same discipline every other route here uses.
+    if (!review.rowCount) return res.status(404).json({ error: "review not found for this organization" });
+
+    const [claims, findings, gaps, moves] = await Promise.all([
+      database.query(
+        "SELECT ordinal, text, state, state_reason, no_source, lifecycle_state FROM claim WHERE review_id = $1 ORDER BY ordinal",
+        [id],
+      ),
+      database.query(
+        "SELECT claim_ref, detector, type, owner, input_provenance, boundary_text, field_deltas, rank FROM finding WHERE review_id = $1 ORDER BY rank",
+        [id],
+      ),
+      database.query("SELECT claim_ref, detector, missing, unblocks FROM gap WHERE review_id = $1", [id]),
+      database.query(
+        `SELECT m.id, m.move, m.short_label, m.prompt FROM act_move m
+           JOIN act_invocation i ON i.id = m.invocation_id
+          WHERE i.review_id = $1 ORDER BY m.ordinal`,
+        [id],
+      ),
+    ]);
+
+    return res.status(200).json({
+      complete: review.rows[0].status === "complete",
+      claims: claims.rows,
+      findings: findings.rows,
+      gaps: gaps.rows,
+      moves: moves.rows,
+    });
+  });
+
+  /**
+   * POST /v1/reviews/:id/complete — the writer says it has finished.
+   *
+   * `review.status` has existed since the first migration, defaulted to
+   * 'processing', and NOTHING has ever moved it: all 104 production reviews
+   * read 'processing'. It is the natural completion signal and it was simply
+   * never wired.
+   *
+   * Idempotent, and never an error to call twice — a retry after a lost
+   * response must not fail.
+   */
+  router.post("/v1/reviews/:id/complete", async (req, res) => {
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      return res.status(401).json({ error: "missing Authorization: Bearer <api-key> header" });
+    }
+    const auth = await verifyApiKey(authHeader.slice(BEARER_PREFIX.length).trim(), database);
+    if (!auth.ok) return res.status(401).json({ error: "invalid or revoked API key" });
+
+    const { id } = req.params;
+    if (!z.string().uuid().safeParse(id).success) {
+      return res.status(400).json({ error: "invalid review id" });
+    }
+    const updated = await database.query(
+      "UPDATE review SET status = 'complete', completed_at = now() WHERE id = $1 AND organization_id = $2 RETURNING id",
+      [id, auth.organizationId],
+    );
+    if (!updated.rowCount) return res.status(404).json({ error: "review not found for this organization" });
+    return res.status(200).json({ complete: true });
+  });
+
+  /**
    * POST /v1/move-events — record one interaction with a move.
    *
    * WHY THIS EXISTS. act_move_event has existed since migration 0013 and
