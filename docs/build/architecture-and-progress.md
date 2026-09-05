@@ -650,3 +650,20 @@ completed, cost accruing):
 Not yet live: a real connector conversation through the new intake (the smoke
 seeds evidence directly), and the Step-3 normalization routing / retrieval of
 the proposal.
+
+## 2026-09-05, evening — structural verdict, tools, second account
+
+- **runs-report dashboard** shipped (`engine/scripts/runs-report.mjs` +
+  `runs-report.html`): a LOCAL, read-only, auto-polling view of every
+  production run (Verify / Track 2 / presented cards + full plumbing).
+  Runs at http://localhost:8123; must not be deployed publicly (it shows
+  all orgs' claim text and evidence).
+- **Structural verdict recorded** (ROADMAP Priority 1, whats-left E9–E18):
+  real pricing runs still fail (review `74ea42e8`: "$0.09/GB for the first
+  10 TB" verbatim on the fetched page, claim still `required_field_unresolved`).
+  Cause is the whole-sentence unit + all-fields-must-anchor gate, not the
+  judge. First build (E13, bounded judge-wave concurrency) started.
+- **Second identity provisioned** for OAuth/multi-tenant testing
+  (Clerk user `user_3IuXV…`, org `88a5e76d`); the deployed
+  `CLERK_SECRET_KEY` was found invalid (stale) — local `server/.env` holds a
+  valid one; rotation tracked as an operator chore in ROADMAP.

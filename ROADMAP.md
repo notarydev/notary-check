@@ -24,15 +24,18 @@ facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code layout is in
 
 Notary Check works. The engine verifies claims against evidence deterministically,
 Act suggests next moves, the card renders, Clerk OAuth is live, and the whole
-thing runs in production on Lightsail (engine.51 / server.49 as of 2026-09-05,
+thing runs in production on Lightsail (engine.52 / server.49 as of 2026-09-05,
 455 engine tests / 451 passing per the latest commits' runs).
 
 **Speed is solved; correctness is not.** The E-LAT cost/latency fixes are
-measured in production (261→52 judge calls per real run — see below). The
-current top engine problem is E-EVIDENCE: the engine verifies against thin
-caller-supplied excerpts instead of the cited pages, and returned a live false
-negative (Pacific Ocean, review `900530a5`) on evidence that states the claim
-verbatim.
+measured in production (261→52 judge calls per real run — see below). Fetching
+real pages is now live (Step 1, engine.52), and diagnostics persist per claim.
+**But basic real-world facts still fail**: review `74ea42e8` (2026-09-05, cloud
+egress pricing) returned 8/10 claims `required_field_unresolved` even though
+"$0.09/GB for the first 10 TB" is verbatim on the fetched page — the engine is
+architected for clean single-sentence claims and cannot handle tables, tier
+qualifiers, synonyms, or derived totals. **That class is the reason for the
+structural rebuild queue in Priority 1 below.**
 
 **And nobody can buy it.** The gap is not the engine — it is everything around the engine.
 
@@ -43,6 +46,38 @@ verbatim.
 **This is the top of the list. Nothing below it matters if the engine is
 wrong, slow, or expensive.** Everything here is measured from production
 rows, not inferred.
+
+### The structural rebuild queue (2026-09-05)
+
+The engine was built around one clean input ("Acme's revenue grew 17% in
+FY25") and real content breaks every assumption: multi-atom sentences,
+tables, tier qualifiers, synonyms, derived totals. Judge-prompt tweaks will
+not fix it — the *unit* (whole-sentence claims) and the *gate* (every field
+must literally anchor or the whole claim dies as INDETERMINATE) are wrong.
+Detailed arguments and statuses live in `docs/build/whats-left.md`
+(**E9–E18**); this table is the order of operations.
+
+| # | Item | Why | Status |
+|---|---|---|---|
+| **E9** | Real HTML parser + entity decode + table-row intake (replace regex `stripHtml`) | Regex misses escaped markup (`&lt;style&gt;` leaked in prod), has no tables → pricing runs fail. | not started |
+| **E10** | Atomic claim decomposition + non-atom quality gate | A sentence is many claims; "not 714M"/"should be corrected" aren't checkable. Kills the noise. | not started |
+| **E11** | Core vs qualifier semantics (decision needed) | entity+metric+value match must not be annihilated by an unanchorable tier/scope qualifier. | needs owner decision |
+| **E12** | Derived-claim calculator | "$913 for 10TB" is recompute-or-say-derived, never "UNSUPPORTED". | not started |
+| **E13** | Bounded concurrency on the judge wave (and evidence fetch) | `Promise.all(rows)` is unbounded — hundreds of parallel calls at scale. | 🔨 IN PROGRESS |
+| **E14** | Chunked/parallel claim extraction | Extraction is the remaining 8–18s tail. | not started |
+| **E15** | Normalization routing + $/GB / unit/format layer (confirm-only) | "$0.09/GB" should resolve deterministically before any judge call. | not started |
+| **E16** | Observation cache + page storage growth / eviction (ties to B4) | Unbounded storage; no TTL. | not started |
+| **E17** | Early-return / async card decision (STEP 2 of speed plan) | Users wait on full e2e; groundwork is built but inert. | needs owner decision |
+| **E18** | Regression harness over real runs (ground truth) | Without labels every fix ships unmeasured. | not started |
+
+**Order:** E9 → E13 (small, de-risks) → E18 harness → E10 → E12 → E15 → E11/E17 (owner decisions) → E14 → E16.
+
+### The two immediate operator chores (before more test runs)
+- Rotate the invalid `CLERK_SECRET_KEY` in the deployed server env and the
+  invalid `DEEPSEEK_API_KEY` in local `engine/.env`; close F4 (live keys in
+  `.claude/settings.local.json`).
+- Decide E11/E17 — the two decisions every other correctness/latency item
+  depends on.
 
 ### ~~E-LOC~~ — FIXED 2026-09-05 (whitespace-tolerant matching, live engine.48+)
 

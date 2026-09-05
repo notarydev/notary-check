@@ -242,6 +242,80 @@ finish. **E2 dominates this on latency; do not do E7 for speed.**
 **E8 — Reconcile.** Depends on E7 and on the pivot being decided. Not
 before.
 
+### The structural rebuild queue — E9–E18 (added 2026-09-05)
+
+Why this exists: real runs keep producing `required_field_unresolved` on
+claims whose figure is verbatim on a fetched page (review `74ea42e8`,
+cloud-egress pricing — "$0.09/GB for the first 10 TB" is on the page, claim
+still "couldn't check"). Root cause is architectural, not a prompt issue:
+the unit of verification is a whole sentence, and the applicability gate
+requires every claimed field to anchor to a literal span or the claim dies.
+The queue below fixes the unit and the gate, in dependency order. Index:
+`ROADMAP.md` Priority 1.
+
+**E9 — Real HTML parsing + entity decode + table-row awareness. IN PROGRESS.**
+`resolveEvidence.ts`'s `stripHtml` is a regex stripper: it does not decode
+entities (escaped `<style>` leaked into a fetched CIA page in prod), and it
+flattens tables to one text blob, so pricing rows can never be matched
+structurally. Replace with a streaming HTML parser (parse5), decode
+character references, drop script/style/nav, and emit table rows as
+structured units (cells per row) so later steps can match claim↔row instead
+of claim↔page-blob. Unit tests; keep the existing `stripHtml` test fixtures
+green.
+
+**E10 — Atomic claim decomposition + non-atom gate.** A sentence carries
+several independently-checkable atoms; Verify should check atoms, and things
+that are not claims at all ("not 714 million", "the figure should be
+corrected to 670M", "AWS $913, Azure $882, GCP $1,137" as one row) must be
+fused/split or flagged, never "verified". Mirrors FActScore/SAFE atomicity.
+Reduces both the noise claims and the per-sentence all-or-nothing failure.
+
+**E11 — Core vs qualifier semantics. NEEDS OWNER DECISION.** entity+metric
++value prove a figure; period/scope/tier/baseline are semantic qualifiers a
+page rarely writes in the claim's words. Proposal: resolve qualifiers only
+to matches/conflicts/unknown. A conflict stays a real rejection (wrong tier
+caught); an *unknown qualifier no longer annihilates* a verbatim core match —
+render "SUPPORTED on the figure; qualifier unverified" rather than
+INDETERMINATE. Changes card semantics; the one decision that unblocks the
+whole "basic facts" class.
+
+**E12 — Derived-claim calculator.** Totals/costs ("$913 for 10 TB") are
+recomputed deterministically from the row's own rate×volume, or reported as
+"derived, not sourced" — never "UNSUPPORTED because no source states it".
+This is where the deferred arithmetic detector (S7) gets its real job.
+
+**E13 — Bounded concurrency on the judge wave and evidence fetch.** The
+per-claim judge wave is `Promise.all(rows.map(...))` — unbounded; with many
+sources it opens hundreds of parallel model calls (429s, cost, latency).
+Bound it (small constant). Also bound/parallelise row resolution inside
+step 1 so N sources don't serialize on N×10s fetches.
+
+**E14 — Chunked/parallel claim extraction.** Extraction is the remaining
+8–18s tail on every run (engine.48 showed 17.0s→8.3s locally splitting at
+blank lines). Make production run the chunked path and parallelise with
+verify once E17 lands.
+
+**E15 — Normalization routing + $/GB unit/format layer (confirm-only).**
+"0.09/GB", "$0.09 per GB", "100 GB free" should resolve through one
+governed value/unit/format normaliser in the deterministic pass — confirm
+only, never reject — before any residual reaches the judge. Extends
+`normalization.ts` (percent→%, multipliers) to currency-per-volume forms.
+
+**E16 — Observation cache + page storage growth.** The text-hash observation
+cache and retained `resolved_text` grow without bound. Needs an eviction/TTL
+policy consistent with the retention decision (B4).
+
+**E17 — Early-return / async card. NEEDS OWNER DECISION.** STEP 2 of the
+speed plan: the read side (`/state`, `/complete`), card polling and app tool
+are built but inert — the server still waits for verification. Decide A/B/C
+(ROADMAP / speed-implementation-plan) so users stop staring at the full e2e.
+
+**E18 — Regression harness over real runs.** Snapshot today's real runs
+(05:14/05:27/10:40/13:53/13:55/74ea42e8) with hand labels; define the
+false-"couldn't check" rate; measure every change against it. Bootstrap
+ground truth so fixes stop shipping unmeasured (until B1's annotators
+exist).
+
 ## Open questions that change the plan
 
 Not tasks. Answers here redirect work.
