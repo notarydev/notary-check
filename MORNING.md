@@ -76,7 +76,24 @@ pipeline. What was missing is that a table ROW is the verbatim span for a
 tabular fact, with the readable sentence in `decontextualized_form`. Local
 result on the same shape: **0 dropped**, where every claim had been lost.
 
-Live as `engine.47`.
+Live as `engine.48` / `server.49`.
+
+## And then the two biggest changes finally shipped
+
+Both had been committed and NOT deployed, so neither had ever run in
+production. Measured locally before shipping:
+
+| | before | after |
+|---|---|---|
+| chunked extraction | 17.0s, 21 claims (truncated) | **8.3s, 40 claims** |
+| deterministic matching + observation cache | ~12.9 judge calls/claim | **2.5** |
+
+They attack the two phases that dominated your last run — extraction at 13.2s
+and verification at 9–21s. Also shipped: a tier or variant now extracts into
+`scope`, so two pricing tiers stop being reported as a self-contradiction.
+
+**None of this is measured in production yet.** That is the one thing the next
+run settles.
 
 ## The plan is written down
 
