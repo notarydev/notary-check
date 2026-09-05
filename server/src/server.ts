@@ -110,7 +110,16 @@ function buildServer() {
 
   registerAppTool(
     server,
-    "review_source_backed_answer",
+    // THE TOOL NAME IS USER-FACING. Claude's collapsed tool row renders the raw
+    // name beside the server name, so this string is chrome, not an identifier:
+    // it used to read "Notary review_source_backed_answer" with a </> glyph,
+    // which looks like debug output rather than a product. "Notary check_answer"
+    // is what a person sees before they expand anything.
+    //
+    // Kept snake_case and explicit rather than shortened to "check": the name is
+    // also what the model selects on, and a one-word name is ambiguous next to
+    // every other check-shaped tool in a session.
+    "check_answer",
     {
       title: "Check with Notary",
       description:

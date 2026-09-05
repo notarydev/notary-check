@@ -257,3 +257,45 @@ test("a json_path locator re-resolves, and refuses when the value at the path ch
   // the path was recorded against.
   assert.equal(result.resolved === false && result.reason, "canonical_text_hash_mismatch");
 });
+
+// --- E-LOC: real web pages are not byte-exact -----------------------------
+//
+// The regression these guard: 16 claims against 8 fetched pages all came back
+// INDETERMINATE / checks_did_not_complete because a multi-word value that WAS
+// in the text could not be found across a line break.
+
+test("a phrase broken across a newline is still located", () => {
+  const html = "Understanding AWS\negress pricing for large transfers.";
+  const span = findExactSpan(html, "AWS egress pricing");
+  assert.ok(span, "a line break inside a phrase must not hide it");
+  assert.equal(html.slice(span.start, span.end), "AWS\negress pricing");
+});
+
+test("collapsed and non-breaking whitespace are both tolerated", () => {
+  const html = "the data egress   rate is $0.09/GB";
+  const span = findExactSpan(html, "data egress rate");
+  assert.ok(span, "nbsp and repeated spaces are whitespace, not different words");
+  assert.equal(html.slice(span.start, span.end), "data egress   rate");
+});
+
+test("offsets are returned into the ORIGINAL text, so the quote round-trips", () => {
+  const html = "prefix   ---   internet\n\negress\tcost   suffix";
+  const span = findExactSpan(html, "internet egress cost");
+  assert.ok(span);
+  // The whole point: the stored locator must still re-dereference against the
+  // canonical text. Normalised coordinates would silently drift.
+  assert.equal(html.slice(span.start, span.end).replace(/\s+/g, " "), "internet egress cost");
+});
+
+test("whitespace tolerance is NOT fuzzy matching — a paraphrase must still miss", () => {
+  const html = "the internet egress cost is high";
+  assert.equal(findExactSpan(html, "internet egress costs"), null, "a plural is a different word");
+  assert.ok(findExactSpan(html, "internet egress"), "a genuine prefix phrase still matches");
+  assert.equal(findExactSpan(html, "egress internet cost"), null, "word order must still matter");
+  assert.equal(findExactSpan(html, "internet-egress cost"), null, "punctuation is not whitespace");
+});
+
+test("a single token takes the exact path and is unaffected", () => {
+  assert.equal(findExactSpan("value is 17%", "17%")?.start, 9);
+  assert.equal(findExactSpan("value is 17%", "18%"), null);
+});

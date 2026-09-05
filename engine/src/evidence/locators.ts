@@ -144,13 +144,87 @@ export function canonicalTextHash(text: string): string {
 export function findExactSpan(haystack: string, needle: string): { start: number; end: number } | null {
   if (needle.length === 0) return null;
   const start = haystack.toLowerCase().indexOf(needle.toLowerCase());
-  if (start === -1) return null;
-  const end = start + needle.length;
-  if (end > haystack.length) return null;
-  // Guard against a case-fold that changed length: the slice at these offsets
-  // must itself be a case-insensitive match for the needle, or this is not a
-  // usable coordinate.
-  if (haystack.slice(start, end).toLowerCase() !== needle.toLowerCase()) return null;
+  if (start !== -1) {
+    const end = start + needle.length;
+    if (end <= haystack.length && haystack.slice(start, end).toLowerCase() === needle.toLowerCase()) {
+      return { start, end };
+    }
+  }
+  return findWhitespaceTolerantSpan(haystack, needle);
+}
+
+/**
+ * The same search, tolerant of WHITESPACE DIFFERENCES only.
+ *
+ * WHY THIS HAD TO EXIST. The exact search above is byte-exact apart from case,
+ * and real web pages are not. HTML-to-text extraction collapses runs of
+ * whitespace, inserts non-breaking spaces (U+00A0) and breaks lines mid-phrase,
+ * so a value that is genuinely present in the source fails to locate over a
+ * single space. Measured on the first real multi-source test: 16 claims against
+ * 8 fetched pages, every claim forced to INDETERMINATE /
+ * checks_did_not_complete, because `metric` — a multi-word phrase, and
+ * therefore the field most likely to span a line break — could not be found in
+ * text that contained it. The user saw "Could not verify this against the
+ * supplied evidence" on an answer that was fully sourced.
+ *
+ * WHY IT DOES NOT WEAKEN THE AUTHORITY RULE. The rule is that a model's
+ * assertion may never stand in for evidence — a value the judge reports must be
+ * findable in the retained text. That is still exactly what is enforced. What
+ * changes is only the definition of "the same text": "egress  pricing" and
+ * "egress\npricing" are the same words in the same order, and treating them as
+ * different was a bug in the comparison, not a safety property.
+ *
+ * ONLY whitespace is normalised. No stemming, no punctuation stripping, no
+ * synonym matching, no fuzzy distance — those would let a paraphrase through,
+ * which is the thing this must never do. Runs of whitespace collapse to a
+ * single space and nothing else changes.
+ *
+ * Offsets are returned into the ORIGINAL text, never the normalised one, so the
+ * stored locator still re-dereferences against the canonical text exactly as
+ * before.
+ */
+function findWhitespaceTolerantSpan(haystack: string, needle: string): { start: number; end: number } | null {
+  const isWs = (c: string): boolean => /\s/.test(c);
+
+  // Normalised needle: collapsed, trimmed, lowercased.
+  const needleNorm = needle.toLowerCase().replace(/\s+/g, " ").trim();
+  if (needleNorm.length === 0) return null;
+  // A single token cannot have an internal whitespace difference, so the exact
+  // search above already settled it. Skipping here keeps this path off the
+  // common case entirely.
+  if (!needleNorm.includes(" ")) return null;
+
+  // Normalise the haystack while remembering, for every normalised character,
+  // which ORIGINAL index it came from. That index map is what lets the match be
+  // reported in the original text's coordinates.
+  let hayNorm = "";
+  const originIndex: number[] = [];
+  let pendingSpace = false;
+  for (let i = 0; i < haystack.length; i++) {
+    const ch = haystack[i];
+    if (isWs(ch)) {
+      pendingSpace = hayNorm.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      hayNorm += " ";
+      originIndex.push(i); // the space stands at the first following character
+      pendingSpace = false;
+    }
+    hayNorm += ch.toLowerCase();
+    originIndex.push(i);
+  }
+
+  const at = hayNorm.indexOf(needleNorm);
+  if (at === -1) return null;
+
+  const start = originIndex[at];
+  // End is exclusive: one past the original index of the last matched
+  // character, so the slice covers the whole phrase including its internal
+  // whitespace as it appears in the source.
+  const lastNorm = at + needleNorm.length - 1;
+  const end = originIndex[lastNorm] + 1;
+  if (start === undefined || end <= start || end > haystack.length) return null;
   return { start, end };
 }
 

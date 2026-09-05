@@ -941,6 +941,16 @@ export async function reviewAnswer(
         status: "could_not_check",
         scope: uncheckedFindings[0].text,
         actions: [],
+        // Moves ride along here too, and this is the case where they matter
+        // MOST. A live run proved it: 16 claims, 8 fetched sources, every claim
+        // forced to INDETERMINATE by a locator bug — Act ran fine and produced
+        // two moves, and the user saw only "Could not verify this against the
+        // supplied evidence" because this branch dropped them. Verify failing is
+        // exactly when the next move is the only useful thing on the card.
+        //
+        // The same bug shape was fixed once already for `no_source`. It was not
+        // fixed here, because nothing tied the two branches together.
+        moves: movesField,
         gaps: invocationGaps.length > 0 ? invocationGaps : undefined,
         bank_findings: bankFindingsDetail.length > 0 ? bankFindingsDetail : undefined,
         intent: invocationIntent,

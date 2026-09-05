@@ -420,6 +420,70 @@ export async function runReview(
   const immaterialAmbiguityFields = new Set<ApplicabilityField>();
   let hadUnresolvedLocator = false;
 
+  // ── ALL judge calls for ALL rows, in ONE parallel wave, before any row is
+  //    processed ────────────────────────────────────────────────────────────
+  //
+  // WHAT THIS REPLACES. The judge used to be called inside the row loop, so
+  // the eight sources of one claim were eight sequential waits, each ~2 round
+  // trips deep. Measured on a real answer: 16 claims x 8 sources = 358 judge
+  // calls and 129 seconds of a blocked Claude turn, of which almost all was
+  // waiting rather than working.
+  //
+  // WHY IT IS SAFE TO HOIST. extractField() takes the source text and a field
+  // name. It does NOT take the claim — the judge is deliberately blind to what
+  // is being asserted, which is the property that stops it agreeing with a
+  // claim it has been shown. So no answer here depends on any other, on the
+  // order they are asked in, or on anything the row loop does. They are
+  // independent questions about independent documents.
+  //
+  // The row loop below is unchanged and still serial: it does the ordering-
+  // sensitive work (per-row ambiguity state, locator resolution, applicability)
+  // with zero network in it.
+  //
+  // Per row, entity is still asked FIRST and alone (E-LAT-a) — a row whose
+  // entity the judge cannot find can never be applicable, so the rest of that
+  // row is skipped rather than paid for.
+  const answersByRow = new Map<string, Map<ApplicabilityField, JudgeFieldAnswer>>();
+  await Promise.all(
+    rows.map(async (row) => {
+      const answerByField = new Map<ApplicabilityField, JudgeFieldAnswer>();
+      answersByRow.set(row.evidenceId, answerByField);
+
+      if (quotaDeniedReason !== null) {
+        for (const field of row.residuals) answerByField.set(field, noCallAnswer(field, `quota_${quotaDeniedReason}`));
+        return;
+      }
+
+      const text = row.resolved.resolvedText ?? "";
+      const judgeOptions = {
+        organizationId,
+        evidenceLocator: sourceDisplayLocator(row.resolved, row.payloadHash) ?? undefined,
+      };
+      const others = row.residuals.filter((f) => f !== "entity");
+
+      if (row.residuals.includes("entity")) {
+        const entityAnswer = await extractField(text, "entity", judgeOptions);
+        answerByField.set("entity", entityAnswer);
+        // Only `absent` forecloses. `cannot_be_determined` already drives
+        // INDETERMINATE on its own and `ambiguous` may still prove immaterial —
+        // neither is ours to decide here.
+        if (entityAnswer.outcome === "absent") {
+          for (const field of others) answerByField.set(field, noCallAnswer(field, SKIPPED_ENTITY_ABSENT));
+          logEvent({
+            event: "judge_fields_skipped_entity_absent",
+            organization_id: organizationId,
+            review_id: reviewId,
+            skipped_field_count: others.length,
+          });
+          return;
+        }
+      }
+
+      const settled = await Promise.all(others.map((f) => extractField(text, f, judgeOptions)));
+      others.forEach((f, i) => answerByField.set(f, settled[i]));
+    }),
+  );
+
   for (const row of rows) {
     // Per row. A field whose ambiguity was immaterial against ONE passage says
     // nothing about the next one — the candidate readings differ per source,
@@ -465,69 +529,7 @@ export async function runReview(
     const judgeRecordByField: Partial<Record<ApplicabilityField, JudgeCallRecord>> = {};
     const judgePresentFields = new Set<ApplicabilityField>();
 
-    // ── The judge calls for this row, fetched BEFORE the processing loop ──
-    //
-    // WHY THIS IS SEPARATED. This used to be `await extractField(...)` inside
-    // the loop below, so every field of every evidence row of every claim was
-    // one sequential network round trip. Measured on a real answer: 14 claims
-    // x 4 evidence rows x ~5 residual fields = 286 judge calls, 94 seconds of
-    // a blocked Claude turn, 9.5 cents — and ZERO evidence matches. The whole
-    // cartesian product was paid for and none of it mattered.
-    //
-    // Two changes, and the first is the one that matters:
-    //
-    //   FAIL FAST ON ENTITY. assessApplicability requires entity agreement, so
-    //   a row whose entity the judge cannot find in the source can never be
-    //   applicable — every other field for that pair is spend on a foregone
-    //   conclusion. Entity is asked FIRST, alone; if it does not resolve, the
-    //   rest of the row is skipped.
-    //
-    //   NOT a substring pre-filter on entity, deliberately. That is the
-    //   tempting version and it breaks "Acme, Inc." vs "ACME INC" — exactly the
-    //   normalization case E1 exists to fix. The judge still decides; it just
-    //   decides this field first.
-    //
-    //   THEN PARALLEL. The remaining fields are independent questions about the
-    //   same text, so they go out together.
-    //
-    // Entity is only in `residuals` when the claim ASSERTS an entity and the
-    // deterministic pass could not find it literally — so the fast path costs
-    // nothing on claims that never had one.
-    const judgeOptions = {
-      organizationId,
-      evidenceLocator: sourceDisplayLocator(row.resolved, row.payloadHash) ?? undefined,
-    };
-    const answerByField = new Map<ApplicabilityField, JudgeFieldAnswer>();
-
-    if (quotaDeniedReason !== null) {
-      for (const field of row.residuals) answerByField.set(field, noCallAnswer(field, `quota_${quotaDeniedReason}`));
-    } else {
-      const others = row.residuals.filter((f) => f !== "entity");
-      let entityForeclosed = false;
-
-      if (row.residuals.includes("entity")) {
-        const entityAnswer = await extractField(canonicalText, "entity", judgeOptions);
-        answerByField.set("entity", entityAnswer);
-        // Only `absent` is added here. `cannot_be_determined` already sets
-        // hadAbstainedRequiredField below and drives the claim to
-        // INDETERMINATE on its own, and `ambiguous` may still turn out
-        // immaterial — neither is ours to foreclose.
-        entityForeclosed = entityAnswer.outcome === "absent";
-      }
-
-      if (entityForeclosed) {
-        for (const field of others) answerByField.set(field, noCallAnswer(field, SKIPPED_ENTITY_ABSENT));
-        logEvent({
-          event: "judge_fields_skipped_entity_absent",
-          organization_id: organizationId,
-          review_id: reviewId,
-          skipped_field_count: others.length,
-        });
-      } else {
-        const settled = await Promise.all(others.map((f) => extractField(canonicalText, f, judgeOptions)));
-        others.forEach((f, i) => answerByField.set(f, settled[i]));
-      }
-    }
+    const answerByField = answersByRow.get(row.evidenceId) ?? new Map<ApplicabilityField, JudgeFieldAnswer>();
 
     for (const field of row.residuals) {
       const answer = answerByField.get(field) ?? noCallAnswer(field, "missing_answer");

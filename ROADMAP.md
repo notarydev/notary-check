@@ -82,7 +82,7 @@ source says.
 ### E-UI — the card looks like a dev tool, and has no logo
 
 Reported 2026-09-05. The collapsed state renders as `Notary
-review_source_backed_answer` with a `</>` glyph — the raw MCP tool name. It reads
+check_answer` with a `</>` glyph — the raw MCP tool name. It reads
 as debug output, not a product. Needs the Notary mark (three connected circles,
 on the marketing site) and a human label.
 

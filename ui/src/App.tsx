@@ -494,7 +494,7 @@ export default function App() {
   // Real host wiring. Verified against @modelcontextprotocol/ext-apps@1.7.5:
   // useApp() connects this sandboxed view to the host (Claude) over
   // postMessage; app.ontoolresult fires with the tool's CallToolResult once
-  // review_source_backed_answer completes, and `structuredContent` there is
+  // check_answer completes, and `structuredContent` there is
   // exactly what server.ts returned. ontoolinput fires with the same call's
   // original arguments — kept only for the "as submitted" provenance display
   // below (the explicit "Recheck" action was dropped — see the note above

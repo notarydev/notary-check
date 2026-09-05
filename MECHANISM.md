@@ -26,7 +26,7 @@ Claude writes an answer
         │
         │  decides to call the tool  (its own judgment — see §1)
         ▼
-  review_source_backed_answer(answer_text, source_refs, user_request, …)
+  check_answer(answer_text, source_refs, user_request, …)
         │
         ▼
   server/  (MCP)  ──►  engine/  (HTTP + Postgres + DeepSeek)
