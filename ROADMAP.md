@@ -124,6 +124,18 @@ One claim-extraction call returned unparseable JSON
 in the same run. Low frequency, but it silently drops a whole batch of claims
 when it happens.
 
+### Speed — the option set
+
+Every latency fix so far has helped and none has solved it, because the shape
+of the problem is "a large language model in every step". The options, what
+each actually buys, and what to do first:
+**[`docs/build/speed-and-streaming.md`](docs/build/speed-and-streaming.md)**.
+
+Short version: stream progress and verify asynchronously (feels instant at any
+input size), match plain numbers without a model at all (deletes calls rather
+than speeding them up), and only then consider retrieval and a small entailment
+model.
+
 ### ~~E-LAT~~ — FIXED 2026-09-05, awaiting production measurement
 
 Both halves shipped. **Re-measure before believing the numbers below are gone.** The prod smoke test
