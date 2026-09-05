@@ -925,13 +925,14 @@ export async function reviewAnswer(
       if (challenges.length < 4) {
         challenges.push(...parseChallengeItems(outcome.result.challenges).slice(0, 4 - challenges.length));
       }
-      // Move — capped at MAX_MOVES (2) for the whole review,
-      // same first-come discipline as challenges' own cap above: the engine
-      // calls Move per claim submission today (review/reviewFlow.ts's
-      // runMovesForClaim), but Part 11's cardinality contract is per
-      // INVOCATION (0-2 total), so this is the client-side enforcement of
-      // that invariant until/unless the engine grows a single per-review
-      // Move call.
+      // Move — capped at MAX_MOVES (2) for the whole review, first-come in
+      // claim order. NOTE what this really is: this connector submits claims
+      // with skip_claim_moves: true, so the engine does NOT call Move per claim
+      // and outcome.result.moves is normally empty here. The real Move is the
+      // single invocation-level call in /detect below, which replaces whatever
+      // this block collected. This block is a safety net for a hypothetical
+      // direct caller that does not use /detect — it enforces Part 11's
+      // per-INVOCATION cardinality (0-2 total) client-side for that path.
       if (moves.length < MAX_MOVES) {
         moves.push(
           ...parseMoves(outcome.result.moves).slice(0, MAX_MOVES - moves.length),

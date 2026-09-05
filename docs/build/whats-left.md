@@ -1,6 +1,6 @@
 > Status: snapshot
 > Owner: Hardyk
-> Last verified: 2026-09-04
+> Last verified: 2026-09-05
 > Supersedes: —
 
 # What's left
@@ -41,7 +41,15 @@ check rather than an opinion.
 | **Ops** | Monitoring alerts (not just logs), backup schedule, restore drilled, CI, rollback drilled, named incident owner. | **Not ready.** Datadog key set, ingestion unconfirmed. Backup/restore genuinely drilled 2026-09-03. No CI. No named owner. |
 | **Legal** | ToS, Privacy Policy (must disclose evidence text goes to a third-party model), DPA template, named correction/deletion contact. | **Not started.** Needs a lawyer. Blocks public self-serve signup, not an invited pilot. |
 
-**The engine's next step is unambiguous** — the card contract, now that E1, E2 and E3 are done. Detection has outrun presentation: the engine emits findings and gaps the card has nowhere to put. Every other area is blocked on a decision, a person, or money rather than on engineering.
+**The engine's next step is no longer the card contract.** Since this line was
+written, Verify's cost/latency problem was solved and the correctness problem
+moved to the top: the engine verifies against thin caller-supplied excerpts
+instead of the cited page and produced a live false negative on evidence that
+states the claim verbatim (Pacific Ocean, review `900530a5`, 2026-09-05). The
+current engine priorities and their production measurements live in
+`ROADMAP.md` **Priority 1** (E-LOC fixed, E-LAT measured, E-EVIDENCE open with
+a correction to the earlier "engine honest" framing). Everything else here is
+unchanged.
 
 ### What changed 2026-09-04 (second session), and what it did NOT change
 
@@ -106,11 +114,16 @@ Small, and each one closes a gap between a stated rule and the code.
 
 ## In flight
 
+> **Note on identifiers.** The `F1`–`F3` rows below predate `ROADMAP.md`'s
+> current `F1`–`F4` (which mean different things and are the live ones). All
+> three rows here describe states that were resolved days ago; they are struck
+> rather than deleted so the IDs do not silently shift meaning.
+
 | # | Item |
 |---|---|
-| **F1** | **`no_source` split → `not_checked`.** Committed in `29fc011`, **not yet deployed** — the MCP `server/` image still needs rebuilding and pushing. Separates "nothing to check" from "something failed" so an unsourced answer stops reporting as a Notary malfunction. Needs the fourth card state threaded through `ReviewCardData` and the UI, a regression test, and a commit. See the corrected state-mapping table in the plan. |
-| ~~**F2**~~ | ~~`.server.14` never deployed.~~ **NOT AN ISSUE — verified 2026-09-03 against the Lightsail API:** `notary-check-mcp` is running `:notary-check-mcp.server.14` (deployment version 11). The belief that `.13` was live came from session recollection, not the API. |
-| ~~**F3**~~ | ~~Migrations `0014`/`0015` not applied to production.~~ **DONE 2026-09-03** — verified backup taken and restore-tested, both migrations dry-run against a restored copy, then applied; engine redeployed as `:notary-check-api.engine.15` (deployment version 6). End-to-end smoke test passes against live prod: `CONTRADICTED`, 1 Move move, +53 millicents accrued. See `architecture-and-progress.md`. |
+| ~~**F1**~~ | ~~`no_source` split → `not_checked`.~~ **SUPERSEDED** — shipped, deployed, and the four-state card is live. ROADMAP `F1` (main-vs-production) is the current meaning of F1. |
+| ~~**F2**~~ | ~~`.server.14` never deployed.~~ **NOT AN ISSUE — verified 2026-09-03 against the Lightsail API.** |
+| ~~**F3**~~ | ~~Migrations `0014`/`0015` not applied to production.~~ **DONE 2026-09-03.** Migrations are now through `0019` (see `architecture-and-progress.md`). |
 
 ## Documentation debt
 

@@ -24,11 +24,17 @@ facts — hosts, domains, deploys — are in `OPERATIONS.md`. Code layout is in
 
 Notary Check works. The engine verifies claims against evidence deterministically,
 Act suggests next moves, the card renders, Clerk OAuth is live, and the whole
-thing runs in production on Lightsail. 439 tests, 435 passing against a real
-database.
+thing runs in production on Lightsail (engine.51 / server.49 as of 2026-09-05,
+455 engine tests / 451 passing per the latest commits' runs).
 
-**And nobody can buy it.** That is the honest summary. The gap is not the
-engine — it is everything around the engine.
+**Speed is solved; correctness is not.** The E-LAT cost/latency fixes are
+measured in production (261→52 judge calls per real run — see below). The
+current top engine problem is E-EVIDENCE: the engine verifies against thin
+caller-supplied excerpts instead of the cited pages, and returned a live false
+negative (Pacific Ocean, review `900530a5`) on evidence that states the claim
+verbatim.
+
+**And nobody can buy it.** The gap is not the engine — it is everything around the engine.
 
 ---
 
@@ -38,7 +44,17 @@ engine — it is everything around the engine.
 wrong, slow, or expensive.** Everything here is measured from production
 rows, not inferred.
 
-### E-LOC — Verify cannot complete on real web pages. **This is the top bug.**
+### ~~E-LOC~~ — FIXED 2026-09-05 (whitespace-tolerant matching, live engine.48+)
+
+**Was "the top bug". Closed in code and shipped.** The deterministic pass and
+the locator now share `findExactSpan` (locators.ts), which normalises runs of
+whitespace only — never punctuation or semantics — and returns offsets into the
+original text. A field that matches deterministically is therefore guaranteed a
+resolvable locator, removing both the wasted model calls AND the
+`judge_value_not_found_in_canonical_text` failures this section described. The
+diagnosis below is kept as the record; the residual `checks_did_not_complete`
+class on real input is the E-EVIDENCE excerpt problem and the scope-locator
+mechanism, not byte-exact matching.
 
 Found 2026-09-05 on the first real multi-source test. Review `9cf6a001`:
 16 claims, 8 sources, all fetched cleanly (5k–28k chars of text each), and
@@ -135,14 +151,35 @@ characters long**. Claude supplied URLs *and* excerpts;
 `server/src/engineClient.ts`'s `registerEvidence` sends both and the engine
 prefers the excerpt, so the pages were never fetched.
 
-You cannot establish entity, period and metric from 19 characters. On that
-input `checks_did_not_complete` is arguably CORRECT rather than a defect —
-which is why every other diagnosis came up empty: the judge was healthy (13
-present, 6 absent, zero abstentions), there were no locator failures, and spend
-was $1.01 against a $1,000 cap.
+**CORRECTION (2026-09-05, verified against production rows + engine logs).**
+The original write-up below claimed "there were no locator failures" and that
+`checks_did_not_complete` was "arguably CORRECT" on that input. Production
+contradicts both. The persisted `lifecycle_detail` for the same 18-claim run
+says **16 of 18 claims were `locator_unresolved`**, only **2 of 18**
+`required_field_unresolved`. The logs show
+`review_flow_locator_unresolved judge_value_not_found_in_canonical_text:scope`
+repeatedly. The cached observation shows why: on a passage mixing two scopes
+the judge returned `scope: present` with a **fused, non-literal value**
+("internet egress at Premium Tier and Standard Tier" — not contiguous in the
+text). The locator correctly refused an unanchored model assertion and the
+claim died by that mechanism, not by abstention. Thin excerpts are a real
+contributor, but they are not the recorded mechanism of these failures.
 
-Runs that DID fetch pages got 5k–28k chars and produced real UNSUPPORTED and
-CONTRADICTED states.
+Nor is the engine merely "honest" on thin input: the same day, review
+`900530a5` (Pacific Ocean, three cited sources) completed its checks and
+returned **UNSUPPORTED for a claim the evidence states almost verbatim**
+(Geology In: *"The Pacific Ocean contains approximately 714 million cubic
+kilometers (171 million cubic miles) of water"*). That is a **false negative**
+on real, supportive evidence — the state machine's word, not a shrug. The
+open questions are therefore three, not one:
+(i) intake — fetch the cited page, keep the excerpt as locator hint/fallback;
+(ii) the judge's `scope` (and general) contract — a passage naming several
+readings must answer `ambiguous` + candidates, never a fused `present`;
+(iii) routing — "50.1 percent" vs claim "50.1%" should resolve through the
+existing `VALUE_PERCENT_V1` normalization before the judge is asked at all.
+And none of it is diagnosable from the DB today: `claim_fields` and
+`rejectedCandidates` are returned per request and never persisted (see
+E-MEAS's original framing — it closed only the detector half).
 
 **Preferring the excerpt was a deliberate decision** and the comment defends it:
 an excerpt is text somebody actually had, while a URL may be paywalled, may
@@ -155,6 +192,8 @@ is present, fetch it and verify against the document, keeping the excerpt as a
 locator hint and as the fallback when the fetch fails or the text no longer
 contains it. That uses both rather than reverting the earlier decision. Fetches
 measured 10–250ms, so the latency cost is small.
+**Full design, sequencing, and the second two fixes (the scope judge contract
+and normalization routing): [`docs/guide/proposals/evidence-index-and-retrieval.md`](docs/guide/proposals/evidence-index-and-retrieval.md).**
 
 **Open question for the owner:** should an excerpt too thin to establish the
 claim's fields be reported as a GAP ("this source is a snippet — the page would
@@ -180,10 +219,17 @@ self-contradiction finding was a FALSE POSITIVE that Claude acted on.
 **Both moved 2026-09-05.** The false positive is FIXED — a tier, plan or variant
 is now extracted into `scope`, which is what `couldCompare` needs to refuse the
 comparison; two regression tests assert both halves (tiers do not conflict, the
-same tier at two prices still does). And `checks_did_not_complete` is very
-likely the same root cause as the call volume: making `deterministicPass`
+same tier at two prices still does). And `checks_did_not_complete` was expected
+to share the call volume's root cause: making `deterministicPass`
 whitespace-tolerant produced SUPPORTED on a local run where everything used to
-abstain. **Needs confirming against production.**
+abstain.
+
+**That did NOT confirm against production.** The post-fix production runs
+(05:27: 18/18 INDETERMINATE; 10:40 Pacific: 1 UNSUPPORTED + 1 INDETERMINATE)
+show the whitespace fix did not clear `checks_did_not_complete` on real input —
+the binding constraint there is the evidence itself (19–224 char excerpts) plus
+the scope-locator mechanism, not byte-exact matching. See the **E-EVIDENCE**
+correction above; the local "SUPPORTED" was on short, clean, synthetic sources.
 
 ### Speed — the option set
 
@@ -197,13 +243,24 @@ input size), match plain numbers without a model at all (deletes calls rather
 than speeding them up), and only then consider retrieval and a small entailment
 model.
 
-### ~~E-LAT~~ — FIXED 2026-09-05, awaiting production measurement
+### ~~E-LAT~~ — FIXED 2026-09-05, MEASURED IN PRODUCTION
 
-Both halves shipped. **Re-measure before believing the numbers below are gone.** The prod smoke test
-CANNOT show the saving — its evidence matches the claim's entity, so nothing is
-foreclosed. It confirmed only that the happy path is unchanged (CONTRADICTED,
-3 calls, 4.6s). The saving appears on a real multi-claim answer whose sources
-do not all match:
+Both halves shipped, and the saving is now measured from production rows
+(review `9f3958a6` 05:14 vs review `891ee8f5` 05:27, `usage_event`):
+
+| | 05:14 | 05:27 |
+|---|---|---|
+| claims | 12 | 18 |
+| judge calls | 261 | 52 |
+| per claim | 21.8 | 2.9 |
+| review wall (created→complete) | 31.0s | 10.7s |
+| metered cost | 9.70¢ | 1.93¢ |
+
+**7.5× fewer calls per claim, cost roughly 5× lower, on more claims.** The
+judge phase itself is near the floor when the observation cache hits (review
+`900530a5`, 10:40: **10 judge calls in a 0.19s span, 4.5s total, 0.35¢**).
+Remaining wall-clock is dominated by the single claim-extraction call
+(4–18s) plus the detect/finalize tail — not the judge.
 
 ```sql
 -- judge calls per claim, per review. The old number was ~20.
@@ -353,10 +410,13 @@ too. See F3 for the prompts written to test them.
 Picked up mid-stream on 2026-09-04. None of it is blocked on a decision; it is
 blocked on finishing.
 
-### F1 — ~~main is ahead of production~~ CLOSED 2026-09-05
+### F1 — ~~main is ahead of production~~ CLOSED 2026-09-05 (re-verified 2026-09-05 later run)
 
-Everything on `main` is deployed: `:notary-check-api.engine.42` /
-`:notary-check-mcp.server.40` (deployments 18 and 24), including migration `0017`.
+Everything on `main` is deployed. Live at last check (Lightsail API):
+`:notary-check-api.engine.51` (deployment 24) / `:notary-check-mcp.server.49`
+(deployment 27), migrations through `0019` — including the E-LAT fixes, the
+`evidence_field_observation` cache (0018 re-keyed on text by 0019), the
+whitespace-tolerant matching, and the `checks_did_not_complete` diagnostic.
 
 Verified against production, not against the deploy's exit code:
 
@@ -368,10 +428,9 @@ Verified against production, not against the deploy's exit code:
 - `POST /v1/move-events` returns 401 unauthenticated, so it is routed and
   auth-gated rather than missing.
 
-`act_move_event` is still 0 rows, which is correct: events come from the card,
-and the smoke test renders no card. **The first real conversation through the
-connector should produce them — that is the thing to check next, and if it
-stays 0 the card wiring is wrong even though the endpoint works.**
+`act_move_event` is no longer empty: real conversations through the connector
+have produced `shown` events (observed 2026-09-05 05:26, org `898a0428`). If it
+goes quiet again while cards render, the card wiring is the suspect.
 
 Re-check this any time with:
 

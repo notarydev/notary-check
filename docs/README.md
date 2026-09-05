@@ -117,7 +117,10 @@ guide/
     │                                         and diverged — see the Tier 1 plan for what's real)
     ├── development-operating-system-proposal.md — proposal
     ├── claim-ambiguity-detection.md        — proposal
-    └── ai-reasoning-evidence-filter.md     — proposal — positioning idea
+    ├── ai-reasoning-evidence-filter.md     — proposal — positioning idea
+    └── evidence-index-and-retrieval.md     — proposal — fetch-cited-page intake, a
+                                              per-source evidence index, retrieval +
+                                              shortlist judging. NOT decided.
 
 build/
 ├── tier-1-build-and-operating-plan.md    — canonical — the rules and operating spec

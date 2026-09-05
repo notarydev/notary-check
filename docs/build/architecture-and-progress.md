@@ -117,8 +117,9 @@ Both live AWS Lightsail container services, region `us-east-2`, both currently `
 
 ## 2026-09-05 deploy — engine.48 / server.49
 
-Live: `:notary-check-api.engine.48` (deployment 22), `:notary-check-mcp.server.49`
+Live at the time of writing: `:notary-check-api.engine.48` (deployment 22), `:notary-check-mcp.server.49`
 (deployment 27). Migrations through `0018`.
+**Superseded within hours — see the next section: prod is now `engine.51` (deployment 24), migrations through `0019`.**
 
 **Speed.** Extraction is chunked and run in parallel, splitting at blank lines
 and — for oversized blocks such as markdown tables — at single newlines.
@@ -146,6 +147,60 @@ card arrives complete and nothing polls. The remaining decision is a product
 one — see `docs/build/speed-implementation-plan.md`.
 
 **Every number above is LOCAL.** Nothing here is measured in production yet.
+
+## 2026-09-05, later same day — measured in production, and a correction
+
+Prod moved again within hours of the engine.48 deploy: live at last check is
+`:notary-check-api.engine.51` (deployment 24) / `:notary-check-mcp.server.49`
+(deployment 27), migrations through `0019`. 0019 re-keys the observation cache
+on `canonical_text_hash` so it survives Claude's fetch-and-recheck loop
+(re-registering the same URL creates a new `evidence_id`, not a new question);
+0018 had been deployed without `--migrate` and silently no-oped until 0019
+landed.
+
+**The speed numbers above are now confirmed in production** (measured from
+`usage_event`, review `9f3958a6` 05:14 vs `891ee8f5` 05:27):
+
+| | 05:14 | 05:27 |
+|---|---|---|
+| claims | 12 | 18 |
+| judge calls | 261 | 52 (per-claim 21.8 → 2.9) |
+| review wall | 31.0s | 10.7s |
+| metered cost | 9.70¢ | 1.93¢ |
+
+A later 2-claim run (`900530a5`, 10:40) did **10 judge calls in a 0.19s span,
+4.5s total, 0.35¢** — the cache is near-free when it hits.
+
+**Correction to E-EVIDENCE / `checks_did_not_complete`.** The 18-claim 05:27
+run did NOT fail because the judge abstained or because thin input is "honest".
+Persisted `lifecycle_detail`: **16/18 `locator_unresolved`, 2/18
+`required_field_unresolved`**. Logs:
+`review_flow_locator_unresolved judge_value_not_found_in_canonical_text:scope`,
+repeatedly. The cached observation shows the judge returned `scope: present`
+with a fused, non-literal value ("internet egress at Premium Tier and Standard
+Tier") on a passage naming two scopes; the locator correctly refused it. Thin
+excerpts contribute, but they are not the recorded mechanism.
+
+**And the same day produced a live false negative.** Review `900530a5`
+(Pacific Ocean) completed its checks and returned **UNSUPPORTED** for a claim
+the stored evidence states almost verbatim ("The Pacific Ocean contains
+approximately 714 million cubic kilometers (171 million cubic miles)" —
+Geology In; Surfertoday carries the same figure plus "50.1 percent"). The
+second claim (`50.1%`) returned `required_field_unresolved` despite
+"50.1 percent" being present — a normalization (`VALUE_PERCENT_V1`) that never
+got the chance to run. Root causes are intake (excerpts preferred over the
+cited page), the judge's scope contract (fused `present` instead of
+`ambiguous` + candidates), and normalization-vs-judge routing. Tracked in
+`ROADMAP.md` E-EVIDENCE; proposal for the intake+index work is
+`docs/guide/proposals/evidence-index-and-retrieval.md`.
+
+**Diagnosability is the reason these took all morning:** `claim_fields` and
+`rejectedCandidates` are computed per request and never persisted, so a claim's
+state cannot be explained from the DB alone. The `checks_did_not_complete`
+log event (`5aed80b`) now names which of the four flags tripped, and the
+persisted `lifecycle_detail` carries it per claim — but the per-field "why"
+(rejected field, judge value, residual set) still needs a replay. That is item
+0 of the proposal.
 
 ## Correction — how Verify and Act actually run today (2026-09-04)
 

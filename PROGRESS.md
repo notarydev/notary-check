@@ -5,11 +5,13 @@
 > this is a scratch tracker, not product documentation. Local file — not
 > published anywhere. **This file is the detailed audit trail** (every
 > review pass, every bug found and fixed, full history). For the
-> actionable, at-a-glance punch list, see `status-page/index.html` (mirrored
-> to `~/Downloads/notary-check-tracker.html`) — rebuilt 2026-09-03 to lead
-> with "what's left and who owns it" instead of a chronological narrative.
+> actionable, at-a-glance punch list, see `status-page/index.html` (the
+> canonical copy; a mirror lives at `~/Downloads/notary-check-tracker.html`
+> but has drifted — re-copy from `status-page/index.html` if you use it).
 
-**Last updated**: 2026-09-04 (third session) — **repo made handoff-ready.** No behaviour changed. The Track 1/Track 2/Advance vocabulary is retired for **Verify / Act**, with Act's two layers keeping the names **Challenge** and **Move** (migration `0016`, 53 files). Two dependency cycles broken. `reviewFlow.ts` split 1341 → 872 lines. The layering is now enforced by `engine/scripts/check-boundaries.ts` in `npm test` rather than described in prose. New `MODULES.md`; `README.md` rewritten; `CLAUDE.md` gained the glossary.
+**Last updated**: 2026-09-05 (late session) — **speed solved and measured in production; correctness now the open front.** E-LAT is measured, not just shipped: review `9f3958a6` (05:14, 12 claims) → `891ee8f5` (05:27, 18 claims) went **261 → 52 judge calls (per-claim 21.8 → 2.9), 31.0s → 10.7s wall, 9.70¢ → 1.93¢** from `usage_event`. A later 2-claim run (`900530a5`, Pacific Ocean, 10:40) did **10 judge calls in a 0.19s span, 4.5s, 0.35¢** — the text-hash observation cache (migration 0019) hits across invocations. Live prod at last check: `engine.51` (deployment 24) / `server.49` (deployment 27).
+
+**But the same day produced a live false negative.** The Pacific run returned **UNSUPPORTED** for a claim the stored evidence states verbatim (Geology In: *"The Pacific Ocean contains approximately 714 million cubic kilometers (171 million cubic miles)"*), and the 18-claim egress run's `checks_did_not_complete` is now correctly diagnosed: **16/18 `locator_unresolved`** (judge fused two scopes into a non-literal `present` — `judge_value_not_found_in_canonical_text:scope`), not the "engine being honest on thin excerpts" framing `dedc1c9` recorded. Thin excerpts ARE a cause (registerEvidence prefers the excerpt, never fetches the page), but not the whole story. Docs corrected to match; proposal for the intake+index+retrieval fix: `docs/guide/proposals/evidence-index-and-retrieval.md`. Full detail in `architecture-and-progress.md` "2026-09-05, later same day".
 
 Found while wiring the boundary check: **`npm test` never ran `detect/` or `middleware/`** — the entire Verify detector bank had never executed in the suite. Fixed with a glob. Engine **439 tests / 435 pass / 0 fail** (was 391 — 103 were silently skipping), server **10/10**, all against real Postgres.
 
