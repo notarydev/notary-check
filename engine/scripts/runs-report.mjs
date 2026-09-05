@@ -72,11 +72,14 @@ async function dbUrl() {
   return stdout.trim();
 }
 
-const RUN_PREFIXES = ["f6dd5300", "9f3958a6", "891ee8f5", "900530a5", "8b41051d", "cd46912c"];
+const KNOWN_LEGACY = "f6dd5300"; // pre-2026-09-05 baseline, kept visible past the 3-day window
+
 async function loadRuns() {
   const pool = new pg.Pool({ connectionString: await dbUrl(), max: 4 });
   try {
-    const where = RUN_PREFIXES.map((p, i) => `r.id::text LIKE '${p}%'`).join(" OR ");
+    // LIVE: show every review from the last 3 days (not a pinned id list — the
+    // original version only listed six runs, so new runs never appeared), plus
+    // the one legacy baseline. Capped at the 40 most recent.
     const { rows } = await pool.query(`
       SELECT r.id::text rid, to_char(r.created_at,'YYYY-MM-DD HH24:MI') created,
         EXTRACT(EPOCH FROM (r.completed_at - r.created_at))::numeric wall_s,
@@ -87,7 +90,15 @@ async function loadRuns() {
         (SELECT json_agg(json_build_object('move',m.move,'label',m.short_label,'prompt',m.prompt) ORDER BY m.ordinal) FROM act_invocation i JOIN act_move m ON m.invocation_id=i.id WHERE i.review_id=r.id) moves,
         (SELECT json_agg(json_build_object('detector',f.detector,'type',f.type,'text',f.boundary_text)) FROM finding f WHERE f.review_id=r.id) findings,
         (SELECT json_agg(json_build_object('detector',g.detector,'missing',g.missing,'unblocks',g.unblocks)) FROM gap g WHERE g.review_id=r.id) gaps
-      FROM review r WHERE ${where} ORDER BY r.created_at`);
+      FROM (
+        SELECT id FROM review
+        WHERE created_at > now() - interval '3 days'
+           OR id::text LIKE '${KNOWN_LEGACY}%'
+        ORDER BY created_at DESC
+        LIMIT 40
+      ) recent
+      JOIN review r ON r.id = recent.id
+      ORDER BY r.created_at ASC`);
     return rows.map((r) => {
       const rid = r.rid.slice(0, 8);
       const judge = (r.usage ?? []).filter((u) => u.type === "judge_call");
