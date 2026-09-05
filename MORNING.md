@@ -78,6 +78,17 @@ result on the same shape: **0 dropped**, where every claim had been lost.
 
 Live as `engine.47`.
 
+## The plan is written down
+
+`docs/build/speed-implementation-plan.md` — executable by anyone, including
+DeepSeek, with no memory of last night. Read `ROADMAP.md` § Speed for the
+pointer.
+
+Two known-broken things are ahead of speed in it: 18 of 21 claims return
+`checks_did_not_complete`, and the one finding Claude acted on last night was a
+false positive — two GCP pricing tiers read as a contradiction because the tier
+never reached the `scope` field.
+
 ## What to do first
 
 1. **Run the egress prompt again.** The table path has never actually worked before — the last run was the first time extraction survived, and it still lost 40% of the claims to the verbatim check. This will be the first run where a table-heavy answer is fully extracted.

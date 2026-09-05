@@ -124,6 +124,24 @@ One claim-extraction call returned unparseable JSON
 in the same run. Low frequency, but it silently drops a whole batch of claims
 when it happens.
 
+### Speed — the plan, ready to hand to anyone
+
+**Executable spec: [`docs/build/speed-implementation-plan.md`](docs/build/speed-implementation-plan.md)**
+— written to be run by someone with no memory of the conversation that produced
+it. Non-negotiables, what is already done, build order, and a definition of done
+in measurable numbers.
+
+**It opens with STEP 0: measure before building.** The two most recent commits
+delete model calls rather than speeding them up, and may already be enough —
+steps 3 and 4 are weeks of work that could turn out to be unnecessary. Baseline
+to beat: 21 claims, 5 sources, 270 judge calls, 21s.
+
+**Correctness comes before speed in that plan**, because two things are known
+broken: 18 of 21 claims return `checks_did_not_complete`, and a live
+self-contradiction finding was a FALSE POSITIVE that Claude acted on (two GCP
+pricing tiers read as a conflict, because the tier qualifier never reached
+`scope`). A fast wrong answer is worse than a slow one.
+
 ### Speed — the option set
 
 Every latency fix so far has helped and none has solved it, because the shape
