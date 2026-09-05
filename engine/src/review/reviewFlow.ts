@@ -67,7 +67,7 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 import type { Locator, LocatorProvenance, LocatorContentKind } from "../evidence/locators.ts";
-import { buildTextLocator, locatorDisplayString, resolveLocator, unresolvableLocator } from "../evidence/locators.ts";
+import { buildTextLocator, findExactSpan, locatorDisplayString, resolveLocator, unresolvableLocator } from "../evidence/locators.ts";
 import type { ResolvedEvidence } from "../ingestion/resolveEvidence.ts";
 import { resolveEvidenceRow } from "../ingestion/resolveEvidence.ts";
 import type { ChallengeItem } from "../judge/challengeGeneration.ts";
@@ -190,8 +190,30 @@ function deterministicPass(claimFields: ClaimFields, resolvedText: string | null
   const deterministic: EvidenceFields = {};
   const deterministicNeedles: Partial<Record<ApplicabilityField, string>> = {};
   const residuals: ApplicabilityField[] = [];
-  const haystack = resolvedText?.toLowerCase() ?? null;
-  const contains = (needle: string): boolean => haystack !== null && haystack.includes(needle.toLowerCase());
+  // MATCH THE WAY THE LOCATOR MATCHES.
+  //
+  // This was `haystack.includes(needle.toLowerCase())` — byte-exact apart from
+  // case, and real sources are not. HTML-to-text extraction collapses runs of
+  // whitespace, inserts non-breaking spaces and breaks lines mid-phrase, so
+  // "$0.09/GB" written as "$0.09 / GB", or "Google Cloud" broken across a line,
+  // failed to match text that plainly contained it. Every such miss became a
+  // RESIDUAL, and every residual is a model call.
+  //
+  // That is where the volume came from: a real answer cost 270 judge calls
+  // against 5 sources, and a large share of them were asking a model to find
+  // something a string search should already have found.
+  //
+  // findExactSpan is the same function the locator uses, so a field that
+  // matches here is guaranteed to produce a resolvable locator below —
+  // previously the two could disagree, which is its own class of bug.
+  //
+  // This does not weaken anything. The deterministic pass has always been
+  // literal matching, and whitespace is not a word: treating "egress  pricing"
+  // and "egress\npricing" as different strings was a defect in the comparison,
+  // never a safety property. Nothing semantic is matched here, and a miss still
+  // falls through to the judge exactly as before.
+  const contains = (needle: string): boolean =>
+    resolvedText !== null && findExactSpan(resolvedText, needle) !== null;
 
   for (const field of STRING_FIELDS) {
     const claimed = claimFields[field];
@@ -234,6 +256,75 @@ function deterministicPass(claimFields: ClaimFields, resolvedText: string | null
  * consequences for the claim's state.
  */
 const SKIPPED_ENTITY_ABSENT = "skipped_entity_absent";
+
+/**
+ * Reads and writes the judge's per-source field observations.
+ *
+ * The cache key is (evidence, field, prompt version, model) and deliberately
+ * NOT the claim — because extractField() never receives one. The judge is blind
+ * to what is being asserted, so its answer about a source is the same answer for
+ * every claim ever checked against that source. Reusing it is not an
+ * approximation; it is the identical question.
+ *
+ * A cache hit deliberately carries NO token counts. The call was paid for once
+ * and metered once; reporting tokens again would bill the same DeepSeek call
+ * twice in the usage ledger and make spend caps fire early.
+ *
+ * Never throws. A cache is an optimisation, and losing one must degrade to
+ * doing the work rather than failing the review.
+ */
+async function readObservation(
+  db: pg.Pool,
+  evidenceId: string,
+  field: ApplicabilityField,
+): Promise<JudgeFieldAnswer | null> {
+  try {
+    const row = await db.query(
+      `SELECT outcome, value, source_span, candidates FROM evidence_field_observation
+        WHERE evidence_id = $1 AND field = $2 AND prompt_version = $3 AND model = $4`,
+      [evidenceId, field, PROMPT_VERSION, DEFAULT_JUDGE_MODEL],
+    );
+    const r = row.rows[0];
+    if (r === undefined) return null;
+    return {
+      field,
+      outcome: r.outcome as JudgeFieldAnswer["outcome"],
+      value: r.value ?? undefined,
+      sourceSpan: r.source_span ?? undefined,
+      candidates: (r.candidates as string[] | null) ?? undefined,
+      record: { model: DEFAULT_JUDGE_MODEL, promptVersion: PROMPT_VERSION, question: "", answer: "cached" },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeObservation(db: pg.Pool, evidenceId: string, answer: JudgeFieldAnswer): Promise<void> {
+  // Only real, completed calls are stored. A quota denial, a kill-switch
+  // short-circuit or a transport error is a fact about THIS RUN, not about the
+  // source, and caching one would make a temporary failure permanent.
+  if (answer.record.inputTokens === undefined) return;
+  try {
+    await db.query(
+      `INSERT INTO evidence_field_observation
+         (evidence_id, field, prompt_version, model, outcome, value, source_span, candidates)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (evidence_id, field, prompt_version, model) DO NOTHING`,
+      [
+        evidenceId,
+        answer.field,
+        answer.record.promptVersion,
+        answer.record.model,
+        answer.outcome,
+        answer.value ?? null,
+        answer.sourceSpan ?? null,
+        answer.candidates === undefined ? null : JSON.stringify(answer.candidates),
+      ],
+    );
+  } catch {
+    // A lost cache write costs a repeat call later. Never a failed review.
+  }
+}
 
 function noCallAnswer(field: ApplicabilityField, error: string): JudgeFieldAnswer {
   return {
@@ -461,8 +552,16 @@ export async function runReview(
       };
       const others = row.residuals.filter((f) => f !== "entity");
 
+      const ask = async (field: ApplicabilityField): Promise<JudgeFieldAnswer> => {
+        const cached = await readObservation(db, row.evidenceId, field);
+        if (cached !== null) return cached;
+        const fresh = await extractField(text, field, judgeOptions);
+        await writeObservation(db, row.evidenceId, fresh);
+        return fresh;
+      };
+
       if (row.residuals.includes("entity")) {
-        const entityAnswer = await extractField(text, "entity", judgeOptions);
+        const entityAnswer = await ask("entity");
         answerByField.set("entity", entityAnswer);
         // Only `absent` forecloses. `cannot_be_determined` already drives
         // INDETERMINATE on its own and `ambiguous` may still prove immaterial —
@@ -479,7 +578,7 @@ export async function runReview(
         }
       }
 
-      const settled = await Promise.all(others.map((f) => extractField(text, f, judgeOptions)));
+      const settled = await Promise.all(others.map((f) => ask(f)));
       others.forEach((f, i) => answerByField.set(f, settled[i]));
     }),
   );
