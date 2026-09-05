@@ -568,7 +568,38 @@ export default function App() {
     }
   }
 
-  if (!data || dismissed) return null;
+  if (dismissed) return null;
+
+  // WORKING STATE — shown between the tool call starting and its result
+  // arriving.
+  //
+  // WHY IT MIGHT NOT APPEAR, stated honestly: the collapsed row a user sees
+  // first ("Notary check_answer") is the HOST's chrome, not ours, and we cannot
+  // touch it. This only renders if the host mounts the app iframe when the call
+  // BEGINS rather than when it resolves. If it mounts late this is dead
+  // pixels — harmless, never wrong, and it costs one element.
+  //
+  // Deliberately not a spinner. A spinner says "busy" and this card's whole
+  // posture is quiet; a slow pulse on the mark we already use says the same
+  // thing without demanding attention. It also names what is happening —
+  // "checking" — because a user who does not know what Notary is should learn
+  // it from the wait, not from the result.
+  //
+  // The real fix for a two-minute wait was making it not take two minutes.
+  // This is for the seconds that remain.
+  if (!data) {
+    // Only when actually connected to a host. In `?mock=` and in a bare browser
+    // there is no call in flight and this must stay invisible.
+    if (!app) return null;
+    return (
+      <div className="notary-card notary-quiet notary-working">
+        <div className="notary-header">
+          <NotaryMark />
+          <span className="notary-summary">Notary · checking</span>
+        </div>
+      </div>
+    );
+  }
 
   /**
    * Records one interaction with a move.

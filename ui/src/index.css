@@ -478,3 +478,30 @@ body {
 .notary-pill:hover .notary-pill-send-arrow {
   transform: translateX(2px);
 }
+
+/* The working state, shown while a check is in flight.
+ *
+ * A slow pulse on the mark and the label, not a spinner. The card is quiet by
+ * design and a spinner is a demand for attention; this reads as "something is
+ * happening" from the corner of the eye and nothing more.
+ *
+ * prefers-reduced-motion is honoured by dropping to a static dimmed state
+ * rather than removing the cue — a user who cannot see motion still needs to
+ * know the check is running. */
+.notary-working .notary-flag-icon,
+.notary-working .notary-summary {
+  animation: notary-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes notary-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notary-working .notary-flag-icon,
+  .notary-working .notary-summary {
+    animation: none;
+    opacity: 0.6;
+  }
+}
