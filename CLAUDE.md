@@ -86,6 +86,58 @@ History that is no longer guidance (the Phase 0 build guide, the frozen
 Act v1 / Challenge design) is in
 [`docs/build/phase-0-and-challenge-archive.md`](docs/build/phase-0-and-challenge-archive.md).
 
+## Operational environment — read before acting on anything live (2026-09-05)
+
+**Live prod:** `:notary-check-api.engine.55` (deployment 28) /
+`:notary-check-mcp.server.49` (deployment 27), migrations through `0020`.
+Verify by querying Lightsail, never by assuming a deploy succeeded
+(`aws lightsail get-container-services --region us-east-2 --query
+'containerServices[].{n:containerServiceName,v:currentDeployment.version,img:currentDeployment.containers.*.image}'`).
+"Deployed" is not "running" — read production rows, not the card.
+
+**Deploys:** `./scripts/deploy.sh engine|server|both [--migrate]`
+(`--migrate` needs `PROD_DATABASE_URL`, fetched from the container env).
+The engine test gate will FAIL if `engine/.env` still holds the invalid
+`DEEPSEEK_API_KEY` — run tests/deploys with `DEEPSEEK_API_KEY=''` so the
+live-model tests skip honestly (they need a real key to run). Never set
+`SKIP_TESTS` without stating the reason.
+
+**Prod DB (read-only unless you intend an action):** psql via a throwaway
+`postgres:16-alpine` container against the engine's `DATABASE_URL`. That URL
+carries `uselibpqcompat=true`, which libpq rejects — strip it first (see
+`deploy.sh`'s `libpq_url`). Deliberate ops writes are rare; the one that
+comes up: new organizations ship `act_moves_enabled=false`, so a tester who
+should see Act/Move needs
+`UPDATE organization SET act_moves_enabled=true WHERE id='…'`.
+
+**Clerk & identity (operating summary; full detail in `OPERATIONS.md` § Clerk):**
+- Clerk is the OAuth **authorization server** for `clerk.getnotary.ai`; the
+  server/ MCP is the resource server. Keys live in local `server/.env`
+  (VALID — use for admin API calls). The key in the **deployed** server env
+  is INVALID (`clerk_key_invalid`) — rotate it before relying on refresh.
+- Claude connects via the confidential OAuth app **"Claude (Notary
+  connector)"**, `client_id = sI6NaxPkmPcFC49O`, callback
+  `https://claude.ai/api/mcp/auth_callback`, full scope set. Do NOT register
+  Claude with the publishable key as client_id (invalid_client), and do NOT
+  create a second public OAuth app with a reduced scope set (invalid_scope).
+- The **Account portal is NOT published** (`/sign-in` 404) — a browser
+  sign-in inside the OAuth flow fails until the owner publishes it in the
+  Clerk dashboard. No API can fix that.
+- Admin API pattern: `api.clerk.com` with the valid `server/.env` secret —
+  users, invitations, oauth_applications, rotate_secret.
+- Orgs: `1cde4d65` production (smoke), `898a0428` primary tester,
+  `88a5e76d` second identity `hms7tab@gmail.com` (Clerk user `user_3IuXV…`).
+
+**Local tools:** runs-report dashboard (`cd engine && node
+scripts/runs-report.mjs` → http://localhost:8123, read-only, auto-poll) and
+the regression harness (`node scripts/measure-cant-check.mjs`).
+
+**Docs discipline when you act:** update
+`docs/build/architecture-and-progress.md` **in the same commit** as the
+schema/deploy/auth change it describes; keep ROADMAP's "In flight right now"
+current; update `PROGRESS.md` in place as you work. Instructions belong here
+(CLAUDE.md) and in `OPERATIONS.md` — not scattered across chat or history.
+
 ## The one rule that matters most
 
 > A model may propose. A record earns a state only through an
