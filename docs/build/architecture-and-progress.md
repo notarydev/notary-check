@@ -115,6 +115,38 @@ Both live AWS Lightsail container services, region `us-east-2`, both currently `
 
 
 
+## 2026-09-05 deploy — engine.48 / server.49
+
+Live: `:notary-check-api.engine.48` (deployment 22), `:notary-check-mcp.server.49`
+(deployment 27). Migrations through `0018`.
+
+**Speed.** Extraction is chunked and run in parallel, splitting at blank lines
+and — for oversized blocks such as markdown tables — at single newlines.
+Measured locally against the real model: 17.0s/21 claims (truncated) to
+8.3s/40 claims. `deterministicPass` now matches with the same whitespace
+tolerance as the locator, so a value written `"$0.09 / GB"` no longer falls
+through to a model call; combined with the new `evidence_field_observation`
+cache (migration `0018`), local measurement went from ~12.9 judge calls per
+claim to 2.5. That cache is keyed on (evidence, field, prompt version, model)
+and NOT on the claim — sound precisely because `extractField` never receives
+one.
+
+**Correctness.** A tier, plan or variant is now extracted into `scope`, so
+`selfContradiction`'s existing scope guard can fire; two pricing tiers of one
+product had been reported as a contradiction and Claude acted on it. Truncated
+extraction responses are salvaged rather than discarded whole, and table rows
+are the verbatim claim text, which stopped 40% of claims being silently
+dropped.
+
+**Async groundwork, deployed but inert.** `GET /v1/reviews/:id/state` and
+`POST /v1/reviews/:id/complete` are live and auth-gated (401 unauthenticated,
+so routed); the card carries `review_id`/`complete` and polls through a
+`get_review_state` app tool. The server still waits for verification, so every
+card arrives complete and nothing polls. The remaining decision is a product
+one — see `docs/build/speed-implementation-plan.md`.
+
+**Every number above is LOCAL.** Nothing here is measured in production yet.
+
 ## Correction — how Verify and Act actually run today (2026-09-04)
 
 Dated entries above describe per-claim Move, which was the wiring when they
