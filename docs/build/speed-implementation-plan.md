@@ -84,6 +84,32 @@ GROUP BY r.id ORDER BY judge_calls DESC LIMIT 10;
 If per-claim calls have dropped to ~2–3 and wall clock is acceptable, **stop.
 Steps 3 and 4 are weeks of work and may be unnecessary.**
 
+### Measured locally 2026-09-05, against the real judge
+
+4 claims × 5 sources (whitespace-mangled, HTML-like), local Postgres:
+
+```
+judge calls:  10   (2.5 per claim, vs ~12.9 in production before)
+cached:       16 observations
+elapsed:      7.0s
+states:       SUPPORTED, SUPPORTED, SUPPORTED, SUPPORTED
+```
+
+**The stop condition is met on this input.** Two effects, and the second was
+not expected:
+
+- The cache ceiling is `sources × fields` — about 35 calls for 5 sources
+  *regardless of claim count*, against 270 before.
+- The whitespace fix in `deterministicPass` also fixed the STATES. Fields now
+  match deterministically instead of falling through to a judge that abstains,
+  which is very likely the same cause as the 18-of-21
+  `checks_did_not_complete` in step 1a.
+
+**Caveat, and it matters:** this is a synthetic input with short, clean sources.
+Real fetched HTML is longer and messier. Treat this as indicative, not
+conclusive — **re-run STEP 0 against production before deciding to skip steps 3
+and 4.**
+
 ---
 
 ## STEP 1 — Correctness first (ahead of speed)
